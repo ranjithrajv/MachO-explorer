@@ -1,0 +1,21 @@
+#compdef assert
+#
+# zsh completion for assert. Install as _assert in a directory
+# on your $fpath.
+#
+# MachO-explorer 0.1.0.
+
+_macho_assert() {
+    _arguments -s -S \
+        '--has-symbol=[a symbol of exactly this name must be present]:symbol name:' \
+        '--no-symbol=[no symbol of this name may be present]:symbol name:' \
+        '--has-string=[some NUL-terminated string must contain this]:text:' \
+        '--no-string=[no NUL-terminated string may contain this]:text:' \
+        '--arch=[check one architecture]:architecture:(x86_64 arm64)' \
+        '(-b --binary)'{-b,--binary}'[the binary or bundle to read]:Mach-O file or bundle:_files' \
+        '--json[write one JSON object to stdout]' \
+        '(-h --help)'{-h,--help}'[show usage]' \
+        '*:Mach-O file or bundle:_files'
+}
+
+_macho_assert "$@"

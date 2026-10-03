@@ -95,21 +95,25 @@ means. That is not a footnote: see
 | `describe.mjs` | What is in this file? Every slice, architecture, extent, **platform** (ios / macos / tvos…), **filetype**, symbol counts, where `__TEXT` starts, the build's **UUID**, the header's **flags** (`MH_PIE`, `MH_TWOLEVEL`, …), each section's **type** and **attributes**, the **entry point**, **rpaths** and **source version** — plus, with `--sections`, `--segments` or `--loads`, every section, segment and load command by name. Reports **abnormalities** when a header disagrees with the file |
 | `sym.mjs` | Search a symbol table by substring, or by regex with `--regex`. Imports marked rather than shown as `0x0` |
 | `symlookup.mjs` | Which function contains this vaddr? Reads symbols directly, because `nm` on a large universal binary is unusable |
+| `starts.mjs` | Where do functions begin? The linker's own `LC_FUNCTION_STARTS` list — the only one a stripped binary carries, each address labeled `sub_<hex>` |
 | `findcall.mjs` | Direct `call`/`jmp` xrefs to an address — or `--list` for the distinct targets a binary calls |
 | `findliteral.mjs` | Find a byte literal anywhere in a file, per slice, with context — or `--strings` to list what the binary already contains |
 | `mapliteral.mjs` | Map a literal to vaddrs, then find the pointers to them — which is how you find the code that handles a format |
 | `a2o.mjs` | Which byte of the file is this vaddr? Both the slice-relative and the absolute offset, and zero-fill as its own answer |
 | `o2a.mjs` | Which vaddr does this file offset have? Every slice's answer, since one offset means a different address in each |
+| `dump.mjs` | The bytes at a vaddr, resolved through its section — bounded by that section, so it never blends into the next one |
 | `disasm.mjs` | Where do instructions start and end at this address, and where do they branch? Instruction lengths plus resolved **direct** branch edges for `arm64`, `arm64e` and `x86_64` — bytes, not mnemonics |
 | `audit.mjs` | Is this file internally consistent? Every structural claim it makes about itself, checked, with a verdict and an exit status a build can gate on |
 | `fingerprint.mjs` | Is this the same **program** as that one? A digest that survives a rebuild, which a byte comparison cannot |
 | `diff.mjs` | What changed between two binaries — structure and literal content, so a rebuilt pair does not read as a different program |
+| `assert.mjs` | A CI policy: `--has-symbol`, `--no-symbol`, `--has-string`, `--no-string`, repeatable. Exit 0 only when every assertion holds |
 
-Twelve tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
+Fifteen tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
 `sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, eight
-until `disasm.mjs` added the boundary decoder, and nine until `audit`, `fingerprint`
+until `disasm.mjs` added the boundary decoder, nine until `audit`, `fingerprint`
 and `diff` answered the three questions a build or a reviewer asks about *two*
-binaries at once.
+binaries at once, and twelve until `dump`, `starts` and `assert` added the byte
+read, the function list and the policy gate.
 
 ### Three questions about two binaries
 

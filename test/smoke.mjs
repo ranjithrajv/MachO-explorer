@@ -1995,6 +1995,172 @@ console.log('\na2o / o2a: address and file offset');
           skip('diff literals', 'the strings fixtures are missing — run npm run test:fixtures');
         }
 
+        // dump: the bytes at an address, bounded by the section that maps it.
+        //
+        // `0x100000000` is the start of __TEXT in every fixture, so it maps to a real
+        // byte without the test having to know any fixture's own layout. The point is
+        // the *shape* of the answer — a section, an offset, and rows of hex — rather
+        // than the specific bytes, which differ per fixture.
+        {
+          const populatedForDump = binaries.find((x) => x.stem === 'populated');
+          if (populatedForDump) {
+            const atText = run('dump.mjs', ['0x100000000', populatedForDump.path]);
+            check(
+              atText.code === 0 && /__TEXT/.test(atText.stdout),
+              'dump: an address in __TEXT returns bytes and names the section',
+              `exit ${atText.code}: ${atText.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            // The rows are hex + ascii, so a reader can compare them against a hex
+            // editor's window without reformatting anything.
+            check(
+              /[0-9a-f]{2} [0-9a-f]{2}/.test(atText.stdout) && /[ -~]{4,}/.test(atText.stdout),
+              'dump: each row is hex pairs beside printable ascii',
+              atText.stdout.split('\n').find((l) => /[0-9a-f]{2} /.test(l))?.slice(0, 60),
+            );
+            // `--len` caps the read, and the section end clamps below it. A capped
+            // dump must say so rather than looking like the whole answer.
+            const capped = run('dump.mjs', ['--len=8', '0x100000000', populatedForDump.path]);
+            check(
+              capped.code === 0 && /8 byte\(s\)/.test(capped.stdout),
+              'dump: --len caps how many bytes are read',
+              `exit ${capped.code}: ${capped.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            // An address in no slice is a negative answer, not an error: exit 1, and
+            // the reason is named rather than left for the caller to infer.
+            const unmapped = run('dump.mjs', ['0xdeadbeef', populatedForDump.path]);
+            check(
+              unmapped.code === 1 && /no slice|no bytes/.test(unmapped.stdout),
+              'dump: an address in no slice exits 1 and says so',
+              `exit ${unmapped.code}: ${unmapped.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            // A non-hex address is a usage error, not a silent miss.
+            const badAddr = run('dump.mjs', ['not-an-address', populatedForDump.path]);
+            check(
+              badAddr.code === 2 && /hex/.test(badAddr.stderr),
+              'dump: a non-hex address is a usage error',
+              `exit ${badAddr.code}: ${badAddr.stderr.split('\n')[0]}`,
+            );
+            // And the JSON envelope carries the same facts as the prose.
+            const asJson = run('dump.mjs', ['--json', '0x100000000', populatedForDump.path]);
+            let parsed = null;
+            try { parsed = JSON.parse(asJson.stdout); } catch { /* checked below */ }
+            check(
+              asJson.code === 0 && parsed?.ok === true && parsed?.data?.found === true
+                && Array.isArray(parsed?.data?.lines) && parsed.data.lines.length > 0,
+              'dump: --json reports found:true with the rows in data.lines',
+              `exit ${asJson.code}: ${asJson.stdout.slice(0, 80)}`,
+            );
+          } else {
+            skip('dump', 'the populated fixture is missing — run npm run test:fixtures');
+          }
+        }
+
+        // starts: the linker's own function list, decoded from LC_FUNCTION_STARTS.
+        //
+        // Every fixture but `functions` omits the command, so the corpus can test
+        // both halves: a present list that decodes to known addresses, and an absent
+        // one that is reported as absent rather than as an empty list.
+        {
+          const functionsBin = binaries.find((x) => x.stem === 'functions');
+          const populatedForStarts = binaries.find((x) => x.stem === 'populated');
+          if (functionsBin && populatedForStarts) {
+            const listed = run('starts.mjs', [functionsBin.path]);
+            check(
+              listed.code === 0 && /4 function start\(s\)/.test(listed.stdout),
+              'starts: decodes the fixture\'s four function starts',
+              `exit ${listed.code}: ${listed.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            // Every address is labeled, so a pipeline can key on it.
+            check(
+              /sub_100000170/.test(listed.stdout),
+              'starts: each start is labeled sub_<hex>',
+              listed.stdout.split('\n').find((l) => /sub_/.test(l))?.slice(0, 60),
+            );
+            // `--symbols` names the one start that sits on a defined symbol, and
+            // leaves the rest labeled — a fixture where all or none were named would
+            // leave one of those paths untested.
+            const named = run('starts.mjs', ['--symbols', functionsBin.path]);
+            check(
+              named.code === 0 && /caller_a/.test(named.stdout) && /sub_100000180/.test(named.stdout),
+              'starts: --symbols names the start on a symbol and labels the rest',
+              `exit ${named.code}: ${named.stdout.split('\n').slice(0, 6).join(' | ')}`,
+            );
+            // A fixture with no LC_FUNCTION_STARTS is a negative answer, not an empty
+            // list: exit 1, and the reason is named.
+            const absent = run('starts.mjs', [populatedForStarts.path]);
+            check(
+              absent.code === 1 && /no LC_FUNCTION_STARTS/.test(absent.stdout),
+              'starts: a file with no LC_FUNCTION_STARTS exits 1 and says so',
+              `exit ${absent.code}: ${absent.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            // `--max` caps the list while the count stays exact.
+            const capped = run('starts.mjs', ['--max=2', functionsBin.path]);
+            check(
+              capped.code === 0 && /4 function start\(s\)/.test(capped.stdout) && /and 2 more/.test(capped.stdout),
+              'starts: --max caps the list and keeps the count exact',
+              `exit ${capped.code}: ${capped.stdout.split('\n').slice(0, 6).join(' | ')}`,
+            );
+          } else {
+            skip('starts', 'the functions fixture is missing — run npm run test:fixtures');
+          }
+        }
+
+        // assert: a CI policy, with the exit status as the product.
+        {
+          const populatedForAssert = binaries.find((x) => x.stem === 'populated');
+          const stringsForAssert = binaries.find((x) => x.stem === 'strings');
+          if (populatedForAssert && stringsForAssert) {
+            // A policy that holds exits 0.
+            const holds = run('assert.mjs', [
+              populatedForAssert.path, '--has-symbol=caller_a', '--no-symbol=_NSLog',
+            ]);
+            check(
+              holds.code === 0 && /2 of 2 assertion\(s\) held/.test(holds.stdout),
+              'assert: a policy that holds exits 0',
+              `exit ${holds.code}: ${holds.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            // A policy that does not hold exits 1 — a negative answer, not an error.
+            const fails = run('assert.mjs', [populatedForAssert.path, '--has-symbol=_NSLog']);
+            check(
+              fails.code === 1 && /FAIL/.test(fails.stdout) && /_NSLog is not in the symbol table/.test(fails.stdout),
+              'assert: a failed assertion exits 1 and names the reason',
+              `exit ${fails.code}: ${fails.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            // Strings: a substring match, so a URL or error message can be asserted
+            // without knowing the string around it.
+            const hasString = run('assert.mjs', [stringsForAssert.path, '--has-string=macho-fixture-alpha']);
+            check(
+              hasString.code === 0 && /found in \d+ string/.test(hasString.stdout),
+              'assert: --has-string matches a substring of a NUL-terminated string',
+              `exit ${hasString.code}: ${hasString.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            const noString = run('assert.mjs', [stringsForAssert.path, '--no-string=zzz-not-present-zzz']);
+            check(
+              noString.code === 0 && /not found/.test(noString.stdout),
+              'assert: --no-string passes when the text is absent',
+              `exit ${noString.code}: ${noString.stdout.split('\n').slice(0, 4).join(' | ')}`,
+            );
+            // No assertions is a usage error: a policy with no claims is true of
+            // everything and gates nothing.
+            const none = run('assert.mjs', [populatedForAssert.path]);
+            check(
+              none.code === 2 && /no assertions/.test(none.stderr),
+              'assert: a policy with no assertions is a usage error',
+              `exit ${none.code}: ${none.stderr.split('\n')[0]}`,
+            );
+            // An empty value is refused for the same reason: `--has-string ""` is
+            // true of every binary.
+            const empty = run('assert.mjs', [populatedForAssert.path, '--has-string=']);
+            check(
+              empty.code === 2 && /empty/.test(empty.stderr),
+              'assert: an empty assertion value is a usage error',
+              `exit ${empty.code}: ${empty.stderr.split('\n')[0]}`,
+            );
+          } else {
+            skip('assert', 'the populated/strings fixtures are missing — run npm run test:fixtures');
+          }
+        }
+
         // Slices present on one side only.
         if (universal) {
           const thinVsFat = diffBinaries(rebuilt.path, universal.path);

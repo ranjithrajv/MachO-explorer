@@ -1,0 +1,19 @@
+#compdef starts
+#
+# zsh completion for starts. Install as _starts in a directory
+# on your $fpath.
+#
+# MachO-explorer 0.1.0.
+
+_macho_starts() {
+    _arguments -s -S \
+        '--symbols[annotate each start with the defined symbol sitting on it]' \
+        '--max=[cap on the list (0 means all)]:count:(0 10 20 50 100 1000)' \
+        '--arch=[prefer an architecture]:architecture:(x86_64 arm64)' \
+        '(-b --binary)'{-b,--binary}'[the binary or bundle to read]:Mach-O file or bundle:_files' \
+        '--json[write one JSON object to stdout]' \
+        '(-h --help)'{-h,--help}'[show usage]' \
+        '*:Mach-O file or bundle:_files'
+}
+
+_macho_starts "$@"

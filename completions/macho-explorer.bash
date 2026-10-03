@@ -1,6 +1,6 @@
 # bash completion for MachO-explorer.                           -*- shell-script -*-
 #
-# Registers completion for all ten commands from this one file:
+# Registers completion for every command from this one file:
 #
 #     . /path/to/completions/macho-explorer.bash  # from your .bashrc
 #
@@ -22,6 +22,9 @@ _macho_opts_for() {
         mapliteral)   echo "--json -h --help -b --binary" ;;
         a2o)          echo "--json -h --help --arch -b --binary" ;;
         o2a)          echo "--json -h --help --arch -b --binary" ;;
+        dump)         echo "--json -h --help --len --arch -b --binary" ;;
+        starts)       echo "--json -h --help --symbols --max --arch -b --binary" ;;
+        assert)       echo "--json -h --help --has-symbol --no-symbol --has-string --no-string --arch -b --binary" ;;
         disasm)       echo "--json -h --help --branches --count --bytes --arch -b --binary" ;;
         audit)        echo "--json -h --help --strict --arch -b --binary" ;;
         fingerprint)  echo "--json -h --help --arch" ;;
@@ -67,7 +70,7 @@ _macho_complete() {
         --arch=*)    COMPREPLY=( $(compgen -W "$_macho_arches" -- "${cur#*=}") ); return 0 ;;
         # `disasm` is the only tool with a positional that is neither a query nor
         # a path, so its count can be a bare number with no flag in front of it.
-        --count|--bytes)
+        --count|--bytes|--len|--max)
             COMPREPLY=( $(compgen -W '0 1 8 16 32 64 128 256 512 1024 4096' -- "$cur") )
             return 0 ;;
     esac
@@ -94,8 +97,8 @@ _macho_complete() {
 }
 
 for _macho_cmd in describe sym symlookup findcall \
-                  findliteral mapliteral a2o o2a \
-                  disasm audit fingerprint diff; do
+                  findliteral mapliteral a2o o2a dump \
+                  disasm audit fingerprint diff starts assert; do
     complete -F _macho_complete "$_macho_cmd"
 done
 unset _macho_cmd

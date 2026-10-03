@@ -1,0 +1,135 @@
+.TH ASSERT 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.SH NAME
+assert \- a CI policy: these facts must hold about this binary
+.SH SYNOPSIS
+.B assert
+.I binary | bundle
+.RI [ assertions ...]
+.RB [ \-\-arch= name ]
+.RB [ \-\-json ]
+.RB [ \-b | \-\-binary
+.IR path ]
+.RB [ \-h | \-\-help ]
+.SH DESCRIPTION
+Checks a set of assertions about one binary and exits 0 only when every one
+holds. A release gate: "fail if symbol X is present, or string Y is missing".
+.PP
+.B audit
+gates a file on its
+.I internal
+consistency; this gates it on facts the caller supplies. A build usually wants
+both.
+.SH ASSERTIONS
+Four predicates, repeatable, each taking a value:
+.TP
+.BI \-\-has\-symbol= NAME
+A symbol of exactly this name must be present, defined or imported.
+.TP
+.BI \-\-no\-symbol= NAME
+No symbol of this name may be present.
+.TP
+.BI \-\-has\-string= TEXT
+Some NUL\-terminated string must contain TEXT.
+.TP
+.BI \-\-no\-string= TEXT
+No NUL\-terminated string may contain TEXT.
+.PP
+.B \-\-has\-symbol
+and
+.B \-\-no\-symbol
+match the
+.I whole
+name: a policy names a symbol, and a substring would pass on
+.B _main_helper
+when asked about
+.BR _main .
+.B \-\-has\-string
+and
+.B \-\-no\-string
+match a
+.IR substring ,
+because the useful claim is that a URL or an error message is present and the
+string around it is not the point. Both string reads are the ones
+.B findliteral \-\-strings
+performs, over the same sections, so a string the listing shows is a string
+this can assert.
+.SH OPTIONS
+.TP
+.BI \-\-arch= name
+Check one architecture by name:
+.BR x86_64 ,
+.BR arm64 ,
+.BR arm64e ,
+.BR arm64_32 ,
+.BR ppc ,
+.BR ppc64 ,
+.BR arm
+or
+.BR i386 .
+.TP
+.BR \-b ", " \-\-binary " " \fIpath\fR
+The binary to read. May also be given as the first positional argument.
+.TP
+.B \-\-json
+Write one JSON object to standard output and send all prose to standard error.
+.TP
+.B \-h ", " \-\-help
+Print usage and exit 0.
+.SH ENVIRONMENT
+.TP
+.B MACHO_EXPLORER_BINARY
+The binary to read when none is given.
+.TP
+.B MACHO_EXPLORER_APP
+An application bundle to read, tried after
+.BR MACHO_EXPLORER_BINARY .
+.TP
+.B MACHO_EXPLORER_CONFIG
+Path to a replacement
+.IR config.json .
+.SH EXIT STATUS
+.TP
+.B 0
+Every assertion held.
+.TP
+.B 1
+At least one did not. A
+.I negative answer ,
+not an error: a build gate needs to branch on "the policy failed", and a caller
+that reads that as a crash will switch the gate off within a week.
+.TP
+.B 2
+Usage error, including a flag with no value or an empty one.
+.TP
+.B 3
+The file could not be read or parsed.
+.SH EXAMPLES
+.PP
+.RS
+.nf
+assert build/Contents/MacOS/app \e
+    \-\-has\-symbol=_main \e
+    \-\-no\-symbol=_NSLog \e
+    \-\-has\-string="https://"
+assert \-\-json build/Contents/MacOS/app \-\-no\-string=__debugSummary
+.fi
+.RE
+.SH NOTES
+A failed assertion is data, not an error:
+.B errors
+stays empty and
+.B data.passed
+is the verdict, the same shape
+.BR audit (1)
+returns. Only an unreadable file is an error.
+.PP
+An empty value is rejected rather than run.
+.B \-\-has\-string ""
+is true of every binary — the empty string is a substring of everything — so
+accepting it would install a gate that can never fail, which is worse than no
+gate because it reports success.
+.SH SEE ALSO
+.BR audit (1),
+.BR findliteral (1),
+.BR sym (1),
+.BR fingerprint (1)

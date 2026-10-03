@@ -203,6 +203,19 @@ for (const name of SKILLS) {
         if (flag === 'matched-only') return [src, `--${flag}`, 'pop', '--in', path.join(HERE, 'fixtures')];
         break;
       }
+      case 'dump':
+        // `dump` takes the address as its first positional and the binary as its
+        // second, so a valued flag has to be given its value *before* the address —
+        // `--len 16 <binary>` would otherwise put the path in the address slot and
+        // fail the hex check, making a working flag look rejected.
+        return flag === 'len'
+          ? [src, '--len', '16', '0x100000000', probeBin]
+          : flag === 'arch'
+            ? [src, '--arch', 'x86_64', '0x100000000', probeBin]
+            : [src, `--${flag}`, '0x100000000', probeBin];
+      case 'starts':
+        // `--max` takes a number; `--symbols` is a bare flag.
+        return flag === 'max' ? [src, '--max', '5', probeBin] : [src, `--${flag}`, probeBin];
       default:
         break;
     }

@@ -178,7 +178,7 @@ const HEADER_PLUS_LOADCMDS = 32 + (72 + 80 * 2) + 24;
  * do with the tools. Derived rather than restated, for the same reason the
  * builder derives `nsects`.
  */
-const headerPlusLoadcmds = (nsects = 2) => 32 + (72 + 80 * nsects) + 24;
+const headerPlusLoadcmds = (nsects = 2, extra = 0) => 32 + (72 + 80 * nsects) + 24 + extra;
 
 /**
  * The 32-bit counterparts of the three constants above.
@@ -620,6 +620,41 @@ function lcSourceVersion(a, b, c, d, e) {
   return buf;
 }
 
+/**
+ * `LC_FUNCTION_STARTS` — a `linkedit_data_command`, `cmdsize` 16.
+ *
+ * `dataoff` is a file offset and `datasize` a byte count; the blob itself is
+ * written by the fixture that uses this, because where it sits in the file is
+ * that fixture's own arithmetic. The command is the reader's half of the pair:
+ * it says *where* the list is, and the ULEB128 walk says what it contains.
+ *
+ * The command is 16 bytes in both word sizes — two `uint32_t`s after the header —
+ * so there is no 32/64-bit split to get wrong here.
+ */
+const LC_FUNCTION_STARTS = 0x26;
+
+function lcFunctionStarts(dataoff, datasize) {
+  const b = Buffer.alloc(16);
+  b.writeUInt32LE(LC_FUNCTION_STARTS, 0);
+  b.writeUInt32LE(16, 4);
+  b.writeUInt32LE(dataoff, 8);
+  b.writeUInt32LE(datasize, 12);
+  return b;
+}
+
+/** Encode one ULEB128 value, little-endian base-128, high bit = continue. */
+function uleb128(value) {
+  const out = [];
+  let x = value;
+  do {
+    let b = x & 0x7f;
+    x >>>= 7;
+    if (x) b |= 0x80;
+    out.push(b);
+  } while (x);
+  return out;
+}
+
 /* ------------------------------------------------------------------ *
  * the fixtures
  * ------------------------------------------------------------------ */
@@ -923,6 +958,82 @@ function stringsFixture({ strings = [
     buf,
     addresses: { ...c.addresses, stringDataOffset: headerPlusLoadcmds(2) + c.text.length },
     strings,
+  };
+}
+
+/**
+ * A binary carrying `LC_FUNCTION_STARTS`, so the function-start reader has
+ * something to decode that does not depend on a system binary being present.
+ *
+ * Every other fixture in the corpus omits the command, which meant `starts` could
+ * only be exercised against `/usr/bin/ssh` — a file that does not exist on the
+ * Linux and Windows runners the suite is supposed to pass on. A reader that only
+ * ever ran against a real linker's output has never been shown to work.
+ *
+ * The blob is a sequence of ULEB128 deltas from the image base, terminated by a
+ * zero. The deltas are chosen to include a multi-byte value (`0x170` needs two
+ * bytes), because a reader that assumed one byte per delta would decode the first
+ * address correctly and then desynchronise — and the failure would look like a
+ * plausible list of wrong addresses rather than an error.
+ *
+ * The addresses are chosen to land inside `__text`, and to straddle the fixture's
+ * own symbols: the first start is exactly `caller_a`, so `--symbols` has something
+ * to name, and the following three sit between symbols and so must fall back to
+ * their `sub_<hex>` labels. A fixture where every start was named, or none was,
+ * would leave one of those two paths untested.
+ *
+ * Decoded against `__TEXT.vmaddr` (0x100000000), the four deltas are:
+ *
+ *   0x170  → 0x100000170  (caller_a — named)
+ *   0x10   → 0x100000180  (sub_<hex>)
+ *   0x10   → 0x100000190  (sub_<hex>)
+ *   0x10   → 0x1000001a0  (sub_<hex>)
+ *
+ * The blob is planted at the start of `__data`, and `dataoff` points at it. The
+ * reader treats `dataoff` as a plain file offset and does not require a
+ * `__LINKEDIT` segment to exist, so the command is honest about where the bytes
+ * are without the fixture having to invent a segment the reader never looks at.
+ */
+function functionsFixture() {
+  // `extraLoadcmds: 16` is the size of the LC_FUNCTION_STARTS command this fixture
+  // adds, and it is load-bearing: `codeFixture` computes every address from it, so
+  // omitting it would make the fixture's own target 16 bytes before the real one —
+  // and the call-scan assertion below would fail for a reason that has nothing to
+  // do with the reader.
+  const c = codeFixture(CPU_X86_64, { extraLoadcmds: 16 });
+  const DELTAS = [0x170, 0x10, 0x10, 0x10];
+  const blob = Buffer.from([...DELTAS.flatMap(uleb128), 0]);
+  // The blob leads __data; the pointer to the literal follows it, so the fixture
+  // still serves `mapliteral` as well as `starts`.
+  const data = Buffer.concat([blob, c.data]);
+  // The extra 16-byte command pushes every section 16 bytes later than a plain
+  // fixture's, so `dataoff` is derived rather than restated — a restated offset
+  // would be right today and wrong the moment a command's length changed.
+  const dataOff = headerPlusLoadcmds(2, 16) + c.text.length;
+  const buf = thinMachO({
+    cputype: CPU_X86_64,
+    ...c,
+    data,
+    extraCommands: [lcFunctionStarts(dataOff, blob.length)],
+  });
+
+  return {
+    buf,
+    addresses: c.addresses,
+    blob,
+    dataOff,
+    // Stated from the generator's own arithmetic, so the assertion reads intent
+    // rather than a copy of the reader's output.
+    expect: {
+      present: true,
+      count: DELTAS.length,
+      base: `0x${VMADDR_BASE.toString(16)}`,
+      // The first delta is relative to the base, so the first address is base + 0x170.
+      first: `0x${(VMADDR_BASE + BigInt(DELTAS[0])).toString(16)}`,
+      last: `0x${(VMADDR_BASE + BigInt(DELTAS.reduce((a, b) => a + b, 0))).toString(16)}`,
+      // Exactly one start — the first — sits on a defined symbol.
+      named: 1,
+    },
   };
 }
 
@@ -1390,7 +1501,7 @@ function damagedFixture() {
  * it here means a green suite means what it says.
  */
 async function verify(files) {
-  const { describe, findCalls, listCallTargets, findLiteral, mapLiteral, lookupAddress } =
+  const { describe, findCalls, listCallTargets, findLiteral, mapLiteral, lookupAddress, listFunctionStarts } =
     await import('../src/api.mjs');
 
   // `--arch` matching. `describe` itself does not narrow by architecture — the
@@ -2157,6 +2268,47 @@ async function verify(files) {
     'mapliteral: every pointer is attributed to a data section',
   );
 
+  // The function-start fixture. Asserted here as well as in the suite, because a
+  // fixture that does not hold up is a broken instrument — and because the decode
+  // is the only thing that can distinguish a reader that walks ULEB128 correctly
+  // from one that assumes one byte per delta and then desynchronises.
+  {
+    const f = functionsFixture();
+    const r = listFunctionStarts(files.functions, { symbols: true });
+    expect(r.present === true, `functions: LC_FUNCTION_STARTS is present (got ${r.present})`);
+    expect(r.count === f.expect.count, `functions: decodes ${f.expect.count} starts (got ${r.count})`);
+    expect(r.base === f.expect.base, `functions: the base is __TEXT.vmaddr (got ${r.base})`);
+    expect(
+      r.functions[0]?.address === f.expect.first,
+      `functions: the first start is base + the first delta (got ${r.functions[0]?.address}, expected ${f.expect.first})`,
+    );
+    expect(
+      r.functions.at(-1)?.address === f.expect.last,
+      `functions: the last start is the running sum of every delta (got ${r.functions.at(-1)?.address}, expected ${f.expect.last})`,
+    );
+    // Every address is labeled, so a pipeline can key on it and a report can name
+    // a site without a symbol table.
+    expect(
+      r.functions.every((x) => x.label === `sub_${x.address.slice(2)}`),
+      'functions: every start is labeled sub_<hex>',
+    );
+    // The blob is 6 bytes: four deltas (2 + 1 + 1 + 1) and a terminator. A reader
+    // that read one byte per delta would decode the first address and then
+    // desynchronise, so the length is part of the contract rather than a detail.
+    expect(f.blob.length === 6, `functions: the blob is 6 bytes (got ${f.blob.length})`);
+    // Exactly one start sits on a defined symbol, so `--symbols` has something to
+    // name and the other three must fall back to their labels.
+    expect(
+      r.named === f.expect.named,
+      `functions: ${f.expect.named} start(s) carry a symbol (got ${r.named})`,
+    );
+    // And the fixture must still be a working binary for every other tool.
+    expect(
+      findCalls(files.functions, f.addresses.target).count === 2,
+      'functions: the extra load command did not break the call scan',
+    );
+  }
+
   // Stripped: bytes work, names do not.
   const s = describe(files.stripped);
   expect(s.slices[0].nsyms === 0, 'stripped: carries no symbols');
@@ -2330,6 +2482,10 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     'zerofill.macho': zf.buf,
     'strings.macho': st.buf,
     'strings2.macho': st2.buf,
+    // A binary carrying LC_FUNCTION_STARTS, so the function-start reader is
+    // exercised on every runner rather than only where a real linker's output
+    // happens to be installed.
+    'functions.macho': functionsFixture().buf,
     'bits32.macho': b32.buf,
     // Header-level metadata: flags, section type + attributes, and the three load
     // commands that carry values rather than just declaring a dependency.
@@ -2369,6 +2525,7 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     zerofill: BUILT['zerofill.macho'].length,
     strings: BUILT['strings.macho'].length,
     strings2: BUILT['strings2.macho'].length,
+    functions: BUILT['functions.macho'].length,
     bits32: BUILT['bits32.macho'].length,
     meta: BUILT['meta.macho'].length,
     damaged: BUILT['damaged.macho'].length,
@@ -2433,6 +2590,22 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
       added: st2.strings.filter((s) => !st.strings.includes(s)),
       removed: st.strings.filter((s) => !st2.strings.includes(s)),
     },
+    // The function-start fixture's expectations, from the generator's own
+    // arithmetic. `starts` is the decoded address list, stated here so the
+    // assertion reads intent rather than a copy of the reader's output.
+    functionsExpected: (() => {
+      const f = functionsFixture();
+      return {
+        present: f.expect.present,
+        count: f.expect.count,
+        base: f.expect.base,
+        first: f.expect.first,
+        last: f.expect.last,
+        named: f.expect.named,
+        blob: f.blob.toString('hex'),
+        dataOff: f.dataOff,
+      };
+    })(),
     // The 32-bit fixture's expectations, from the generator's own arithmetic. Its
     // addresses must fit in 32 bits — asserted here as well as in the suite,
     // because an address that has silently stopped fitting is the failure mode

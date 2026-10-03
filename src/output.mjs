@@ -50,8 +50,8 @@
  * of that, so being added here is part of being added at all.
  */
 export const TOOLS = [
-  'describe', 'sym', 'symlookup', 'findcall', 'findliteral', 'mapliteral', 'a2o', 'o2a', 'disasm',
-  'audit', 'fingerprint', 'diff',
+  'describe', 'sym', 'symlookup', 'findcall', 'findliteral', 'mapliteral', 'a2o', 'o2a', 'dump', 'disasm',
+  'audit', 'fingerprint', 'diff', 'starts', 'assert',
 ];
 
 /**
@@ -75,7 +75,7 @@ export const TOOLS = [
  * or path. Keeping the list here rather than per-tool is what makes that a
  * single edit instead of one per tool that later grows a numeric flag.
  */
-export const VALUE_FLAGS = new Set(['b', 'binary', 'arch', 'max', 'include', 'count', 'bytes', 'in', 'per-file', 'max-files', 'max-depth']);
+export const VALUE_FLAGS = new Set(['b', 'binary', 'arch', 'max', 'len', 'include', 'count', 'bytes', 'in', 'per-file', 'max-files', 'max-depth', 'has-symbol', 'no-symbol', 'has-string', 'no-string']);
 
 /**
  * Flags every tool accepts, whatever else it does.
@@ -147,6 +147,12 @@ export function parseArgs(argv) {
   const flags = new Set();
   const opts = {};
   const positional = [];
+  // Every valued flag in the order it appeared, including repeats. `opts` keeps
+  // only the last value for a name — the right rule for a flag like `--arch` — but
+  // a policy tool takes the same flag many times (`--has-symbol a --has-symbol b`)
+  // and needs all of them, so the ordered list is kept here rather than recovered
+  // by re-parsing `argv` in one caller and getting it subtly wrong.
+  const valued = [];
   let literal = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -164,15 +170,20 @@ export function parseArgs(argv) {
         const name = body.slice(0, eq);
         flags.add(name);
         opts[name] = body.slice(eq + 1);
+        valued.push([name, body.slice(eq + 1)]);
       } else {
         flags.add(body);
-        if (VALUE_FLAGS.has(body) && i + 1 < argv.length) opts[body] = argv[++i];
+        if (VALUE_FLAGS.has(body) && i + 1 < argv.length) {
+          const value = argv[++i];
+          opts[body] = value;
+          valued.push([body, value]);
+        }
       }
       continue;
     }
     positional.push(a);
   }
-  return { flags, opts, positional };
+  return { flags, opts, positional, valued };
 }
 
 /**

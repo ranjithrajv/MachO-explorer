@@ -118,6 +118,29 @@ tool cry wolf: unknown *load commands* (named by number on purpose — unfamilia
 not broken), and an `LC_MAIN` entry point outside `__TEXT` (normal for a dyld
 shared-cache stub, and also seen on a fully-symbolled 113 MB `node`).
 
+## A policy gate — `assert`
+
+`audit` gates a file on its *internal* consistency; `assert` gates it on facts
+you supply. A release build usually wants both.
+
+```sh
+assert build/Contents/MacOS/app \
+    --has-symbol=_main --no-symbol=_NSLog --has-string="https://"
+```
+
+Four predicates, repeatable, with two matching rules:
+
+| flag | matches |
+|---|---|
+| `--has-symbol` / `--no-symbol` | the **whole** symbol name — a substring would pass on `_main_helper` when asked about `_main` |
+| `--has-string` / `--no-string` | a **substring** of any NUL-terminated string — the useful claim is that a URL or an error message is present |
+
+Exit **0** only when every assertion holds, **1** when at least one does not. A
+failed assertion is data, not an error: `errors` stays empty and `data.passed` is
+the verdict, the same shape `audit` returns. An empty value is rejected —
+`--has-string ""` is true of every binary, so accepting it would install a gate
+that can never fail.
+
 ### When `abnormalities` is non-empty
 
 `describe` reports structural problems **alongside** a successful parse, never
@@ -192,7 +215,8 @@ return structured answers:
 
 ```
 describe  sym  symlookup  findcall
-findliteral  mapliteral  a2o  o2a
+findliteral  mapliteral  a2o  o2a  dump
+starts  audit  assert
 ```
 
 **2. The CLI**, which needs nothing configured:
@@ -206,6 +230,9 @@ findliteral LZ4 "/path/to/Some App.app"
 mapliteral  LZ4 /path/to/binary
 a2o         0x100085c30 -b /path/to/binary     # address  → file offset
 o2a         0x85c30 -b /path/to/binary          # file offset → address
+dump        0x100085c30 /path/to/binary         # the bytes at an address, bounded by its section
+starts      /path/to/binary                    # where functions begin
+assert      /path/to/binary --has-symbol=_main --no-string=debug
 disasm      0x100085c30 /path/to/binary         # where instructions start, and where they branch
 ```
 
@@ -243,7 +270,44 @@ end up reading addresses that were never in that slice.
    no equivalent in `ipsw`, Ghidra or `otool`.
 
 To go the other way — from an address to the file position to read bytes —
-`a2o` then `o2a`.
+`a2o` then `o2a`. To read the bytes themselves, `dump`: it resolves the address
+through its section and stops at that section's end, so it never blends
+`__cstring` into `__const` or the tail of `__text` into whatever the linker
+packed after it. `--len` caps how many bytes; the section end clamps below it and
+`truncated` says when.
+
+```sh
+dump 0x100085c30 /path/to/binary          # 64 bytes at the address, as hex + ascii
+dump --len=16 0x100085c30 /path/to/binary
+```
+
+An address can reach a byte, be mapped with no byte (`__bss`, `__PAGEZERO`), or
+be in no slice at all. `dump` reports all three as values — `zerofill` and
+`mapped` tell them apart — and exits 1 for the two "no byte" cases, which are
+answers rather than errors.
+
+## Where functions begin — `starts`
+
+`LC_FUNCTION_STARTS` is the linker's own list of function entry addresses, and it
+is the only such list a **stripped** binary carries: the symbol table is gone, but
+the command survives because the unwinder needs it at runtime. On a shipped build
+it is the difference between a column of addresses and no structure at all.
+
+```sh
+starts /path/to/binary                  # every entry, labeled sub_<hex>
+starts --symbols /path/to/binary        # name the symbol sitting on each start
+starts --max=20 /path/to/binary         # cap the list; the count stays exact
+```
+
+Each address is labeled `sub_<hex>` — a name for the address, not a claim about
+what the function does. Where a defined symbol sits exactly on a start,
+`--symbols` names it too.
+
+`present: false` means the file carries no `LC_FUNCTION_STARTS` at all (an object
+file, a hand-built binary), which is an answer rather than an empty list. A start
+address is where the linker says a function begins; it is not a boundary derived
+from disassembly, and it is not the same as a symbol — a symbol can sit
+mid-function, and a function can have no symbol at all.
 
 ## Five things that will otherwise waste your time
 
