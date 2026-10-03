@@ -208,6 +208,229 @@ export function describe(path) {
 }
 
 /* ------------------------------------------------------------------ *
+ * overview
+ * ------------------------------------------------------------------ */
+
+/**
+ * What this package does not read, named in the answer rather than left to be
+ * discovered.
+ *
+ * ## Why a list of gaps travels inside the result
+ *
+ * There is a project that formats a Mach-O into "one JSON blob" and calls that
+ * completeness. Copying that framing here would mean a consumer could not tell
+ * the difference between a field that is empty because the binary has none and a
+ * field that is empty because this reader does not implement it — and those two
+ * look identical in JSON. `strings: []` on a binary with no `__cstring` section
+ * and `strings: []` from a reader that never looked are the same 18 characters,
+ * and a pipeline that trusts one of them builds a fact out of the other.
+ *
+ * So the omissions are named, in the payload, on every call. A consumer reads
+ * `notRead` and knows which fields are evidence and which are silence. This is
+ * the whole argument for the tool existing in this shape: it is a summary of what
+ * *this* package can see, and the list of what it cannot is part of that summary
+ * rather than a caveat in a README four screens away.
+ *
+ * Kept in step with `README.md`'s "What it will not do" by hand, and asserted
+ * against it in the suite — a gap list that drifts from the refusal list is
+ * worse than none, because it is a gap list that is confidently wrong.
+ */
+const NOT_READ = [
+  'code signature, entitlements or designated requirements',
+  'the export trie and chained fixups',
+  'Objective-C and Swift metadata',
+  'dSYM and DWARF',
+  'FAT32 containers',
+  'the dylib an LC_LOAD_DYLIB names',
+  'disassembly, and the mnemonics behind an instruction length',
+];
+
+/**
+ * The structural picture and, on request, two inventories — in one call.
+ *
+ * ## What this is for
+ *
+ * Answering "what is this binary" completely costs four round trips today:
+ * `describe` for the structure, `sym` for the names, `findliteral --strings` for
+ * the strings, and the reader's own judgement about which slice each will pick.
+ * That last part is the real cost — four tools each choose a slice, and they can
+ * choose differently, so a caller that wants a consistent picture has to check.
+ * This reads the file once and reports one answer.
+ *
+ * ## What it is deliberately not
+ *
+ * It is not a complete Mach-O parser, and `notRead` says so in the result rather
+ * than leaving a consumer to infer completeness from an object that looks
+ * exhaustive. The load commands are named, not interpreted; the strings come
+ * from C-string sections only; there is no disassembly, because a linear sweep
+ * of a whole binary is not a disassembly of anything.
+ *
+ * ## Why the shape is `describe`'s
+ *
+ * `slices` is byte-for-byte `describe`'s own slice objects, so
+ * `.slices[0].sections` means the same thing here as it does there and a caller
+ * can switch between the two tools without relearning a field. The inventories
+ * are *additions*, never replacements — a consumer that wants only structure gets
+ * exactly what `describe` would have given it.
+ *
+ * ## Why the inventories are opt-in and capped
+ *
+ * Measured on a 14.5 MB Go binary: `describe` is 9.2 KB of JSON, and its 19,526
+ * defined symbols are the difference between a 9 KB structural answer and a
+ * 422 KB one with them included. An aggregate that defaulted to including them
+ * would be 99% symbol table on every binary, which is the opposite of an
+ * overview — and it would be slowest and largest on exactly the binaries where
+ * the structural half is what the caller wanted. So structure is always present
+ * and cheap, and the two lists that scale with the file are asked for by name and
+ * bounded by `max`.
+ *
+ * `truncated` is reported whenever the cap bites. A silently shortened list reads
+ * as a complete one, and "this binary has 4,000 symbols" when it has 19,657 is
+ * the confident wrong answer this package treats as a defect.
+ *
+ * @param {string} path
+ * @param {object}  [opts]
+ * @param {string}  [opts.arch]    narrow a universal binary to one slice
+ * @param {boolean} [opts.symbols] include the symbol table
+ * @param {boolean} [opts.strings] include C-string section contents
+ * @param {number}  [opts.max]     cap on each inventory (default 4000, 0 = unlimited)
+ * @param {number}  [opts.min]     shortest string to report (default 4)
+ */
+export function overview(path, { arch = null, symbols = false, strings = false, max = 4000, min = 4 } = {}) {
+  const d = describe(path);
+
+  // `--arch` narrows the *answer*, not the read: the fat header is still walked so
+  // `fat` and `containerAbnormalities` stay true of the file. Same rule and same
+  // reason as `describe`'s, and `archMatches` rather than `===` because naming
+  // arm64e as its own architecture made that a live bug there.
+  let slices = d.slices;
+  const notes = [];
+  if (arch && slices.length > 1) {
+    const match = slices.find((s) => archMatches(s.arch, arch));
+    if (match) {
+      const all = slices.map((s) => s.arch).join(', ');
+      slices = [match];
+      notes.push(`${arch}: showing 1 of ${all.split(', ').length} slices — drop the flag for all`);
+    } else {
+      notes.push(`${arch} matched none of the slices (${slices.map((s) => s.arch).join(', ')}); showing all ${slices.length}`);
+    }
+  }
+
+  const out = {
+    path: d.path,
+    size: d.size,
+    fat: d.fat,
+    slices,
+    containerAbnormalities: d.containerAbnormalities,
+    // Always present, so "this is the whole of what we can tell you" is a field
+    // rather than an inference from the absence of something else.
+    notRead: NOT_READ,
+    ...notes.length ? { notes } : {},
+  };
+
+  // One slice is asked, because a symbol table and a string table are per-slice
+  // and "the symbols of a universal binary" is not a question with one answer.
+  //
+  // Picked by `symbolSlice`, which is `sym`'s own rule — the named architecture
+  // if the caller gave one, else the richest — and then *pinned by offset* for the
+  // symbol read rather than re-derived from the name. That is the whole reason
+  // this function exists: four tools each choosing a slice independently is how a
+  // caller ends up with a symbol table from one architecture and strings from
+  // another. Both inventories below name their `arch` in the result as well, so a
+  // consumer can see which slice answered rather than infer it.
+  const chosen = (() => {
+    try {
+      return withFile(path, (f) => {
+        const s = symbolSlice(f, arch);
+        const syms = readSymbols(f, s.offset, s.thin);
+        return { arch: s.arch, offset: s.offset, syms };
+      });
+    } catch {
+      // No readable slice. Reported as an empty inventory with a note, not
+      // thrown: the structure above still parsed, and a file with one broken
+      // slice out of two should not lose the answer for the other.
+      return null;
+    }
+  })();
+
+  if (symbols) {
+    if (!chosen) {
+      out.symbols = { count: 0, symbols: [], truncated: false, note: 'no slice in this file could be parsed' };
+    } else {
+      // Defined names only, deduplicated by name and sorted by address — the three
+      // rules `searchSymbols` applies, restated rather than reused. Going through
+      // `searchSymbols` with an empty pattern would have been the obvious way to
+      // share them, and it throws on an empty pattern precisely because "match
+      // everything" is not a search; so the rules are applied here and asserted
+      // against `sym`'s in the suite, which is what keeps two copies from drifting.
+      //
+      // Imports are dropped because they carry `n_value == 0` and an overview that
+      // listed them would put thousands of address-zero rows ahead of the real
+      // ones. They are not silently dropped: `imports` below counts them, so the
+      // consumer can see that the table held more than this list does.
+      const defs = chosen.syms.entries.filter((e) => e.defined);
+      const imports = chosen.syms.entries.length - defs.length;
+      const names = [...new Map(defs.map((e) => [e.name, e])).values()].sort(byAddr);
+      const capped = max > 0 ? names.slice(0, max) : names;
+      out.symbols = {
+        arch: chosen.arch,
+        count: names.length,
+        defined: defs.length,
+        imports,
+        truncated: capped.length < names.length,
+        max,
+        symbols: capped.map((e) => ({ name: e.name, addr: e.addr })),
+        note: names.length === 0
+          ? (chosen.syms.note || 'this slice has no defined symbols — stripped, or a dyld-cache stub')
+          : (capped.length < names.length ? `showing ${capped.length} of ${names.length} — raise --max for the rest` : null),
+      };
+    }
+  }
+
+  if (strings) {
+    if (!chosen) {
+      out.strings = { count: 0, strings: [], truncated: false, note: 'no slice in this file could be parsed' };
+    } else {
+      // `chosen.arch` rather than `null`, so this reads the slice the symbols came
+      // from rather than re-running its own preference. Two inventories in one
+      // object that disagree about which slice they read would be worse than two
+      // separate calls.
+      const r = findStrings(path, { arch: chosen.arch, min, max });
+      // The distinction that matters most in this whole function: zero strings
+      // because the slice has no C-string section is a fact about the file, and
+      // zero strings because a reader looked and found none is a different fact.
+      // Both serialise as `[]`, so `note` is what carries it — a binary whose
+      // toolchain packs strings into a blob has nothing here to read, and saying
+      // "no strings" about it without that would be a wrong answer wearing a
+      // true-looking shape.
+      const noSections = r.count === 0 && r.scanned === 0;
+      out.strings = {
+        arch: r.arch,
+        min: r.min,
+        count: r.count,
+        scanned: r.scanned,
+        truncated: r.truncated,
+        max,
+        sections: r.sections,
+        strings: r.strings,
+        note: noSections
+          ? `no C-string section in this slice (looked for ${r.sections.join(', ')}) — a toolchain that packs string data into one blob has nothing here to read`
+          : (r.count === 0
+            ? `no string of ${r.min}+ printable bytes in ${count2(r.scanned)} scanned bytes`
+            : (r.truncated ? `showing ${r.count} of the strings found — raise --max for the rest` : null)),
+      };
+    }
+  }
+
+  return out;
+}
+
+/** `count()` from output.mjs, without importing the CLI layer into the API. */
+function count2(n) {
+  return String(Math.trunc(Math.abs(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/* ------------------------------------------------------------------ *
  * address <-> file offset
  * ------------------------------------------------------------------ */
 

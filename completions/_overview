@@ -1,0 +1,23 @@
+#compdef overview
+#
+# zsh completion for overview. Install as _overview in a directory
+# on your $fpath.
+#
+# MachO-explorer 0.1.0.
+
+_macho_overview() {
+    _arguments -s -S \
+        '(-b --binary)'{-b,--binary}'[the binary or bundle to read]:Mach-O file or bundle:_files' \
+        '--symbols[include the symbol table]' \
+        '--strings[include the C-string section contents]' \
+        '--max[cap on each inventory]:count:(0 100 1000 4000 10000)' \
+        '--min[shortest string to report]:length:(3 4 6 8)' \
+        '--compact[write the JSON on one line]' \
+        '--arch[read one slice of a universal binary]:arch:(x86_64 arm64 arm64e arm64_32 ppc ppc64 arm i386)' \
+        '--json[write one JSON object to stdout]' \
+        '(-h --help)'{-h,--help}'[show usage]' \
+        '1:Mach-O file or bundle:_files' \
+        '*:: :->args'
+}
+
+_macho_overview "$@"

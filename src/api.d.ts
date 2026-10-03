@@ -776,6 +776,116 @@ export declare function describe(path: string): {
 };
 
 /**
+ * The symbol inventory {@link overview} reports, deduplicated by name and
+ * sorted by address. `addr` is a BigInt: it is a virtual address, and it does not
+ * survive a JSON number.
+ */
+export interface OverviewSymbols {
+  /** The slice this list was read from, named because a universal binary has several. */
+  arch: string | null;
+  /** Distinct defined names in the slice — the length of the full list, not of `symbols`. */
+  count: number;
+  /** Table entries with a non-zero address. */
+  defined: number;
+  /** Table entries that are imports. Counted rather than dropped silently. */
+  imports: number;
+  /** True when `max` dropped rows. A shortened list is never presented as complete. */
+  truncated: boolean;
+  /** The cap that was applied. `0` means unlimited. */
+  max: number;
+  symbols: Array<{ name: string; addr: bigint }>;
+  /** Why the list is empty or short, or null when there is nothing to say. */
+  note: string | null;
+}
+
+/** The string inventory {@link overview} reports. `vaddr` is a BigInt, as above. */
+export interface OverviewStrings {
+  arch: string | null;
+  /** Shortest string reported. */
+  min: number;
+  /** Strings found, which is more than `strings.length` when `truncated`. */
+  count: number;
+  /** Bytes of C-string section actually read. Zero when the slice has none. */
+  scanned: number;
+  truncated: boolean;
+  max: number;
+  /** The C-string section names this reader looks for. */
+  sections: string[];
+  strings: Array<{
+    off: number;
+    slice: string;
+    vaddr: bigint;
+    section: string;
+    length: number;
+    text: string;
+  }>;
+  /**
+   * Why the list is empty or short, or null.
+   *
+   * Load-bearing: zero strings because the slice has no `__cstring` section is a
+   * fact about the file, and zero strings because a reader looked and found none
+   * is a different fact. Both serialise as `[]`, so this is what tells them
+   * apart.
+   */
+  note: string | null;
+}
+
+/**
+ * Everything this package can tell you about a binary, in one call: the whole of
+ * {@link describe}'s answer plus two optional inventories.
+ *
+ * ## Why the inventories are opt-in
+ *
+ * They scale with the file while the structure does not — on a 14.5 MB Go binary
+ * the structure is 9.2 KB of JSON and the symbol table is the difference between
+ * that and 422 KB. Including them by default would make the answer 99% symbol
+ * table on the largest binaries, which is the opposite of an overview.
+ *
+ * ## `notRead` is not decoration
+ *
+ * The list of what this reader does not implement travels in every result. A JSON
+ * object that looks exhaustive and is silent about what it skipped cannot be
+ * distinguished from one that genuinely has nothing to report, and that
+ * distinction is the difference between a fact and a gap.
+ */
+export declare function overview(
+  path: string,
+  opts?: {
+    /** Narrow a universal binary to one slice. A preference: an absent architecture falls through to all. */
+    arch?: string | null;
+    /** Include the symbol table. */
+    symbols?: boolean;
+    /** Include the C-string section contents. */
+    strings?: boolean;
+    /** Cap on each inventory. Default 4000; `0` is unlimited. */
+    max?: number;
+    /** Shortest string to report. Default 4. */
+    min?: number;
+  },
+): {
+  path: string;
+  size: number;
+  fat: boolean;
+  /** Exactly `describe`'s slice objects, so a field means the same thing in both. */
+  slices: ReturnType<typeof describe>['slices'];
+  containerAbnormalities: Abnormality[];
+  /**
+   * What this package does not read, on every call.
+   *
+   * Kept in step with `README.md`'s "What it will not do" by hand and asserted
+   * against it by the suite — a gap list that drifts from the refusal list is
+   * worse than none, because it is one that is confidently wrong.
+   */
+  notRead: string[];
+  /** Present only when `opts.symbols` was set. */
+  symbols?: OverviewSymbols;
+  /** Present only when `opts.strings` was set. */
+  strings?: OverviewStrings;
+  /** Present when `--arch` narrowed or failed to narrow the slice list. */
+  notes?: string[];
+};
+
+/**
  * One address/offset mapping. Three outcomes, kept apart on purpose.
  *
  * `query` and `vaddr` are hex strings. A 64-bit vaddr does not survive a `Number`

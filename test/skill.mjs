@@ -188,6 +188,20 @@ for (const name of SKILLS) {
         return [src, `--${flag}`, rebuilt, rebuilt2];
       case 'disasm':
         return [src, `--${flag}`, '0x100000160', probeBin, '1'];
+      case 'overview': {
+        // `--max` and `--min` take a number, and `overview` refuses a value it
+        // cannot read rather than falling back to the default — `--max=abc`
+        // answering "4000 symbols" would answer a different question than the one
+        // asked, which is the same defect as `--regexx`. Probed bare, the flag
+        // swallows the next argument and the refusal is a real, correct exit 2.
+        //
+        // So this is the same false positive the `sym` corpus flags below already
+        // carve out, for the same reason: a value-taking flag needs a value, and a
+        // guard that reports its absence as a defect is guarding nothing. Given a
+        // value, the flag is accepted.
+        if (flag === 'max' || flag === 'min') return [src, `--${flag}=8`, probeBin];
+        return [src, `--${flag}`, probeBin];
+      }
       case 'sym': {
         // The corpus flags change `sym`'s shape: `--in` *replaces* the binary
         // positional, so the ordinary `sym --flag pop <binary>` arguments become

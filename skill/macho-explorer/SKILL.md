@@ -182,6 +182,43 @@ and `__objc_classname`.
 is the correct answer. Use `sym` on a Go symbol, or `findliteral`
 with a substring you already know, instead.
 
+## One call instead of four — `overview`
+
+When you need the whole picture rather than one fact about it, `overview` is one
+invocation instead of `describe` + `sym` + `findliteral --strings`, and it is the
+only one that guarantees all three read the *same* slice of a universal binary:
+
+```sh
+overview /path/to/binary                     # structure only
+overview --symbols /path/to/binary            # plus the symbol table
+overview --strings --symbols --max=200 /path/to/binary
+overview --json --compact --symbols /path/to/binary | jq '.data.symbols.count'
+```
+
+`slices` is exactly what `describe` returns, field for field, so
+`.data.slices[0].sections` means the same thing in both.
+
+**The inventories are capped at 4000 rows by default, and the cap is reported.**
+`truncated: true` and a note saying how many were dropped come with a shortened
+list. A short list that does not say it is short is worse than no list, because
+you cannot tell it from a complete one.
+
+**`notRead` is in every result.** It is the list of what this package does not
+parse: code signature and entitlements, export trie and chained fixups, ObjC and
+Swift metadata, dSYM/DWARF, FAT32. Check it rather than assuming an absent field
+means the file has nothing there — that is the difference between a fact and a
+gap, and it is why this tool is not called `dump`.
+
+**Zero is explained, never bare.** No `__cstring` section (a Go binary, or
+anything else that packs strings into one blob) reports zero strings *with a note
+saying the section is absent*. That is a fact about the file. A stripped slice
+reports no defined symbols *with a note saying that*. Neither arrives as an empty
+list you have to interpret.
+
+**There is no `overview` on the MCP server, on purpose.** The server keeps one
+tool per question, because a tool that answers several answers none of them well.
+Use `describe`, `sym` and `findliteral` there.
+
 ## Three ways in, in order of preference
 
 **1. The MCP server**, if one is configured — the tools are already there and
@@ -204,12 +241,13 @@ mapliteral  LZ4 /path/to/binary
 a2o         0x100085c30 -b /path/to/binary     # address  → file offset
 o2a         0x85c30 -b /path/to/binary          # file offset → address
 disasm      0x100085c30 /path/to/binary         # where instructions start, and where they branch
+overview    --symbols /path/to/binary           # everything at once, one slice, one call
 ```
 
 **3. The library**, when you are writing code:
 
 ```js
-import { describe, searchSymbols, lookupAddress, findCalls,
+import { describe, overview, searchSymbols, lookupAddress, findCalls,
          listCallTargets, findLiteral, mapLiteral } from 'macho-explorer';
 ```
 

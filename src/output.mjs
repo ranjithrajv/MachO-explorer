@@ -73,8 +73,15 @@ export const TOOLS = [
  * number, and a number in the wrong slot reads as a perfectly plausible address
  * or path. Keeping the list here rather than per-tool is what makes that a
  * single edit instead of one per tool that later grows a numeric flag.
+ *
+ * `min` was missing, and the omission was live in both tools that take it:
+ * `findliteral --strings --min 9 <binary>` and `overview --strings --min 9
+ * <binary>` both read `9` as the binary and failed with "9: cannot be read",
+ * because `--min=9` worked and the space form did not — so a flag documented
+ * with an `=` in one place silently misparsed in another. The asymmetry was the
+ * bug: a flag that only works one way is a trap for anyone who types the other.
  */
-export const VALUE_FLAGS = new Set(['b', 'binary', 'arch', 'max', 'include', 'count', 'bytes', 'in', 'per-file', 'max-files', 'max-depth']);
+export const VALUE_FLAGS = new Set(['b', 'binary', 'arch', 'max', 'include', 'count', 'bytes', 'in', 'per-file', 'max-files', 'max-depth', 'min']);
 
 /**
  * Flags every tool accepts, whatever else it does.
@@ -182,12 +189,19 @@ export function parseArgs(argv) {
  * a replacer — rather than by hand at each call site — means a BigInt cannot be
  * forgotten: the first address anyone adds to a new tool is handled here, not
  * by whoever notices the crash.
+ *
+ * `indent` defaults to 2 because every tool has always pretty-printed and a
+ * response a person reads under `--json` is meant to be readable. `0` gives the
+ * compact form, measured at 41% smaller on a symbol inventory of 4,000 rows
+ * (421,816 bytes to 248,890 on the Go binary). It is opt-in per tool rather than
+ * global because the readability is worth losing only where the volume is: a
+ * 4000-row array is read by a program, not by a person.
  */
-export function toJSON(value) {
+export function toJSON(value, indent = 2) {
   return JSON.stringify(value, (_key, v) => {
     if (typeof v === 'bigint') return `0x${v.toString(16)}`;
     return v;
-  }, 2);
+  }, indent);
 }
 
 /**
@@ -226,7 +240,7 @@ export function toJSON(value) {
  */
 export const SCHEMA_VERSION = '1.0';
 
-export function emitJSON({ tool, binary, ok = true, data = null, errors = [], messages = [], notes = [] }, code = 0) {
+export function emitJSON({ tool, binary, ok = true, data = null, errors = [], messages = [], notes = [], indent = 2 }, code = 0) {
   // Normalised rather than trusted: `notes: null` is a natural thing to write
   // when a tool has nothing to say, and it crashed the emitter rather than
   // emitting nothing. A helper that throws on `null` is a helper every caller
@@ -251,7 +265,7 @@ export function emitJSON({ tool, binary, ok = true, data = null, errors = [], me
       ...(msgs.length ? { messages: msgs } : {}),
       ...(nts.length ? { notes: nts } : {}),
       data,
-    }) + '\n',
+    }, indent) + '\n',
   );
   process.exit(code);
 }

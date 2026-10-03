@@ -1,6 +1,6 @@
 # bash completion for MachO-explorer.                           -*- shell-script -*-
 #
-# Registers completion for all ten commands from this one file:
+# Registers completion for all thirteen commands from this one file:
 #
 #     . /path/to/completions/macho-explorer.bash  # from your .bashrc
 #
@@ -26,6 +26,7 @@ _macho_opts_for() {
         audit)        echo "--json -h --help --strict --arch -b --binary" ;;
         fingerprint)  echo "--json -h --help --arch" ;;
         diff)         echo "--json -h --help --arch --max" ;;
+        overview)     echo "--json -h --help --symbols --strings --max --min --compact --arch -b --binary" ;;
         *)            echo "" ;;
     esac
 }
@@ -70,6 +71,12 @@ _macho_complete() {
         --count|--bytes)
             COMPREPLY=( $(compgen -W '0 1 8 16 32 64 128 256 512 1024 4096' -- "$cur") )
             return 0 ;;
+        --max)
+            COMPREPLY=( $(compgen -W '0 100 1000 4000 10000' -- "$cur") )
+            return 0 ;;
+        --min)
+            COMPREPLY=( $(compgen -W '3 4 6 8' -- "$cur") )
+            return 0 ;;
     esac
 
     if [[ "$cur" == --arch=* ]]; then
@@ -95,7 +102,7 @@ _macho_complete() {
 
 for _macho_cmd in describe sym symlookup findcall \
                   findliteral mapliteral a2o o2a \
-                  disasm audit fingerprint diff; do
+                  disasm audit fingerprint diff overview; do
     complete -F _macho_complete "$_macho_cmd"
 done
 unset _macho_cmd

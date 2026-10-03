@@ -59,7 +59,8 @@
     "man/man1/mcp.1",
     "man/man1/audit.1",
     "man/man1/fingerprint.1",
-    "man/man1/diff.1"
+    "man/man1/diff.1",
+    "man/man1/overview.1"
   ],
   "bin": {
     "describe": "src/describe.mjs",
@@ -74,7 +75,8 @@
     "mcp": "src/mcp.mjs",
     "audit": "src/audit.mjs",
     "fingerprint": "src/fingerprint.mjs",
-    "diff": "src/diff.mjs"
+    "diff": "src/diff.mjs",
+    "overview": "src/overview.mjs"
   },
   "scripts": {
     "test": "node test/smoke.mjs",

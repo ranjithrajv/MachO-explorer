@@ -2777,6 +2777,7 @@ console.log('\napi.mjs (importable, no subprocess):');
       'describe', 'searchSymbols', 'lookupAddress',
       'findCalls', 'listCallTargets', 'findLiteral', 'mapLiteral',
       'withFile', 'searchRange', 'coversAddress', 'callEncoding',
+      'overview',
     ];
     const missing = expected.filter((k) => typeof api[k] !== 'function');
     check(missing.length === 0, 'every documented export is a function', missing.join(', '));
@@ -3216,6 +3217,203 @@ for (const b of binaries) {
       );
     }
   }
+}
+
+/* ---- overview: one call, and what it refuses to pretend ----------------- */
+
+console.log('\noverview (one call, one slice, and a stated gap list):');
+{
+  const { overview: overviewOf, describe: describeFile } = await import('../src/api.mjs');
+  const uni = generated.find((b) => b.stem === 'universal') || binaries[0];
+  const stringsBin = generated.find((b) => b.stem === 'strings');
+  const strippedBin = generated.find((b) => b.stem === 'stripped');
+
+  // The structure half must be `describe`'s, field for field. This is the promise
+  // that lets a caller switch between the two tools without relearning a field,
+  // and it is the whole reason the inventories are additions rather than a
+  // reshaping — so it is asserted against a real parse rather than a fixed list.
+  const o = overviewOf(uni.path);
+  const d = describeFile(uni.path);
+  const shapeOk = o.slices.every((s, i) =>
+    JSON.stringify(Object.keys(s).sort()) === JSON.stringify(Object.keys(d.slices[i]).sort()));
+  check(
+    shapeOk,
+    'overview(): slices are describe()\'s own shape, so a field means the same in both',
+    shapeOk ? `${o.slices.length} slice(s), ${Object.keys(o.slices[0]).length} fields each` : 'field set differs',
+  );
+
+  // Not requested means absent, not empty. An absent key is distinguishable from
+  // an empty one, which is the distinction the envelope's own comments keep making.
+  check(
+    !('symbols' in o) && !('strings' in o),
+    'overview(): an inventory that was not asked for is absent rather than empty',
+    `keys: ${Object.keys(o).join(', ')}`,
+  );
+
+  // The gap list, on every call. This is the load-bearing claim of the tool: that
+  // a consumer can tell evidence from silence. Asserted for presence and
+  // non-emptiness rather than exact contents, because the exact contents are
+  // checked against the README below.
+  check(
+    Array.isArray(o.notRead) && o.notRead.length >= 5,
+    'overview(): every result carries the list of what this package does not read',
+    `${o.notRead.length} item(s)`,
+  );
+
+  // The drift guard the code comment promises: `notRead` is kept in step with the
+  // README by hand, so this is what stops the two from diverging. A gap list that
+  // has drifted from the refusal list is worse than none, because it is a gap list
+  // that is confidently wrong — it would name a capability the README says this
+  // package refuses, or omit one it has quietly grown.
+  //
+  // Each entry is matched by keyword against the README, so the check survives
+  // rewording: it asserts that every claim `overview` makes about its own gaps has
+  // a documented counterpart, not that the two strings are equal.
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const KEYWORDS = [
+    ['code signature', 'Code signing, fixups'],
+    ['export trie', 'Code signing, fixups'],
+    ['Objective-C and Swift metadata', 'Parse ObjC/Swift metadata'],
+    ['dSYM and DWARF', 'Read dSYM / DWARF'],
+    ['FAT32', 'no FAT32'],
+    ['LC_LOAD_DYLIB', 'LC_LOAD_DYLIB'],
+    ['disassembly', 'Disassemble to text'],
+  ];
+  const undocumentedIn = (list) => list.filter((n) =>
+    !KEYWORDS.some(([frag, readmeFrag]) => n.includes(frag) && readme.includes(readmeFrag)));
+  const undocumented = undocumentedIn(o.notRead);
+  check(
+    undocumented.length === 0,
+    "overview(): every item in notRead is a refusal the README states",
+    undocumented.length ? undocumented.join('; ') : `${o.notRead.length} items, all documented`,
+  );
+  // Positive control. The matcher above is a pair of substring tests, and a matcher
+  // built from substring tests reports the same PASS whether or not it can fail —
+  // so it is run against an item it must reject. A gap list that had drifted would
+  // otherwise be indistinguishable from one that had not.
+  const control = undocumentedIn(['the colour of the binary’s hat']);
+  check(
+    control.length === 1,
+    'overview(): the notRead drift check can actually fail',
+    control.length === 1 ? 'a bogus gap is reported, as it must be' : `the matcher accepted a bogus gap`,
+  );
+
+  if (stringsBin) {
+    const s = overviewOf(stringsBin.path, { symbols: true, strings: true });
+    check(
+      s.symbols.count === s.symbols.symbols.length && !s.symbols.truncated && s.symbols.note === null,
+      'overview(): a small symbol list is reported complete, with no note',
+      `${s.symbols.count} name(s)`,
+    );
+    check(
+      s.strings.count > 0 && s.strings.count === s.strings.strings.length && s.strings.scanned > 0,
+      'overview(): strings carry an address and a count that agrees with the list',
+      `${s.strings.count} string(s) in ${s.strings.scanned} byte(s)`,
+    );
+    // The whole point of the tool: one slice, named, with both inventories from
+    // it. The CLI warns if these ever disagree, so the property is asserted here
+    // rather than left to that warning.
+    check(
+      s.symbols.arch === s.strings.arch && s.symbols.arch !== null,
+      'overview(): both inventories name one slice, and it is the same one',
+      `symbols ${s.symbols.arch}, strings ${s.strings.arch}`,
+    );
+
+    // A cap that bites must say so. A shortened list presented as complete is the
+    // confident wrong answer this package treats as a defect, so truncation is
+    // asserted from both sides: the flag flips, and the note appears.
+    const capped = overviewOf(stringsBin.path, { strings: true, max: 1 });
+    check(
+      capped.strings.truncated && capped.strings.count > capped.strings.strings.length,
+      'overview(): a capped string list reports truncated and keeps the true count',
+      `showing ${capped.strings.strings.length} of ${capped.strings.count}`,
+    );
+    check(
+      typeof capped.strings.note === 'string' && /raise --max/.test(capped.strings.note),
+      'overview(): a truncated list says how to get the rest',
+      capped.strings.note,
+    );
+  }
+
+  if (strippedBin) {
+    // Empty is explained. A stripped slice yields no defined symbols, and the
+    // reason has to travel with the empty list or the caller cannot tell a
+    // stripped binary from a reader that did not look.
+    const st = overviewOf(strippedBin.path, { symbols: true, strings: true });
+    check(
+      st.symbols.count === 0 && typeof st.symbols.note === 'string' && st.symbols.note.length > 0,
+      'overview(): a slice with no defined symbols says why, rather than returning []',
+      st.symbols.note,
+    );
+    // The harder half: zero strings because the section is *absent* is a fact
+    // about the file, and must not read the same as zero strings found by
+    // looking. Both serialise as an empty array, so the note is the only carrier.
+    check(
+      st.strings.count === 0 && typeof st.strings.note === 'string',
+      'overview(): zero strings carries a note naming the reason',
+      st.strings.note,
+    );
+  }
+
+  // `--arch` narrows the answer without pretending the file is thin, and an
+  // architecture that is not there falls through to all of them rather than
+  // failing — a preference, the same rule every other tool follows.
+  if (o.slices.length > 1) {
+    const first = o.slices[0].arch;
+    const narrowed = overviewOf(uni.path, { arch: first });
+    check(
+      narrowed.slices.length === 1 && narrowed.slices[0].arch === first && narrowed.fat === o.fat,
+      'overview(): --arch narrows the slices and leaves `fat` a fact about the file',
+      `${narrowed.slices.length} slice, fat=${narrowed.fat}`,
+    );
+    const absent = overviewOf(uni.path, { arch: 'ppc' });
+    check(
+      absent.slices.length === o.slices.length && Array.isArray(absent.notes),
+      'overview(): an absent architecture falls through to every slice, with a note',
+      `notes: ${JSON.stringify(absent.notes)}`,
+    );
+  }
+
+  // The flag surface, because `--max=abc` quietly falling back to the default
+  // would answer a different question than the one asked — the defect `--regexx`
+  // used to be, and the reason every tool refuses unknown flags.
+  const badMax = run('overview.mjs', ['--max=abc', uni.path]);
+  check(
+    badMax.code === 2 && /--max must be/.test(badMax.stderr),
+    'overview(): a non-numeric --max is a usage error, not a silent default',
+    `exit ${badMax.code}`,
+  );
+  const documented = [
+    ['--symbols', uni.path],
+    ['--strings', uni.path],
+    ['--symbols', '--strings', '--max=10', '--min=6', uni.path],
+    ['--compact', '--json', uni.path],
+    ['--arch=x86_64', uni.path],
+  ];
+  const rejected = documented.filter(([flag, ...rest]) => run('overview.mjs', [flag, ...rest]).code === 2);
+  check(
+    rejected.length === 0,
+    'overview(): every documented flag combination is accepted',
+    rejected.map((r) => r.join(' ')).join('; '),
+  );
+
+  // `--compact` must be smaller, and must still parse. A compact flag that emits
+  // invalid JSON would be worse than no flag at all, since the reader discovers
+  // it downstream.
+  const { toJSON } = await import('../src/output.mjs');
+  const wide = toJSON({ rows: Array.from({ length: 200 }, (_, i) => ({ i, name: `sym_${i}` })) }, 2);
+  const narrow = toJSON({ rows: Array.from({ length: 200 }, (_, i) => ({ i, name: `sym_${i}` })) }, 0);
+  check(
+    narrow.length < wide.length && JSON.parse(narrow).rows.length === 200,
+    'output: indent 0 is smaller than indent 2 and is still valid JSON',
+    `${wide.length} -> ${narrow.length} bytes (${((1 - narrow.length / wide.length) * 100).toFixed(0)}% smaller)`,
+  );
+  // And it must not have changed what any existing tool emits.
+  check(
+    toJSON({ a: 1n }).includes('0x1') && toJSON({ a: 1n }, 0).includes('0x1'),
+    'output: a BigInt still serialises as a hex string at either width',
+    toJSON({ a: 1n }),
+  );
 }
 
 /* ---- coverage: did this run test enough to mean anything? ------------ */

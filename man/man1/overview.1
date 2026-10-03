@@ -1,0 +1,132 @@
+.TH OVERVIEW 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.SH NAME
+overview \- report a Mach\-O file's whole structural picture in one call
+.SH SYNOPSIS
+.B overview
+.RI [ binary | bundle ]
+.RB [ \-\-json ]
+.RB [ \-\-symbols ]
+.RB [ \-\-strings ]
+.RB [ \-\-max=\fIn\fR ]
+.RB [ \-\-min=\fIn\fR ]
+.RB [ \-\-compact ]
+.RB [ \-b | \-\-binary
+.IR path ]
+.RB [ \-h | \-\-help ]
+.SH DESCRIPTION
+Reports every slice in a Mach\-O file with its segments, sections, load commands,
+header flags, UUID and entry point, and on request the symbol table and the
+contents of its C\-string sections.
+.PP
+Answering this completely with the other tools costs four invocations, and each
+of them chooses which slice of a universal binary to read independently. This
+reads the file once, so a symbol table and a list of strings in the same answer
+always come from the same architecture, and the result names which one that was.
+.PP
+The structure is exactly what
+.BR describe (1)
+reports, field for field, so
+.I .slices[0].sections
+means the same thing in both. This tool adds to that answer and never replaces
+part of it.
+.SH OPTIONS
+.TP
+.B \-\-symbols
+Include the symbol table: defined names, deduplicated by name and sorted by
+address. Imported names are counted but not listed, since they all carry address
+zero and would bury the real ones.
+.TP
+.B \-\-strings
+Include the contents of the C\-string sections.
+.TP
+.BI \-\-max= n
+Cap on each inventory. The default is 4000; 0 means unlimited. Whatever the cap
+drops is reported as
+.B truncated
+rather than silently shortened.
+.TP
+.BI \-\-min= n
+Shortest string to report. The default is 4.
+.TP
+.B \-\-compact
+Write the JSON on one line instead of indenting it. Measured at 41% smaller on
+an inventory of 4,000 rows. Has no effect on the text output.
+.TP
+.BR \-b ", " \-\-binary " " \fIpath\fR
+The binary to read.
+.TP
+.B \-\-json
+Write one JSON object to standard output and send prose to standard error.
+Addresses are rendered as
+.B "0x..."
+strings rather than numbers, because a 64\-bit virtual address does not survive
+a JSON number.
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit 0.
+.SH "WHAT IS NOT READ"
+Every result carries a
+.B notRead
+list, and the text output prints it on every run. This package names load
+commands but does not interpret them, and it does not read the code signature,
+entitlements, the export trie, chained fixups, Objective\-C or Swift metadata,
+dSYM or DWARF, FAT32 containers, or the dylib an
+.B LC_LOAD_DYLIB
+names.
+.PP
+The list is in the output on purpose. A JSON object that looks exhaustive and is
+silent about what it skipped cannot be told apart from one that genuinely has
+nothing to report, and that difference is the difference between a fact and a
+gap. See
+.BR README.md
+section \(lqWhat it will not do\(rq for why these are excluded.
+.SH ENVIRONMENT
+.TP
+.B MACHO_EXPLORER_BINARY
+The binary to read when none is given on the command line.
+.TP
+.B MACHO_EXPLORER_APP
+An application bundle to read, tried after
+.BR MACHO_EXPLORER_BINARY .
+.TP
+.B MACHO_EXPLORER_CONFIG
+Path to a replacement
+.IR config.json .
+.SH EXIT STATUS
+.TP
+.B 0
+The file was read.
+.TP
+.B 2
+Usage error.
+.TP
+.B 3
+The file could not be read, or is not a Mach\-O.
+.SH EXAMPLES
+.RS
+.nf
+overview /usr/local/go/bin/go
+overview \-\-symbols /usr/local/go/bin/go
+overview \-\-json \-\-compact \-\-symbols /usr/local/go/bin/go | jq '.data.symbols.count'
+.fi
+.RE
+.SH NOTES
+An empty inventory and an unimplemented one are different answers and are
+reported differently. A binary with no
+.B __cstring
+section yields zero strings with a note saying so, which is a fact about the
+file; a stripped slice yields no defined symbols with a note saying that, which
+is a fact about the slice. Neither is reported as an empty list on its own.
+.PP
+There is deliberately no equivalent tool on the MCP server, which makes the same
+argument about the same bundling: see
+.BR mcp (1).
+.SH SEE ALSO
+.BR describe (1),
+.BR sym (1),
+.BR findliteral (1),
+.BR audit (1),
+.BR fingerprint (1),
+.BR diff (1),
+.BR otool (1),
+.BR lipo (1)

@@ -104,12 +104,49 @@ means. That is not a footnote: see
 | `audit.mjs` | Is this file internally consistent? Every structural claim it makes about itself, checked, with a verdict and an exit status a build can gate on |
 | `fingerprint.mjs` | Is this the same **program** as that one? A digest that survives a rebuild, which a byte comparison cannot |
 | `diff.mjs` | What changed between two binaries — structural facts only, so a rebuilt pair does not read as a different program |
+| `overview.mjs` | The whole picture in one call: every slice, segment, section, load command, flag, UUID and entry point, plus `--symbols` and `--strings` on request — all read from **one** slice, and carrying a `notRead` list of what this package does not parse |
 
-Twelve tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
+Thirteen tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
 `sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, eight
 until `disasm.mjs` added the boundary decoder, and nine until `audit`, `fingerprint`
 and `diff` answered the three questions a build or a reviewer asks about *two*
-binaries at once.
+binaries at once. `overview` is the thirteenth, and it is the one that composes
+the others rather than adding a new kind of question — see below for why it is not
+called `dump`.
+
+### One call instead of four
+
+`describe` + `sym` + `findliteral --strings` is how you get a complete picture
+today, and each of those three independently chooses which slice of a universal
+binary to read. That is the real cost: nothing in any of the three outputs says
+which slice it chose, so a caller holding a symbol table and a string list has to
+work out whether they came from the same architecture. `overview` reads the file
+once and answers once.
+
+```sh
+$ overview --symbols --strings /usr/local/go/bin/go
+$ overview --json --compact --symbols /usr/local/go/bin/go | jq '.data.symbols.count'
+```
+
+`slices` is exactly `describe`'s own slice objects, so `.data.slices[0].sections`
+means the same thing in both and switching tools means relearning nothing.
+
+**It is not a "dump everything" tool, and that is the design.** Three things make
+it safe to hand to a program, and all three are the opposite of a god-object:
+
+| | |
+|---|---|
+| **Inventories are opt-in and capped** | The structure is 9.2 KB of JSON on a 14.5 MB Go binary; its 19,526 symbols turn that into 422 KB. A default that included them would be 99% symbol table on exactly the binaries where the structural half is what you wanted. `--max` defaults to 4000 and `--compact` is a further 41% off |
+| **`notRead` is in every result** | Code signature, entitlements, export trie, chained fixups, ObjC/Swift metadata, dSYM/DWARF, FAT32. A JSON object that looks exhaustive and is silent about what it skipped cannot be told from one that genuinely has nothing to report |
+| **Zero is never bare** | No `__cstring` section gives zero strings *and a note saying the section is absent* — a fact about the file. A stripped slice gives no defined symbols *and a note saying that* — a fact about the slice. Both would otherwise be the same `[]` |
+
+The names it cannot read are the ones `README.md` § *What it will not do* already
+refuses, and they are named in the output rather than left to a caveat. Adopting
+"everything" as the contract is the strategy change `CONTRIBUTING.md` § *Scope
+comes first* says belongs in an issue, not a pull request.
+
+There is deliberately **no `overview` on the MCP server**, which makes the same
+argument about the same bundling — see the note in `src/mcp-tools.mjs`.
 
 ### Three questions about two binaries
 
@@ -194,6 +231,9 @@ address by *looking* like one turns a typo into a confident wrong answer.
 | `--strict` | `audit`: fail on warnings as well as errors. The default fails only where the file disagrees with itself |
 | `--branches` | `disasm`: report only branches, as `{from, to}` edges, with the byte column dropped |
 | `--count=<n>`, `--bytes=<n>` | `disasm`: stop after `n` instructions, or after `n` bytes. `--count 0` means no cap, and is only sensible with `--bytes` |
+| `--symbols`, `--strings` | `overview`: add that inventory to the structural answer. Both are off by default and both are capped |
+| `--max=<n>`, `--min=<n>` | `overview`: cap each inventory (default 4000, `0` unlimited) and the shortest string to report (default 4). `--min` is the same flag `findliteral` uses |
+| `--compact` | `overview`: write the JSON on one line instead of indenting it. 41% smaller on a 4,000-row inventory |
 | `-h`, `--help` | Print usage |
 
 **An unrecognised flag is a usage error**, exit 2, with a suggestion when the
