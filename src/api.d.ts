@@ -330,9 +330,9 @@ export interface FingerprintComparison {
   caveat: string | null;
 }
 
-/** One structural difference between two binaries. */
+/** One difference between two binaries — a structural fact, or a literal string. */
 export interface BinaryDifference {
-  category: 'slices' | 'header' | 'flags' | 'load-commands' | 'sections' | 'symbols';
+  category: 'slices' | 'header' | 'flags' | 'load-commands' | 'sections' | 'symbols' | 'literals';
   arch: string | null;
   kind: string;
   detail: string;
@@ -349,8 +349,9 @@ export interface BinaryDiff {
     differenceCount: number;
     symbols: { a: number; b: number; added: number; removed: number };
     sections: { a: number; b: number };
+    literals: { a: number; b: number; added: number; removed: number };
   }>;
-  /** Structural changes. The verdict is computed from these alone. */
+  /** Structural and content changes. The verdict is computed from these alone. */
   differences: BinaryDifference[];
   /** UUID and provenance-command changes — reported, never counted. */
   buildMetadata: Array<{ arch: string | null; kind: string; detail: string; name: string | null }>;

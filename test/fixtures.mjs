@@ -891,14 +891,13 @@ function bits32Fixture() {
  * cstring section — which is what makes the "only these sections" rule worth
  * testing rather than assuming.
  */
-function stringsFixture() {
+function stringsFixture({ strings = [
+  'macho-fixture-alpha',
+  'macho-fixture-beta',
+  'a short one',
+  'macho-fixture-gamma-with-a-longer-body-to-exceed-the-default-minimum',
+] } = {}) {
   const c = codeFixture(CPU_X86_64);
-  const strings = [
-    'macho-fixture-alpha',
-    'macho-fixture-beta',
-    'a short one',
-    'macho-fixture-gamma-with-a-longer-body-to-exceed-the-default-minimum',
-  ];
   // Laid out as one NUL-delimited blob, which is what a C string section really
   // is. Padding included, so the reader has to honour `size` rather than read to
   // the end of the section and pick up whatever follows.
@@ -2286,6 +2285,16 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
   const zf = zerofillFixture();
   const zfAddrs = zf.addresses;
   const st = stringsFixture();
+  // A second string carrier that shares `strings`'s code but not its strings: one
+  // of them removed, one added. `diff`'s literal comparison needs a pair whose
+  // *only* interesting difference is textual, or the added/removed lists could be
+  // empty for the wrong reason.
+  const st2 = stringsFixture({ strings: [
+    'macho-fixture-alpha',
+    'a short one',
+    'macho-fixture-delta-added-in-the-second-build',
+    'macho-fixture-gamma-with-a-longer-body-to-exceed-the-default-minimum',
+  ] });
   const b32 = bits32Fixture();
   const meta = metaFixture();
   const dmg = damagedFixture();
@@ -2320,6 +2329,7 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     'populated.macho': thinMachO({ cputype: CPU_X86_64, text: populated.text, data: populated.data, symbols: populated.symbols }),
     'zerofill.macho': zf.buf,
     'strings.macho': st.buf,
+    'strings2.macho': st2.buf,
     'bits32.macho': b32.buf,
     // Header-level metadata: flags, section type + attributes, and the three load
     // commands that carry values rather than just declaring a dependency.
@@ -2358,6 +2368,7 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     populated: BUILT['populated.macho'].length,
     zerofill: BUILT['zerofill.macho'].length,
     strings: BUILT['strings.macho'].length,
+    strings2: BUILT['strings2.macho'].length,
     bits32: BUILT['bits32.macho'].length,
     meta: BUILT['meta.macho'].length,
     damaged: BUILT['damaged.macho'].length,
@@ -2413,6 +2424,14 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
       all: st.strings,
       longOnly: st.strings.filter((s) => s.length > 20),
       dataOffset: st.addresses.stringDataOffset,
+    },
+    // The second string carrier, stated as what *changed* rather than as its
+    // contents: the point of the pair is the delta, and a test that recomputes the
+    // delta from the file proves only that set subtraction works.
+    strings2Expected: {
+      all: st2.strings,
+      added: st2.strings.filter((s) => !st.strings.includes(s)),
+      removed: st.strings.filter((s) => !st2.strings.includes(s)),
     },
     // The 32-bit fixture's expectations, from the generator's own arithmetic. Its
     // addresses must fit in 32 bits — asserted here as well as in the suite,

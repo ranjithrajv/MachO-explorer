@@ -39,9 +39,9 @@
 /**
  * Envelope keys every tool emits, so consumers can rely on the shape.
  *
- * Nine tools, and `sym` is one of them rather than the two it replaced: the
- * `symgrep`/`symfind` pair went away with the merge rather than being kept as
- * aliases, so neither name can appear here any more.
+ * `sym` is one of them rather than the two it replaced: the `symgrep`/`symfind`
+ * pair went away with the merge rather than being kept as aliases, so neither name
+ * can appear here any more.
  *
  * The list is the suite's roster: `smoke.mjs` walks it to check that every tool
  * answers `--help`, and refuses unknown flags, on the reasoning that a tool whose
@@ -51,6 +51,7 @@
  */
 export const TOOLS = [
   'describe', 'sym', 'symlookup', 'findcall', 'findliteral', 'mapliteral', 'a2o', 'o2a', 'disasm',
+  'audit', 'fingerprint', 'diff',
 ];
 
 /**

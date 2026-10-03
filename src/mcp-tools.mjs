@@ -575,13 +575,13 @@ function lines(tool, env) {
     case 'diff': {
       L.push(`${d.a.path}`);
       L.push(`${d.b.path}`);
-      L.push(`  ${d.verdict}  —  ${n(d.counts.differences)} structural difference(s), ${n(d.counts.buildMetadata)} build-metadata change(s), ${n(d.counts.sizeChanges)} size change(s)`);
+      L.push(`  ${d.verdict}  —  ${n(d.counts.differences)} difference(s), ${n(d.counts.buildMetadata)} build-metadata change(s), ${n(d.counts.sizeChanges)} size change(s)`);
       for (const row of d.perArch ?? []) {
-        L.push(`  ${row.arch}  symbols ${n(row.symbols.a)} -> ${n(row.symbols.b)} (+${row.symbols.added}/-${row.symbols.removed}), sections ${n(row.sections.a)} -> ${n(row.sections.b)}`);
+        L.push(`  ${row.arch}  symbols ${n(row.symbols.a)} -> ${n(row.symbols.b)} (+${row.symbols.added}/-${row.symbols.removed}), sections ${n(row.sections.a)} -> ${n(row.sections.b)}, strings ${n(row.literals.a)} -> ${n(row.literals.b)} (+${row.literals.added}/-${row.literals.removed})`);
       }
       for (const x of (d.differences ?? []).slice(0, 12)) L.push(`    [${x.category}] ${x.detail}`);
       if ((d.differences ?? []).length > 12) L.push(`    ... and ${d.differences.length - 12} more`);
-      if (!(d.differences ?? []).length) L.push('    no structural differences');
+      if (!(d.differences ?? []).length) L.push('    no differences');
       for (const m of d.buildMetadata ?? []) L.push(`    build metadata: ${m.detail}`);
       if (d.sizeChanges?.length) L.push(`    ${n(d.sizeChanges.length)} section size change(s), reported but not counted as differences`);
       L.push('  Sizes and UUIDs are excluded on purpose: a rebuild moves both without changing the program.');
@@ -1132,18 +1132,19 @@ export const TOOLS = [
     name: 'diff',
     title: 'What changed between two Mach-O binaries',
     description:
-      'Structural differences only: architectures, header flags, load commands, sections, symbols.\n\n' +
+      'Differences in structure and literal content: architectures, header flags, load commands, sections, symbols, and strings.\n\n' +
       'Addresses, sizes, offsets and the UUID are NOT counted as differences — otherwise every rebuilt pair ' +
-      'would read as changed, which is what `cmp` already tells you and does not improve on.\n\n' +
+      'would read as changed, which is what `cmp` already tells you and does not improve on. A literal string that ' +
+      'appears or disappears IS counted: it does not move on a rebuild, so it is a change to the program.\n\n' +
       'Build-metadata changes (UUIDs, signing) and section size changes are reported in their own fields and ' +
       'excluded from the verdict, because a recompiled dependency moves a size without changing the program.\n\n' +
-      'Use `max_names` to cap how many symbol names are listed; counts are always exact.',
+      'Use `max_names` to cap how many symbol or string names are listed; counts are always exact.',
     inputSchema: obj(
       {
         binary: BINARY,
         other: { type: 'string', minLength: 1, description: 'The binary to compare against.' },
         arch: ARCH,
-        max_names: { type: 'integer', minimum: 1, description: 'Cap on symbol names listed per direction. Default 20.' },
+        max_names: { type: 'integer', minimum: 1, description: 'Cap on symbol and string names listed per direction. Default 20.' },
       },
       ['binary', 'other'],
     ),
@@ -1162,7 +1163,7 @@ export const TOOLS = [
           errors: [],
           notes: [
             r.verdict,
-            `${r.counts.differences} structural difference(s); ${r.counts.buildMetadata} build-metadata change(s) reported but not counted`,
+            `${r.counts.differences} difference(s); ${r.counts.buildMetadata} build-metadata change(s) reported but not counted`,
             'a UUID difference is build metadata, never a structural difference',
           ],
         };

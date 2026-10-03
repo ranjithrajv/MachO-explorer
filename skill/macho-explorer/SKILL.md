@@ -67,18 +67,21 @@ from one template differ in almost nothing structural.
 |---|---|---|
 | same build? | `fingerprint` | identical `uuid` — exact, useless once anything relinks |
 | same program? | `fingerprint` | identical `fingerprint` — survives a rebuild |
-| what changed? | `diff` | structural facts only, so a rebuilt pair reads as unchanged |
+| what changed? | `diff` | structure and literal content, so a rebuilt pair reads as unchanged |
 
 ```sh
 fingerprint a.dylib b.dylib          # "same program, rebuilt"
-diff a.dylib b.dylib                 # 0 structural differences, exit 0
+diff a.dylib b.dylib                 # 0 differences, exit 0
 ```
 
 `diff` keeps three lists apart and only the first decides the verdict:
-`differences` (structural), `buildMetadata` (UUIDs, signing — reported, never
-counted) and `sizeChanges` (a recompiled dependency moves a size without changing
-the program). **A UUID difference is never a structural difference.** If you see
-one in `differences`, that is a bug worth reporting.
+`differences` (structure and literal strings), `buildMetadata` (UUIDs, signing —
+reported, never counted) and `sizeChanges` (a recompiled dependency moves a size
+without changing the program). **A UUID difference is never a structural
+difference.** If you see one in `differences`, that is a bug worth reporting. An
+added or removed literal string *is* one: it does not move on a rebuild, so it is a
+change to the program. Strings are compared by text, since the whole point is that
+their addresses differ.
 
 Check `tier` before relying on a `fingerprint` match: `structure-only` means the
 binary is stripped, so the match rests on section and load-command shape alone —

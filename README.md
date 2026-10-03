@@ -103,7 +103,7 @@ means. That is not a footnote: see
 | `disasm.mjs` | Where do instructions start and end at this address, and where do they branch? Instruction lengths plus resolved **direct** branch edges for `arm64`, `arm64e` and `x86_64` — bytes, not mnemonics |
 | `audit.mjs` | Is this file internally consistent? Every structural claim it makes about itself, checked, with a verdict and an exit status a build can gate on |
 | `fingerprint.mjs` | Is this the same **program** as that one? A digest that survives a rebuild, which a byte comparison cannot |
-| `diff.mjs` | What changed between two binaries — structural facts only, so a rebuilt pair does not read as a different program |
+| `diff.mjs` | What changed between two binaries — structure and literal content, so a rebuilt pair does not read as a different program |
 
 Twelve tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
 `sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, eight
@@ -120,7 +120,7 @@ three different answers, and every existing tool gives you the wrong one:
 |---|---|
 | **same build** | the `LC_UUID`. Exact, and useless the moment anything is relinked |
 | **same program** | a `fingerprint`. Survives a rebuild; changes if a symbol or a section does |
-| **what changed** | a `diff`. Structural facts only, so a rebuilt pair is not a changed one |
+| **what changed** | a `diff`. Structure and literal content, so a rebuilt pair is not a changed one |
 
 Byte comparison gets both directions wrong. Two builds of one source differ in every
 address — PIE and ASLR move them — in the dylib version fields, and in any
@@ -132,7 +132,7 @@ structural diff calls them the same.
 $ fingerprint v1.0/libthing.dylib v1.1/libthing.dylib
   same program, rebuilt
 $ diff v1.0/libthing.dylib v1.1/libthing.dylib
-  same program, rebuilt  —  0 structural difference(s), 1 build-metadata change(s)
+  same program, rebuilt  —  0 difference(s), 1 build-metadata change(s)
   exit 0
 ```
 

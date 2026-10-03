@@ -1950,6 +1950,51 @@ console.log('\na2o / o2a: address and file offset');
           symDiff ? symDiff.detail.slice(0, 70) : 'no symbol diff',
         );
 
+        // Literal strings, added and removed, by content. The `strings`/`strings2`
+        // pair shares its code and symbols and differs only in text: one string
+        // dropped, one added. Without a pair like this the added/removed lists could
+        // be empty for the wrong reason and still pass, which is the failure a
+        // fixture-only corpus is supposed to make impossible.
+        const stringsBin = binaries.find((x) => x.stem === 'strings');
+        const strings2Bin = binaries.find((x) => x.stem === 'strings2');
+        const ADDED = 'macho-fixture-delta-added-in-the-second-build';
+        const REMOVED = 'macho-fixture-beta';
+        if (stringsBin && strings2Bin) {
+          const lit = diffBinaries(stringsBin.path, strings2Bin.path);
+          const added = lit.differences.find((d) => d.category === 'literals' && d.kind === 'literals-added');
+          const removed = lit.differences.find((d) => d.category === 'literals' && d.kind === 'literals-removed');
+          check(
+            added && added.detail.includes(JSON.stringify(ADDED)),
+            'diff: a literal that appeared is reported as added, by content',
+            added ? added.detail.slice(0, 80) : 'no literals-added difference',
+          );
+          check(
+            removed && removed.detail.includes(JSON.stringify(REMOVED)),
+            'diff: a literal that disappeared is reported as removed, by content',
+            removed ? removed.detail.slice(0, 80) : 'no literals-removed difference',
+          );
+          // Quoted, so a string whose *content* is a number or a minus sign cannot
+          // read as a count or as a flag in the detail line.
+          check(
+            added && /"/.test(added.detail),
+            'diff: literal details quote the strings, so content cannot read as a count',
+            added ? added.detail.slice(0, 60) : 'no literals-added difference',
+          );
+          check(
+            lit.perArch.some((r) => r.literals.added === 1 && r.literals.removed === 1
+              && r.literals.a === 4 && r.literals.b === 4),
+            'diff: the per-architecture literal summary agrees with the pair',
+            JSON.stringify(lit.perArch.map((r) => r.literals)),
+          );
+          check(
+            run('diff.mjs', [stringsBin.path, strings2Bin.path]).code === 1,
+            'diff: a change only in literal content exits 1, not 0',
+            `exit ${run('diff.mjs', [stringsBin.path, strings2Bin.path]).code}`,
+          );
+        } else {
+          skip('diff literals', 'the strings fixtures are missing — run npm run test:fixtures');
+        }
+
         // Slices present on one side only.
         if (universal) {
           const thinVsFat = diffBinaries(rebuilt.path, universal.path);

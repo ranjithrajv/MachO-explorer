@@ -2084,11 +2084,38 @@ export function diffBinaries(a, b, { arch = null, maxNames = 20 } = {}) {
         removed.length, null);
     }
 
+    // Literal strings, by content. A string that appears or disappears is a change
+    // to the program — a new error message, a removed URL, a branch that now
+    // compiles out — and unlike an address it does not move on a rebuild, so it
+    // belongs in `differences` rather than beside the UUID. Matched by text, since
+    // the whole point is that the addresses differ.
+    //
+    // Quoted in the detail so a string whose content is a number or a `-` cannot
+    // read as a count or a flag. The list is capped like the symbol lists, for the
+    // same reason: a Go binary with 200,000 strings otherwise produces a diff nobody
+    // reads past the first line.
+    const litA = before.literalTexts;
+    const litB = after.literalTexts;
+    const litAdded = [...litB].filter((x) => !litA.has(x));
+    const litRemoved = [...litA].filter((x) => !litB.has(x));
+    const quote = (xs) => xs.slice(0, maxNames).map((x) => JSON.stringify(x)).join(', ');
+    if (litAdded.length) {
+      add('literals', archName, 'literals-added',
+        `${archName}: ${litAdded.length} string(s) added${litAdded.length > maxNames ? `, first ${maxNames}: ${quote(litAdded)}` : `: ${quote(litAdded)}`}`,
+        null, litAdded.length);
+    }
+    if (litRemoved.length) {
+      add('literals', archName, 'literals-removed',
+        `${archName}: ${litRemoved.length} string(s) removed${litRemoved.length > maxNames ? `, first ${maxNames}: ${quote(litRemoved)}` : `: ${quote(litRemoved)}`}`,
+        litRemoved.length, null);
+    }
+
     perArch.push({
       arch: archName,
       differenceCount: differences.length - d0,
       symbols: { a: symA.size, b: symB.size, added: added.length, removed: removed.length },
       sections: { a: sa.size, b: sb.size },
+      literals: { a: litA.size, b: litB.size, added: litAdded.length, removed: litRemoved.length },
     });
   }
 
@@ -2156,6 +2183,44 @@ const DYLIB_COMMANDS = new Set([
   'LC_ID_DYLIB',
 ]);
 
+/**
+ * The distinct NUL-terminated strings in a slice's C-string sections.
+ *
+ * The same sections `findStrings` reports and the same `printable` filter, so a
+ * string that `findliteral` can find is a string `diff` can diff — the alternative
+ * is two tools disagreeing about what a literal is, which is the failure this
+ * package treats as a defect rather than a coin toss. A `Set` rather than a list
+ * because the question here is set membership ("did this string appear or
+ * disappear"), and a binary that happens to hold `"error"` four hundred times
+ * changed once when it stops holding it.
+ *
+ * Bounded by each section's own size and clamped to the file, exactly as
+ * `findStrings` does, because a linker can record a section that runs past the end
+ * and reading it would throw in the middle of an otherwise good answer.
+ */
+function literalTextsOf(f, s, thin, min = 4) {
+  const out = new Set();
+  for (const sec of thin.sections) {
+    if (!CSTRING_SECTIONS.includes(sec.sectname) || sec.size === 0) continue;
+    const lo = s.offset + sec.offset;
+    const hi = Math.min(lo + sec.size, f.size);
+    if (hi <= lo) continue;
+    const buf = f.read(lo, hi - lo);
+    let start = 0;
+    while (start < buf.length) {
+      const end = buf.indexOf(0, start);
+      const stop = end === -1 ? buf.length : end;
+      if (stop - start >= min) {
+        const raw = buf.subarray(start, stop);
+        if (printable(raw)) out.add(raw.toString('latin1'));
+      }
+      if (end === -1) break;
+      start = end + 1;
+    }
+  }
+  return out;
+}
+
 /** Everything a per-slice comparison needs, read once. */
 function readSide(path, arch) {
   const f = opener(path);
@@ -2176,6 +2241,7 @@ function readSide(path, arch) {
         symbolNames: readSymbols(f, s.offset, thin).entries
           .filter((e) => e.defined)
           .map((e) => e.name),
+        literalTexts: literalTextsOf(f, s, thin),
       };
     }
     return null;

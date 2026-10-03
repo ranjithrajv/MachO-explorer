@@ -12,16 +12,22 @@
  * cannot distinguish a rebuilt binary from a different program, and cannot tell a
  * reviewer that the one thing they cared about did not move.
  *
- * This diff is over structural facts: which architectures are present, which header
- * flags are set, which load commands and sections exist, which symbols are defined.
- * None of those move on a rebuild, and all of them change when the program does.
+ * This diff is over structural facts and literal content: which architectures are
+ * present, which header flags are set, which load commands and sections exist,
+ * which symbols are defined, and which strings are present. None of those move on a
+ * rebuild, and all of them change when the program does.
  *
  * ## Three lists, and why the verdict only reads one
  *
- *   differences     structural changes — the verdict is computed from these alone
+ *   differences     changes to structure or content — the verdict reads these alone
  *   buildMetadata   UUIDs, and the presence of signing/provenance commands
  *   sizeChanges     section sizes, reported because they matter and counted
  *                   separately because a recompiled dependency moves them
+ *
+ * A string that appears or disappears is a `differences` entry, not metadata: it is
+ * a changed error message or a branch that now compiles out, and unlike an address
+ * it does not move when the same source is rebuilt. Matched by text, because the
+ * whole point is that the addresses differ.
  *
  * Build metadata is reported rather than hidden, and kept out of the verdict for the
  * same reason `fingerprint` excludes it: a tool that called every rebuilt pair
@@ -29,8 +35,8 @@
  *
  * ## Exit status
  *
- *   0  no structural differences
- *   1  there are structural differences — a negative answer, not a failure
+ *   0  nothing changed but build metadata and sizes
+ *   1  the structure or the content changed — a negative answer, not a failure
  *   2  usage error
  *   3  a file could not be read
  *
@@ -46,13 +52,13 @@ const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 const HELP = [
   'usage: node src/diff.mjs <binary> <binary> [--json] [--arch=<name>] [--max=<n>]',
   '',
-  '  structural differences only: architectures, header flags, load commands,',
-  '  sections and symbols. Addresses, sizes, offsets and the build UUID are not',
-  '  counted as differences — a rebuilt binary should not read as a different one.',
+  '  differences only: architectures, header flags, load commands, sections,',
+  '  symbols and literal strings. Addresses, sizes, offsets and the build UUID are',
+  '  not counted as differences — a rebuilt binary should not read as a different one.',
   '',
   'options:',
   '  --arch=<name>      compare only this architecture',
-  '  --max=<n>          cap on symbol names listed per direction (default 20)',
+  '  --max=<n>          cap on symbol and string names listed per direction (default 20)',
   '  --json             one JSON object on stdout; prose to stderr',
   '  -h, --help         this message',
 ];
@@ -105,7 +111,7 @@ if (flags.has('json')) {
     binary: first,
     ok: true,
     notes: [
-      'differences are structural; addresses, sizes, offsets and the UUID are not counted',
+      'differences cover structure and literal content; addresses, sizes, offsets and the UUID are not counted',
       'buildMetadata records the changes a rebuild makes, which is why a rebuilt pair can have differences: [] and still differ',
     ],
     data: { ...result, other: second },
@@ -114,12 +120,13 @@ if (flags.has('json')) {
 
 console.log(first);
 console.log(second);
-console.log(`\n  ${result.verdict}  —  ${result.counts.differences} structural difference(s), ` +
+console.log(`\n  ${result.verdict}  —  ${result.counts.differences} difference(s), ` +
   `${result.counts.buildMetadata} build-metadata change(s), ${result.counts.sizeChanges} size change(s)`);
 
 for (const row of result.perArch) {
   console.log(`\n  ${row.arch}  symbols ${row.symbols.a} -> ${row.symbols.b} ` +
-    `(+${row.symbols.added}/-${row.symbols.removed}), sections ${row.sections.a} -> ${row.sections.b}`);
+    `(+${row.symbols.added}/-${row.symbols.removed}), sections ${row.sections.a} -> ${row.sections.b}, ` +
+    `strings ${row.literals.a} -> ${row.literals.b} (+${row.literals.added}/-${row.literals.removed})`);
 }
 
 if (result.differences.length) {

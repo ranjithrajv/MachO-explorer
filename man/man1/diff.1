@@ -1,6 +1,6 @@
 .TH DIFF 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-diff \- structural differences between two Mach-O binaries
+diff \- differences in structure and literal content between two Mach-O binaries
 .SH SYNOPSIS
 .B diff
 .I binary-a
@@ -9,9 +9,10 @@ diff \- structural differences between two Mach-O binaries
 .RB [ \-\-arch= name ]
 .RB [ \-\-max= n ]
 .SH DESCRIPTION
-Reports what changed between two binaries, over structural facts only: which
-architectures are present, which header flags are set, which load commands and
-sections exist, and which symbols are defined.
+Reports what changed between two binaries, over structural facts and literal
+content: which architectures are present, which header flags are set, which load
+commands and sections exist, which symbols are defined, and which strings are
+present.
 .SH WHY NOT CMP
 .B cmp
 between two builds of one source reports that every byte from the load base onwards
@@ -25,7 +26,10 @@ program does.
 .SH THREE LISTS
 .TP
 .B differences
-structural changes. The verdict is computed from these alone.
+changes to structure or content. The verdict is computed from these alone. A
+literal string that appears or disappears is one of these, matched by text: it
+does not move on a rebuild, so it is a change to the program rather than build
+noise.
 .TP
 .B buildMetadata
 UUIDs, and the presence of signing and provenance commands.
@@ -41,10 +45,10 @@ asked for.
 .SH EXIT STATUS
 .TP
 .B 0
-no structural differences
+nothing changed but build metadata and sizes
 .TP
 .B 1
-there are structural differences \- a negative answer, not a failure
+the structure or the content changed \- a negative answer, not a failure
 .TP
 .B 2
 usage error
@@ -61,8 +65,9 @@ full. That is the case this tool exists for, and failing it would be absurd.
 compare only this architecture
 .TP
 .BI \-\-max= n
-cap on symbol names listed per direction (default 20). Counts are always exact; a
-19,000-symbol binary would otherwise produce a diff nobody reads past the first line.
+cap on symbol and string names listed per direction (default 20). Counts are
+always exact; a 19,000-symbol binary would otherwise produce a diff nobody reads
+past the first line.
 .SH EXAMPLES
 .PP
 .nf
