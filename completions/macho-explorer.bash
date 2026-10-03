@@ -23,6 +23,9 @@ _macho_opts_for() {
         a2o)          echo "--json -h --help --arch -b --binary" ;;
         o2a)          echo "--json -h --help --arch -b --binary" ;;
         disasm)       echo "--json -h --help --branches --count --bytes --arch -b --binary" ;;
+        audit)        echo "--json -h --help --strict --arch -b --binary" ;;
+        fingerprint)  echo "--json -h --help --arch" ;;
+        diff)         echo "--json -h --help --arch --max" ;;
         *)            echo "" ;;
     esac
 }
@@ -92,7 +95,7 @@ _macho_complete() {
 
 for _macho_cmd in describe sym symlookup findcall \
                   findliteral mapliteral a2o o2a \
-                  disasm; do
+                  disasm audit fingerprint diff; do
     complete -F _macho_complete "$_macho_cmd"
 done
 unset _macho_cmd

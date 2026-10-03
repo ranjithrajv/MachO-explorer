@@ -651,6 +651,13 @@ console.log('\nmcp: the protocol\n');
     'mapliteral': realMapLiteral ? [{ binary: REAL, literal: realMapLiteral }] : [],
     'a2o': realAddr ? [{ binary: REAL, addresses: [realAddr] }] : [],
     'o2a': realOffset !== null ? [{ binary: REAL, offsets: [realOffset] }] : [],
+    // The three identity tools need no derived input — a path is the whole
+    // argument — which is itself worth asserting: they were the only tools here
+    // that could be probed against a real binary without first finding something
+    // inside one.
+    'audit': [{ binary: REAL }],
+    'fingerprint': [{ binary: REAL }],
+    'diff': [{ binary: REAL, other: REAL }],
   };
 
   const SKIP_WHY = {

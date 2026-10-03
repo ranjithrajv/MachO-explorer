@@ -154,22 +154,77 @@ for (const name of SKILLS) {
   // error asks the question that actually matters: does passing this change
   // anything, or is it a no-op the skill is instructing an agent to rely on?
   const probeBin = path.join(FIXTURES, 'populated.macho');
+  const rebuilt = path.join(FIXTURES, 'rebuilt.macho');
+  const rebuilt2 = path.join(FIXTURES, 'rebuilt2.macho');
+
+  // Per-tool arguments, because a flag check is only meaningful if the tool got far
+  // enough to parse it. `audit` takes a bare path, `diff` takes two, and `disasm`
+  // takes an address and a count — feeding them the older tools' arguments makes
+  // them exit 2 on the *arguments* and the flag looks rejected when it is not.
+  //
+  // The tool list comes from package.json's `bin`, which is authoritative, and this
+  // is a correction rather than an improvement. Deriving it from `src/*.mjs` instead
+  // swept in the non-CLI modules — `api.mjs`, `output.mjs`, `bundle.mjs`,
+  // `instruction.mjs` — and those exit 0 for *any* argument because they have no CLI
+  // to reject one. So the first module tried accepted everything, every flag passed,
+  // and the check went green while testing nothing at all. A guard that silently
+  // stops guarding is worse than no guard, and this file's own comment says so.
+  //
+  // `mcp` is excluded from the same reasoning, for a different reason: it is a stdio
+  // server, so it reads stdin until stdin closes and then exits 0 — whatever it was
+  // handed. It would "accept" any flag the same way. It genuinely takes no flags of
+  // its own, so there is nothing here for it to prove.
+  const TOOLS_ON_DISK = Object.keys(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).bin ?? {})
+    .filter((t) => t !== 'mcp');
+
+  const argsFor = (t, flag) => {
+    const src = path.join(ROOT, 'src', `${t}.mjs`);
+    switch (t) {
+      case 'audit':
+        return [src, `--${flag}`, rebuilt];
+      case 'fingerprint':
+        return [src, `--${flag}`, probeBin];
+      case 'diff':
+        return [src, `--${flag}`, rebuilt, rebuilt2];
+      case 'disasm':
+        return [src, `--${flag}`, '0x100000160', probeBin, '1'];
+      case 'sym': {
+        // The corpus flags change `sym`'s shape: `--in` *replaces* the binary
+        // positional, so the ordinary `sym --flag pop <binary>` arguments become
+        // `sym --flag <dir> pop` — a pattern and an extra positional, which `sym`
+        // refuses as a usage error. That made `--in` and `--per-file` look
+        // rejected by every tool when they are accepted by the only one that has
+        // them, and the guard was reporting a real property as a defect.
+        const CORPUS_VALUE_FLAGS = new Set(['in', 'per-file', 'max-files', 'max-depth']);
+        if (CORPUS_VALUE_FLAGS.has(flag)) {
+          const value = flag === 'in' ? path.join(HERE, 'fixtures') : '5';
+          return [src, `--${flag}`, value, 'pop'];
+        }
+        if (flag === 'matched-only') return [src, `--${flag}`, 'pop', '--in', path.join(HERE, 'fixtures')];
+        break;
+      }
+      default:
+        break;
+    }
+    const args = [src, `--${flag}`];
+    if (t === 'sym') args.push('pop');
+    else if (t === 'symlookup' || t === 'a2o') args.push('0x100000120');
+    else if (t === 'o2a') args.push('0x120');
+    else if (t === 'findcall') args.push('0x100000220');
+    else if (t === 'findliteral' || t === 'mapliteral') args.push('pop');
+    args.push(t === 'describe' || t === 'sym' || t === 'findcall' || t === 'findliteral' || t === 'mapliteral' ? probeBin : '-b');
+    if (['symlookup', 'a2o', 'o2a', 'describe'].includes(t)) args.push(probeBin);
+    return args;
+  };
+
   const runFlag = (flag) => {
-    for (const t of ['describe', 'sym', 'symlookup', 'findcall', 'findliteral', 'mapliteral', 'a2o', 'o2a']) {
+    for (const t of TOOLS_ON_DISK) {
       const src = path.join(ROOT, 'src', `${t}.mjs`);
       if (!fs.existsSync(src)) continue;
       // A recognised flag must not produce a usage error (2). `describe` rejects
       // everything but --json and -b, so it answers for no flag at all and the
       // others have to.
-      const args = [src, `--${flag}`];
-      if (t === 'sym') args.push('pop');
-      else if (t === 'symlookup' || t === 'a2o') args.push('0x100000120');
-      else if (t === 'o2a') args.push('0x120');
-      else if (t === 'findcall') args.push('0x100000220');
-      else if (t === 'findliteral' || t === 'mapliteral') args.push('pop');
-      args.push(t === 'describe' || t === 'sym' || t === 'findcall' || t === 'findliteral' || t === 'mapliteral' ? probeBin : '-b');
-      if (['symlookup', 'a2o', 'o2a', 'describe'].includes(t)) args.push(probeBin);
-      const r = spawnSync(process.execPath, args, { encoding: 'utf8' });
+      const r = spawnSync(process.execPath, argsFor(t, flag), { encoding: 'utf8' });
       if (r.status !== 2) return true;
     }
     return false;

@@ -1,0 +1,93 @@
+.TH FINGERPRINT 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.SH NAME
+fingerprint \- identify a Mach-O, and compare two of them
+.SH SYNOPSIS
+.B fingerprint
+.I binary
+.RB [ \-\-json ]
+.RB [ \-\-arch= name ]
+.br
+.B fingerprint
+.I a
+.I b
+.RB [ \-\-json ]
+.RB [ \-\-arch= name ]
+.SH DESCRIPTION
+Answers
+.RB \(lq "is this the same program as that one?" \(rq,
+which is a different question from
+.RB \(lq "are these the same file?" \(rq
+and the one you actually have when comparing a build against a baseline.
+.SH THREE QUESTIONS, THREE ANSWERS
+.TP
+.B uuid
+the same
+.IR build .
+Exact, and useless the moment anything is relinked.
+.TP
+.B fingerprint
+the same
+.IR program .
+Survives a rebuild; changes if a symbol or a section does.
+.TP
+.B structure
+the same
+.IR shape .
+Weaker, and all a stripped binary can offer.
+.PP
+Every existing answer is a byte comparison, and byte comparison gets it wrong in
+both directions. Two builds of one source differ in every address, because PIE and
+ASLR move them; in the current-version fields of the dylibs they load; and in any
+timestamp \- so
+.B cmp
+reports them different. Two
+.I different
+programs built from one template with a function renamed differ in almost nothing
+structural \- so a loose structural diff reports them the same.
+.SH WHAT IS EXCLUDED
+Nothing that a rebuild moves enters the digest: no address, no size, no offset. Nor
+do the provenance commands
+.BR LC_UUID ,
+.BR LC_CODE_SIGNATURE ,
+.B LC_DYLIB_CODE_SIGN_DRS
+or
+.BR LC_SOURCE_VERSION ,
+which record the build rather than the program. The UUID is reported separately and
+exactly, which is a better home for it.
+.PP
+Section
+.I sizes
+are excluded too. That does make a stripped binary's fingerprint weaker, which is
+why
+.B tier
+is reported rather than presenting a structure-only digest as though it were as
+strong as a full one.
+.SH EXIT STATUS
+.TP
+.B 0
+same program, or a single file, which always succeeds
+.TP
+.B 1
+different programs \- a negative answer, not a failure
+.TP
+.B 2
+usage error
+.TP
+.B 3
+a file could not be read
+.PP
+A comparison where one side is stripped exits 0 on a structural match, so
+.B caveat
+says so. A gate that needs more than shape should compare UUIDs, which is what they
+are for.
+.SH EXAMPLES
+.PP
+.nf
+fingerprint /usr/local/go/bin/go
+fingerprint shipped.app/…/app baseline.app/…/app
+fingerprint \-\-json a.dylib b.dylib | jq .data.verdict
+.fi
+.SH SEE ALSO
+.BR audit (1),
+.BR diff (1),
+.BR describe (1)

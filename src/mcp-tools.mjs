@@ -68,6 +68,19 @@ export const REASON_CODES = [
   'io',              // the path could not be read
 ];
 
+/**
+ * The one import this file has, and it is here for a specific reason.
+ *
+ * Everything else here is deliberately self-contained — the reason codes, the
+ * validator, the schemas — because the MCP server is what an agent loads first and
+ * a module graph it has to resolve is a module graph that can fail to load. But
+ * `SCHEMA_VERSION` is the exception: a *version* is only a version if there is
+ * exactly one of it. Restating the literal here would leave two constants free to
+ * drift, and the CLI answering "1.0" while the server says "1.1" is a bug that
+ * presents as a successful call and would be found by nobody.
+ */
+import { SCHEMA_VERSION } from './output.mjs';
+
 /* ------------------------------------------------------------------ *
  * schemas
  * ------------------------------------------------------------------ */
@@ -82,8 +95,13 @@ export const REASON_CODES = [
  */
 const ENVELOPE = {
   type: 'object',
-  required: ['tool', 'ok', 'binary', 'errors', 'data'],
+  required: ['schemaVersion', 'tool', 'ok', 'binary', 'errors', 'data'],
   properties: {
+    schemaVersion: {
+      type: 'string',
+      pattern: '^\\d+\\.\\d+$',
+      description: 'The version of this envelope shape. Bump the major on a removal, rename or change of meaning; the minor when a field is added. Compare it against the version you were written against rather than trusting the field names.',
+    },
     tool: { type: 'string', description: 'Which tool produced this.' },
     ok: { type: 'boolean', description: 'True when the tool ran, whether or not it found anything.' },
     binary: { type: ['string', 'null'], description: 'The file that was read.' },
@@ -280,9 +298,14 @@ function binaryOf(args) {
 async function guard(tool, binary, fn) {
   try {
     const { data, notes = [], errors = [] } = await fn();
-    return { tool, ok: errors.length === 0, binary, errors, notes, data };
+    // `schemaVersion` on the MCP door too, and imported rather than restated: the
+    // whole point of a version is that there is one, and a second literal here would
+    // be free to drift from the one the CLIs emit — which is precisely the failure
+    // the field exists to prevent.
+    return { schemaVersion: SCHEMA_VERSION, tool, ok: errors.length === 0, binary, errors, notes, data };
   } catch (e) {
     return {
+      schemaVersion: SCHEMA_VERSION,
       tool,
       ok: false,
       binary,
@@ -502,6 +525,68 @@ function lines(tool, env) {
       }
       L.push('  offsets are absolute positions in the file; each slice reports its own relative offset too');
       break;
+
+    case 'audit': {
+      L.push(`${d.path} — ${String(d.verdict).toUpperCase()}  ${n(d.counts.errors)} error(s), ${n(d.counts.warnings)} warning(s)`);
+      for (const s of d.slices ?? []) {
+        for (const a of s.abnormalities ?? []) {
+          L.push(`  ${s.arch}  ${a.severity === 'error' ? 'error  ' : 'warning'} ${a.kind}`);
+          L.push(`      ${a.detail}`);
+        }
+      }
+      for (const a of d.containerAbnormalities ?? []) {
+        L.push(`  fat container  ${a.severity === 'error' ? 'error  ' : 'warning'} ${a.kind}`);
+        L.push(`      ${a.detail}`);
+      }
+      if (d.verdict === 'ok') {
+        L.push('  no findings — every structural claim this file makes about itself checks out');
+      } else if (d.clean) {
+        L.push(`  ${n(d.counts.warnings)} warning(s) and no errors — passes without strict; strict:true would fail it`);
+      }
+      L.push('  A finding is reported ALONGSIDE the parse: the data above is what could genuinely be read.');
+      break;
+    }
+
+    case 'fingerprint': {
+      if (d.byArch) {
+        L.push(`${d.a.path} — ${d.a.fingerprint ?? '-'}`);
+        L.push(`${d.b.path} — ${d.b.fingerprint ?? '-'}`);
+        for (const row of d.byArch) {
+          const v = !row.presentInBoth ? 'absent on the other side' : row.match ? 'match' : 'differ';
+          L.push(`  ${row.arch}  ${row.match ? 'match' : 'differ'}  (${v})`);
+        }
+        L.push(`  ${d.verdict}`);
+        if (d.caveat) L.push(`  note: ${d.caveat}`);
+        L.push('  sameBuild compares UUIDs, sameProgram compares fingerprints — three questions, kept apart.');
+      } else {
+        L.push(`${d.path} — ${d.fingerprint ?? 'unreadable'}  ${d.tier ?? ''}`);
+        for (const s of d.slices ?? []) {
+          L.push(`  ${s.arch}  ${s.fingerprint}  ${s.tier}  ${n(s.nsyms)} symbol(s), ${n(s.nsects)} section(s)`);
+        }
+        if (d.uuid) L.push(`  uuid ${d.uuid} — same build as anything carrying this value`);
+        if (d.tier === 'structure-only') {
+          L.push('  This binary is stripped, so the fingerprint rests on section and load-command shape alone —');
+          L.push('  a real but weaker claim. Pass `other` to compare against a baseline.');
+        }
+      }
+      break;
+    }
+
+    case 'diff': {
+      L.push(`${d.a.path}`);
+      L.push(`${d.b.path}`);
+      L.push(`  ${d.verdict}  —  ${n(d.counts.differences)} structural difference(s), ${n(d.counts.buildMetadata)} build-metadata change(s), ${n(d.counts.sizeChanges)} size change(s)`);
+      for (const row of d.perArch ?? []) {
+        L.push(`  ${row.arch}  symbols ${n(row.symbols.a)} -> ${n(row.symbols.b)} (+${row.symbols.added}/-${row.symbols.removed}), sections ${n(row.sections.a)} -> ${n(row.sections.b)}`);
+      }
+      for (const x of (d.differences ?? []).slice(0, 12)) L.push(`    [${x.category}] ${x.detail}`);
+      if ((d.differences ?? []).length > 12) L.push(`    ... and ${d.differences.length - 12} more`);
+      if (!(d.differences ?? []).length) L.push('    no structural differences');
+      for (const m of d.buildMetadata ?? []) L.push(`    build metadata: ${m.detail}`);
+      if (d.sizeChanges?.length) L.push(`    ${n(d.sizeChanges.length)} section size change(s), reported but not counted as differences`);
+      L.push('  Sizes and UUIDs are excluded on purpose: a rebuild moves both without changing the program.');
+      break;
+    }
 
     default:
       L.push(JSON.stringify(d, null, 2));
@@ -949,6 +1034,141 @@ export const TOOLS = [
       });
     },
   },
+
+  {
+    name: 'audit',
+    title: 'Check a Mach-O for internal consistency',
+    description:
+      'Every structural claim the file makes about itself, checked, with a verdict: ok, warnings, or failed.\n\n' +
+      'Use this before trusting anything else the server returns. Findings carry a severity — ' +
+      '"error" means the file disagrees with itself, so addresses and extents computed from it may be wrong; ' +
+      '"warning" means it parsed and something is merely unfamiliar or explicitly heuristic.\n\n' +
+      'It also checks the fat table itself, which nothing per-slice can: two slices claiming the same file bytes ' +
+      'are each internally consistent, and the damage only shows up between them.\n\n' +
+      'Set strict:true to treat warnings as failures too. Unknown *load commands* are not findings — those are ' +
+      'named by number on purpose, so an unfamiliar-but-valid command is not graded as damage.',
+    inputSchema: obj(
+      {
+        binary: BINARY,
+        strict: { type: 'boolean', description: 'Treat warnings as failures too. Default false.' },
+        arch: ARCH,
+      },
+      ['binary'],
+    ),
+    outputSchema: ENVELOPE,
+    async run(args) {
+      const b = binaryOf(args);
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      return guard('audit', b.binary, async () => {
+        const { audit } = await import('./api.mjs');
+        const r = audit(b.binary, { strict: args.strict === true, arch: args.arch });
+        return {
+          data: r,
+          errors: [],
+          notes: [
+            `verdict: ${r.verdict} — ${r.counts.errors} error(s), ${r.counts.warnings} warning(s)`,
+            'clean is the gate without strict; strictClean is the gate with it. Branch on those, not on verdict',
+            'a damaged file still reports what could be read — the findings are alongside the parse, not instead of it',
+          ],
+        };
+      });
+    },
+  },
+
+  {
+    name: 'fingerprint',
+    title: 'Identify a Mach-O, and compare two of them',
+    description:
+      'Answers "is this the same program as that one?", which a byte comparison cannot: two builds of one source ' +
+      'differ in every address (PIE and ASLR), in the dylib version fields, and in any timestamp, so a byte ' +
+      'comparison calls them different.\n\n' +
+      'With `other` omitted, reports one fingerprint. With it, compares and returns `sameBuild` (same UUID), ' +
+      '`sameProgram` (same fingerprint) and `rebuilt` (true only when two differing UUIDs *prove* a rebuild). ' +
+      'Those are three different questions and collapsing them loses the one the caller meant.\n\n' +
+      'Nothing a rebuild moves enters the digest: no address, no size, no offset, and none of the provenance ' +
+      'commands (LC_UUID, LC_CODE_SIGNATURE, LC_SOURCE_VERSION), which record the build rather than the program.\n\n' +
+      'A stripped binary yields tier "structure-only" — a real but weaker claim, since two different stripped ' +
+      'binaries with the same sections share a fingerprint. Check `tier` before relying on a match.',
+    inputSchema: obj(
+      {
+        binary: BINARY,
+        other: { type: 'string', minLength: 1, description: 'A second Mach-O to compare against. Optional.' },
+        arch: ARCH,
+      },
+      ['binary'],
+    ),
+    outputSchema: ENVELOPE,
+    async run(args) {
+      const b = binaryOf(args);
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      return guard('fingerprint', b.binary, async () => {
+        const { fingerprint, compareFingerprints } = await import('./api.mjs');
+        if (!args.other) {
+          const r = fingerprint(b.binary, { arch: args.arch });
+          return {
+            data: r,
+            errors: [],
+            notes: [
+              `tier: ${r.tier} — "structure-only" means stripped, so a match would rest on shape alone`,
+              'compare with `other` to answer "same program"; this call only identifies one file',
+            ],
+          };
+        }
+        const r = compareFingerprints(b.binary, args.other);
+        return {
+          data: r,
+          errors: [],
+          notes: [
+            r.verdict,
+            r.caveat ?? 'both sides have symbol names, so the match is a full one',
+            'sameBuild compares UUIDs; sameProgram compares fingerprints. They answer different questions',
+          ],
+        };
+      });
+    },
+  },
+
+  {
+    name: 'diff',
+    title: 'What changed between two Mach-O binaries',
+    description:
+      'Structural differences only: architectures, header flags, load commands, sections, symbols.\n\n' +
+      'Addresses, sizes, offsets and the UUID are NOT counted as differences — otherwise every rebuilt pair ' +
+      'would read as changed, which is what `cmp` already tells you and does not improve on.\n\n' +
+      'Build-metadata changes (UUIDs, signing) and section size changes are reported in their own fields and ' +
+      'excluded from the verdict, because a recompiled dependency moves a size without changing the program.\n\n' +
+      'Use `max_names` to cap how many symbol names are listed; counts are always exact.',
+    inputSchema: obj(
+      {
+        binary: BINARY,
+        other: { type: 'string', minLength: 1, description: 'The binary to compare against.' },
+        arch: ARCH,
+        max_names: { type: 'integer', minimum: 1, description: 'Cap on symbol names listed per direction. Default 20.' },
+      },
+      ['binary', 'other'],
+    ),
+    outputSchema: ENVELOPE,
+    async run(args) {
+      const b = binaryOf(args);
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (!args.other) {
+        throw Object.assign(new Error('other: required — a diff needs two binaries. See macho-fingerprint for a one-file lookup.'), { code: 'bad-arguments' });
+      }
+      return guard('diff', b.binary, async () => {
+        const { diffBinaries } = await import('./api.mjs');
+        const r = diffBinaries(b.binary, args.other, { arch: args.arch, maxNames: args.max_names });
+        return {
+          data: r,
+          errors: [],
+          notes: [
+            r.verdict,
+            `${r.counts.differences} structural difference(s); ${r.counts.buildMetadata} build-metadata change(s) reported but not counted`,
+            'a UUID difference is build metadata, never a structural difference',
+          ],
+        };
+      });
+    },
+  },
 ];
 
 /** Look a tool up by name, for `tools/call`. */
@@ -1002,6 +1222,7 @@ export async function callTool(name, args) {
 
 function failed(name, args, message, code) {
   const env = {
+    schemaVersion: SCHEMA_VERSION,
     tool: name,
     ok: false,
     binary: (args && args.binary) || process.env.MACHO_EXPLORER_BINARY || process.env.MACHO_EXPLORER_APP || null,

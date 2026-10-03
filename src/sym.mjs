@@ -54,7 +54,7 @@
  * reader with the other tools.
  */
 import { requireBinary, binaryAt, FALLBACK_TARGET } from './target.mjs';
-import { searchSymbols } from './api.mjs';
+import { searchSymbols, searchSymbolsIn } from './api.mjs';
 import { parseArgs, emitJSON, usage, count, EXIT, rejectUnknownFlags } from './output.mjs';
 
 const HELP = [
@@ -72,6 +72,15 @@ const HELP = [
   '  --no-dedupe        one row per table entry rather than per name',
   '  --arch=<name>      prefer an architecture (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',
   '  -b, --binary <p>   the binary, if every positional is part of the query',
+  '',
+  'corpus mode — search many binaries with the same envelope:',
+  '  --in <paths>       search a file or directory instead of one binary. Several',
+  '                     paths may be comma-separated. Non-Mach-O files under a',
+  '                     directory are skipped, not treated as errors',
+  '  --matched-only     list only the files that matched',
+  '  --per-file <n>     match names kept per file (default 10; 0 keeps counts only)',
+  '  --max-files <n>    stop after this many files (default 20000)',
+  '  --max-depth <n>    directory depth limit (default 6)',
   '  --json             one JSON object on stdout; prose to stderr',
   '  -h, --help         this message',
 ];
@@ -85,7 +94,10 @@ if (flags.has('help') || flags.has('h')) {
 }
 
 rejectUnknownFlags(
-  new Set(['regex', 'case-sensitive', 'all-imp', 'no-dedupe', 'arch', 'json']),
+  new Set([
+    'regex', 'case-sensitive', 'all-imp', 'no-dedupe', 'arch', 'json',
+    'in', 'matched-only', 'per-file', 'max-files', 'max-depth',
+  ]),
   flags,
   HELP,
 );
@@ -125,9 +137,7 @@ if (!explicitBinary && positional.length === 1) {
   }
 }
 
-const binary = requireBinary({ argv: explicitBinary || positional[1] });
-const max = positional[2] !== undefined ? Number(positional[2]) : 4000;
-if (!Number.isFinite(max) || max <= 0) usage(['max must be a positive number']);
+/* ---- corpus mode: many binaries, one envelope ------------------------ */
 
 const mode = flags.has('regex') ? 'regex' : 'substring';
 const definedOnly = !flags.has('all-imp');
@@ -135,6 +145,115 @@ const dedupe = !flags.has('no-dedupe');
 const arch = opts.arch;
 const json = flags.has('json');
 const regexFlags = flags.has('case-sensitive') ? '' : 'i';
+
+// `--in` takes one value, and `parseArgs` lets a repeated flag overwrite rather
+// than accumulate — changing that would alter argument handling for every tool in
+// the package to suit one. So a comma-separated list is accepted instead, which is
+// the same convention curl and tar use for multi-value options. A path containing a
+// comma is therefore not addressable here; that is stated in the help rather than
+// left to be discovered.
+const corpusSpec = opts.in;
+if (corpusSpec !== undefined) {
+  // Extra positionals are refused rather than ignored. `--in` replaces the binary
+  // positional, so a leftover `[binary] [max]` pair would otherwise be silently
+  // discarded — and `sym --in ./dir /bin/ls` looks like a reasonable thing to type.
+  if (positional.length > 1) {
+    usage([
+      ...HELP,
+      '',
+      `  --in replaces the binary argument, so it takes no positional after the pattern.`,
+      `  got ${positional.length - 1} extra: ${positional.slice(1).join(', ')}`,
+    ]);
+  }
+  if (explicitBinary) {
+    usage([...HELP, '', '  --in and --binary are alternatives; a corpus search has no single binary.']);
+  }
+
+  const roots = corpusSpec.split(',').map((s) => s.trim()).filter(Boolean);
+  if (roots.length === 0) usage([...HELP, '', '  --in needs at least one path.']);
+
+  const intOpt = (name, dflt) => {
+    if (opts[name] === undefined) return dflt;
+    const n = Number(opts[name]);
+    if (!Number.isInteger(n) || n < 0) usage([`  --${name} must be a whole number of at least 0`]);
+    return n;
+  };
+
+  let corpus;
+  try {
+    corpus = searchSymbolsIn(roots, pattern, {
+      mode, definedOnly, dedupe, arch, flags: regexFlags,
+      max: positional[1] !== undefined ? Number(positional[1]) : 4000,
+      perFile: intOpt('per-file', 10),
+      maxFiles: intOpt('max-files', 20000),
+      maxDepth: intOpt('max-depth', 6),
+      matchedOnly: flags.has('matched-only'),
+    });
+  } catch (e) {
+    const code = e instanceof SyntaxError ? 'bad-pattern' : (e.code ?? 'io');
+    const exit = code === 'bad-pattern' ? EXIT.usage : EXIT.fail;
+    if (json) emitJSON({ tool: 'sym', binary: roots.join(','), ok: false, errors: [code], messages: [e.message] }, exit);
+    console.error(e.message);
+    process.exit(exit);
+  }
+
+  // Three outcomes, kept apart, because "found nothing" and "could not look" are
+  // different facts and a caller that treats the second as the first will conclude
+  // a build contains no matching symbol when in fact nothing was readable.
+  // `totals.looked` rather than `files - unreadable`, so the CLI and the JSON agree
+  // about what was read by construction rather than by two matching subtractions.
+  const { unreadable, looked } = corpus.totals;
+  const status = corpus.totals.matchedFiles > 0
+    ? EXIT.ok
+    : looked === 0 && unreadable > 0
+      ? EXIT.fail
+      : EXIT.empty;
+
+  if (json) {
+    emitJSON({
+      tool: 'sym',
+      binary: roots.join(','),
+      ok: true,
+      notes: [
+        'corpus mode: data.files[] carries one row per Mach-O, with counts; the envelope is otherwise identical to single-binary mode',
+        definedOnly ? 'defined symbols only (N_SECT)' : 'imports included',
+        corpus.truncated ? `truncated: ${corpus.note}` : null,
+        looked === 0 && unreadable > 0 ? 'nothing could be read — this is "could not look", not "no matches"' : null,
+      ].filter(Boolean),
+      data: corpus,
+    }, status);
+  }
+
+  const what2 = mode === 'regex' ? `/${pattern}/${regexFlags}` : `"${pattern}"`;
+  console.log(
+    `${mode} ${what2}: ${count(corpus.totals.matchedFiles)} of ${count(looked)} file(s) read match, ` +
+      `${count(corpus.totals.matches)} match(es) in total\n`,
+  );
+  for (const f of corpus.files) {
+    if (!f.ok) {
+      console.log(`  ${f.path}  — ${f.error}${f.message ? `: ${f.message}` : ''}`);
+      continue;
+    }
+    console.log(`  ${f.path}`);
+    console.log(`      ${count(f.count)} match(es), ${f.arch}${f.matchesTruncated ? ' (names truncated)' : ''}`);
+    for (const m of f.matches) {
+      const where = m.defined && m.addr !== 0n ? `0x${m.addr.toString(16)}` : '(import)';
+      console.log(`      ${where}  ${m.name}`);
+    }
+  }
+  console.log(
+    `\n${count(looked)} Mach-O read, ${count(corpus.totals.skipped)} non-Mach-O skipped, ` +
+      `${count(unreadable)} unreadable`,
+  );
+  if (corpus.note) console.log(`  note: ${corpus.note}`);
+  process.exit(status);
+}
+
+/* ---- single-binary mode --------------------------------------------- */
+
+const binary = requireBinary({ argv: explicitBinary || positional[1] });
+const max = positional[2] !== undefined ? Number(positional[2]) : 4000;
+if (!Number.isFinite(max) || max <= 0) usage(['max must be a positive number']);
 
 let r;
 try {

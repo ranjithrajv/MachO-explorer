@@ -168,10 +168,14 @@ for (const s of r.slices) {
 // reports none, so the section is silent in the common case rather than printing
 // "0 abnormalities" on every run.
 const abnormal = r.slices.flatMap((s) => s.abnormalities.map((a) => ({ arch: s.arch, ...a })));
-if (abnormal.length) {
+const container = (r.containerAbnormalities || []).map((a) => ({ arch: 'fat container', ...a }));
+const allAbnormal = [...abnormal, ...container];
+if (allAbnormal.length) {
   console.log('');
-  console.log(`${abnormal.length} abnormality(ies) — the file parsed, but these parts do not add up:`);
-  for (const a of abnormal) console.log(`  ${a.arch}  ${a.kind}\n      ${a.detail}`);
+  console.log(`${allAbnormal.length} abnormality(ies) — the file parsed, but these parts do not add up:`);
+  for (const a of allAbnormal) {
+    console.log(`  ${a.arch}  ${a.kind}\n      ${a.detail}`);
+  }
 }
 
 const hex = (v) => `0x${v.toString(16)}`;

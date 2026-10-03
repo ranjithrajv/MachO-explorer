@@ -1,0 +1,20 @@
+#compdef diff
+#
+# zsh completion for diff. Install as _diff in a directory
+# on your $fpath.
+#
+# MachO-explorer 0.1.0.
+
+_macho_diff() {
+    # Exactly two Mach-O paths, so the positionals are both files rather than one
+    # file and one address. Naming this _diff shadows the system diff in a $fpath
+    # that has both; the function is prefixed to keep that collision harmless.
+    _arguments -s -S \
+        '--arch=[compare only this architecture]:architecture:(x86_64 arm64 arm64e arm64_32 ppc ppc64 arm i386)' \
+        '--max=[cap on symbol names listed per direction]:count:(5 10 20 50 100)' \
+        '--json[write one JSON object to stdout]' \
+        '(-h --help)'{-h,--help}'[show usage]' \
+        '*:Mach-O file or bundle:_files'
+}
+
+_macho_diff "$@"

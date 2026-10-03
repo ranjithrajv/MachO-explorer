@@ -1078,7 +1078,15 @@ console.log('\na2o / o2a: address and file offset');
     // always *does* carry a UUID, so asserting `null` over the whole discovered
     // corpus would fail on the machine running the tests for the right reason and
     // the wrong reason at once.
-    const generatedNoUuid = generated.filter((x) => x.stem !== 'stripped');
+    //
+    // The UUID-bearing fixtures are excluded by name rather than discovered, so a
+    // fixture that *gains* a UUID by accident is caught here instead of quietly
+    // joining the exclusion list. `stripped` was always the one; `rebuilt` and
+    // `rebuilt2` carry UUIDs on purpose, because the fingerprint comparison needs
+    // two builds of one program with *different* UUIDs to be able to prove a
+    // rebuild happened at all.
+    const UUID_BEARING = new Set(['stripped', 'rebuilt', 'rebuilt2']);
+    const generatedNoUuid = generated.filter((x) => !UUID_BEARING.has(x.stem));
     const bad = generatedNoUuid.filter((x) =>
       describeFile(x.path).slices.some((s) => s.uuid !== null),
     );
@@ -1301,6 +1309,11 @@ console.log('\na2o / o2a: address and file offset');
     // Every binary on a healthy machine is healthy, so without a deliberately
     // broken fixture these checks could never be shown to fire at all — which is
     // the same trap the corpus was built to escape for symbol coverage.
+    //
+    // Severity is asserted alongside kind, because it is what makes the finding
+    // usable as a build gate: `error` means the file disagrees with itself and a
+    // reader's answers may be wrong, `warning` means the file parsed and something
+    // is merely unfamiliar or explicitly heuristic.
     if (!dmg) {
       skip('abnormality detection', 'the damaged fixture is missing — run npm run test:fixtures');
     } else {
@@ -1357,6 +1370,784 @@ console.log('\na2o / o2a: address and file offset');
         'describe.mjs --json: abnormalities are in the envelope and the exit is still success',
         `exit ${dJson.code}`,
       );
+
+      // Severity, on the two halves of the damaged fixture.
+      //
+      // The split is the point. An unnamed flag bit is a *warning*: the file is
+      // fine and the reader is merely older than its producer, so failing a build
+      // on it would make the gate useless within one toolchain release. A string
+      // table reaching past the end of the file is an *error*: the file disagrees
+      // with itself, so anything computed from that extent may be wrong.
+      const sev = Object.fromEntries(s.abnormalities.map((a) => [a.kind, a.severity]));
+      check(
+        sev['unknown-header-flags'] === 'warning',
+        'an unfamiliar flag bit is a warning, not a build failure',
+        `severity=${sev['unknown-header-flags']}`,
+      );
+      check(
+        sev['load-commands-truncated'] === 'error'
+          && sev['strtab-past-slice-end'] === 'error',
+        'a file that disagrees with itself is an error',
+        `severities=${JSON.stringify(sev)}`,
+      );
+      check(
+        s.abnormalities.every((a) => a.severity === 'error' || a.severity === 'warning'),
+        'every abnormality carries one of the two severities, so a gate can switch on it',
+      );
+    }
+
+    // ---- container-level checks: the fat table
+    //
+    // The only input that can reach these. Every check in the per-slice pass is
+    // about one slice's internal consistency, and two slices claiming the same
+    // bytes are each perfectly consistent — so the defect is invisible from
+    // inside either slice, which is precisely why it needs its own pass.
+    {
+      const bent = binaries.find((x) => x.stem === 'bent');
+      const uni = binaries.find((x) => x.stem === 'universal');
+      if (!bent) {
+        skip('container checks', 'the bent fixture is missing — run npm run test:fixtures');
+      } else {
+        const { detectContainerAbnormalities, opener: openH } = await import('../src/macho.mjs');
+        const { describe: describeFile } = await import('../src/api.mjs');
+        const withFindings = (p) => {
+          const h = openH(p);
+          try {
+            return detectContainerAbnormalities(h);
+          } finally {
+            h.close();
+          }
+        };
+
+        const found = withFindings(bent.path);
+        const kinds = found.map((a) => a.kind);
+        for (const kind of ['slices-overlap', 'slice-misaligned', 'slice-past-file-end']) {
+          check(
+            kinds.includes(kind),
+            `container: reports ${kind}`,
+            `got ${kinds.join(',') || 'none'}`,
+          );
+        }
+        const byKind = Object.fromEntries(found.map((a) => [a.kind, a.severity]));
+        check(
+          byKind['slices-overlap'] === 'error',
+          'container: overlapping slices are an error, because which slice answers changes',
+          `severity=${byKind['slices-overlap']}`,
+        );
+        check(
+          byKind['slice-misaligned'] === 'warning',
+          'container: a misaligned slice is only a warning — the table is still readable',
+          `severity=${byKind['slice-misaligned']}`,
+        );
+
+        // The claim that justifies the whole check. Both slices parse, no
+        // slice-level check fires, and the damage is still there: the arm64 copy
+        // overwrote x86_64's string table, so that slice reports symbol entries
+        // with no names. On its own that is indistinguishable from a stripped
+        // binary, and nothing per-slice can say otherwise.
+        const d = describeFile(bent.path);
+        const x86 = d.slices.find((s) => s.arch === 'x86_64');
+        check(
+          x86 && x86.readable && x86.nsyms > 0 && x86.defined === 0,
+          'container: the overlap silently destroys one slice\'s names, and no slice-level check fires',
+          `readable=${x86?.readable} nsyms=${x86?.nsyms} defined=${x86?.defined}`,
+        );
+        check(
+          d.slices.every((s) => s.abnormalities.length === 0),
+          'container: every slice still reports zero abnormalities — the defect is between them',
+        );
+        // And `describe` itself must show it. A describe that omitted the fat table
+        // would report a file with overlapping slices as entirely unremarkable,
+        // which is a confident wrong answer rather than a partial one.
+        check(
+          (d.containerAbnormalities || []).some((a) => a.kind === 'slices-overlap'),
+          'container: describe reports the fat-table defect, not just the per-slice ones',
+          (d.containerAbnormalities || []).map((a) => a.kind).join(','),
+        );
+        const bentOut = run('describe.mjs', [bent.path]);
+        check(
+          /fat container/.test(bentOut.stdout) && /slices-overlap/.test(bentOut.stdout),
+          'container: and the CLI prints it',
+        );
+
+        // No false positives on a well-formed container, which is the half of the
+        // claim that matters for trusting it on a real binary.
+        if (uni) {
+          check(
+            withFindings(uni.path).length === 0,
+            'container: a well-formed universal binary reports nothing',
+          );
+        }
+        const thinBin = binaries.find((x) => x.stem.startsWith('thin'));
+        if (thinBin) {
+          check(
+            withFindings(thinBin.path).length === 0,
+            'container: a thin binary has no fat table to be inconsistent with',
+          );
+        }
+      }
+    }
+
+    // ---- audit: the same findings, plus a verdict and an exit status
+    //
+    // `describe` reports abnormalities; `audit` is the gate. The two must not
+    // disagree about which findings a file has — a caller comparing them would
+    // otherwise see two tools give different answers to "is this file damaged".
+    {
+      const populated = binaries.find((x) => x.stem === 'populated');
+      const newerBin = binaries.find((x) => x.stem === 'newer');
+      const dmg2 = binaries.find((x) => x.stem === 'damaged');
+      const bent2 = binaries.find((x) => x.stem === 'bent');
+
+      if (!populated || !newerBin || !dmg2 || !bent2) {
+        skip('audit', 'the audit fixtures are missing — run npm run test:fixtures');
+      } else {
+        const { audit: auditFn, describe: describeFile } = await import('../src/api.mjs');
+
+        // --- the gate matrix, which is the product
+        //
+        // Asserted as a matrix rather than four separate facts because the
+        // relationship is what matters: `--strict` must change the outcome *only*
+        // for the warnings-only fixture, and must change nothing for the other
+        // three. A strict flag that altered a file with no warnings would be
+        // measuring something other than what it claims.
+        const gate = (p, extra = []) => run('audit.mjs', [p, ...extra]).code;
+        check(gate(populated.path) === 0, 'audit: a sound file exits 0', `exit ${gate(populated.path)}`);
+        check(gate(dmg2.path) === 1, 'audit: a file with errors exits 1', `exit ${gate(dmg2.path)}`);
+        check(gate(bent2.path) === 1, 'audit: a bent fat container exits 1', `exit ${gate(bent2.path)}`);
+        check(
+          gate(newerBin.path) === 0,
+          'audit: a valid-but-unfamiliar file passes the default gate',
+          `exit ${gate(newerBin.path)}`,
+        );
+        check(
+          gate(newerBin.path, ['--strict']) === 1,
+          'audit: --strict is the only thing that fails it',
+          `exit ${gate(newerBin.path, ['--strict'])}`,
+        );
+        check(
+          gate(populated.path, ['--strict']) === 0,
+          'audit: --strict changes nothing for a file with no warnings',
+          `exit ${gate(populated.path, ['--strict'])}`,
+        );
+
+        // --- 3, not 1, for a file it could not read
+        //
+        // The distinction that makes this safe in CI: a mistyped path must not be
+        // mistaken for a clean bill of health, and a non-Mach-O must not either.
+        check(gate('/nope/not/here') === 3, 'audit: an unreadable path exits 3, not 1', `exit ${gate('/nope/not/here')}`);
+        check(gate('/etc/hosts') === 3, 'audit: a file that is not Mach-O exits 3', `exit ${gate('/etc/hosts')}`);
+        // ...and it must not exit 0 either, which is the half people forget.
+        check(gate('/nope/not/here') !== 0, 'audit: an unreadable path never exits 0');
+
+        check(
+          gate(populated.path, ['--nope']) === 2,
+          'audit: an unrecognised flag is a usage error',
+          `exit ${gate(populated.path, ['--nope'])}`,
+        );
+
+        // --- the API's verdict and the process's exit status must agree
+        //
+        // This is the internal inconsistency the implementation had: `verdict:
+        // 'warnings'` with `clean: true`, mapped straight onto exit 1, so the same
+        // file was reported as passing by one field and failing by another. The
+        // gate follows the boolean, never the label.
+        const lax = auditFn(newerBin.path);
+        const gateRun = run('audit.mjs', [newerBin.path]);
+        const strictRun = run('audit.mjs', [newerBin.path, '--strict']);
+        check(
+          lax.verdict === 'warnings' && lax.clean === true && gateRun.code === 0,
+          'audit: verdict "warnings" and clean:true both agree the default gate passes',
+          `verdict=${lax.verdict} clean=${lax.clean} exit=${gateRun.code}`,
+        );
+        check(
+          strictRun.code === 1,
+          'audit: and --strict disagrees, as it must',
+          `exit ${strictRun.code}`,
+        );
+        check(
+          /--strict would fail it/.test(gateRun.stdout),
+          'audit: a passing run that had findings says so, rather than showing them silently',
+          gateRun.stdout.split('\n').filter((l) => /strict/.test(l)).join(' | ').slice(0, 80),
+        );
+
+        // --- audit and describe must report the same findings
+        for (const [label, p] of [['damaged', dmg2.path], ['bent', bent2.path]]) {
+          const a = auditFn(p);
+          const d = describeFile(p);
+          const fromDescribe = d.slices.flatMap((s) => s.abnormalities.map((x) => x.kind)).sort();
+          const fromAudit = a.slices.flatMap((s) => s.abnormalities.map((x) => x.kind)).sort();
+          check(
+            fromDescribe.join(',') === fromAudit.join(','),
+            `audit: ${label} reports the same slice findings as describe`,
+            `describe=[${fromDescribe}] audit=[${fromAudit}]`,
+          );
+        }
+
+        // --- --arch narrows the slices but not the container findings
+        const bentArch = auditFn(bent2.path, { arch: 'arm64' });
+        check(
+          bentArch.slices.every((s) => s.arch === 'arm64'),
+          'audit: --arch audits only the named slice',
+          bentArch.slices.map((s) => s.arch).join(','),
+        );
+        check(
+          bentArch.containerAbnormalities.length > 0,
+          'audit: container findings survive --arch, because they are about the file',
+          `${bentArch.containerAbnormalities.length} container finding(s)`,
+        );
+
+        // --- the JSON door
+        const j = run('audit.mjs', ['--json', bent2.path]);
+        let env = null;
+        try { env = JSON.parse(j.stdout); } catch { /* asserted below */ }
+        check(
+          j.code === 1 && env?.ok === true && env?.data?.verdict === 'failed',
+          'audit --json: the envelope carries the verdict and the exit status agrees',
+          `exit ${j.code} verdict=${env?.data?.verdict}`,
+        );
+        check(
+          env?.data?.counts?.errors > 0
+            && Array.isArray(env?.data?.findings)
+            && env.data.findings.every((f) => f.kind && f.detail && f.severity),
+          'audit --json: counts and findings, each with a machine-readable kind and severity',
+          JSON.stringify(env?.data?.counts),
+        );
+        const jBad = run('audit.mjs', ['--json', '/nope']);
+        let badEnv = null;
+        try { badEnv = JSON.parse(jBad.stdout); } catch { /* asserted below */ }
+        check(
+          jBad.code === 3 && badEnv?.ok === false && Array.isArray(badEnv?.errors) && badEnv.errors.length === 1,
+          'audit --json: an unreadable file is an error in the envelope, with a reason code',
+          `exit ${jBad.code} errors=${JSON.stringify(badEnv?.errors)}`,
+        );
+
+        // --- and it must not invent findings on real binaries
+        for (const p of ['/bin/ls', '/usr/bin/true']) {
+          if (!fs.existsSync(p)) continue;
+          const a = auditFn(p);
+          check(
+            a.counts.total === 0,
+            `audit: no false positives on a real system binary (${p})`,
+            JSON.stringify(a.counts),
+          );
+        }
+      }
+    }
+
+    // ---- fingerprint: same program, modulo rebuild
+    //
+    // The unit-level contract first, because it is the one that makes the feature
+    // falsifiable. A digest that hashed every byte, or one that hashed almost
+    // nothing, would both pass any file-level test built from a corpus where every
+    // pair is either identical or a different program.
+    {
+      const { sliceShape } = await import('../src/macho.mjs');
+      const base = {
+        arch: 'x86_64',
+        bits: 64,
+        filetype: 2,
+        sections: [{ segname: '__TEXT', sectname: '__text' }, { segname: '__TEXT', sectname: '__data' }],
+        definedSymbols: [{ name: '_main' }, { name: '_start' }],
+      };
+      const lc = (...names) => names.map((name) => ({ name }));
+      const withLc = (commands, over = {}) =>
+        sliceShape({ ...base, ...over, loadCommands: lc(...commands) });
+      const PLAIN = ['LC_SEGMENT_64', 'LC_SYMTAB', 'LC_LOAD_DYLIB'];
+      const plain = withLc(PLAIN);
+
+      // What a rebuild adds must NOT change the digest. These three commands record
+      // the build, not the program, and each already has a better home: the UUID is
+      // reported exactly, and a signature blob is not the code.
+      for (const provenance of ['LC_UUID', 'LC_CODE_SIGNATURE', 'LC_SOURCE_VERSION']) {
+        const signed = withLc([...PLAIN, provenance]);
+        check(
+          signed.fingerprint === plain.fingerprint,
+          `fingerprint: adding ${provenance} does not change the program's identity`,
+          `${signed.fingerprint} vs ${plain.fingerprint}`,
+        );
+      }
+
+      // And what a real change does. Without these the digest could be blind and
+      // every check above would still pass.
+      check(
+        withLc([...PLAIN, 'LC_LOAD_DYLIB']).fingerprint !== plain.fingerprint,
+        'fingerprint: an extra dylib dependency does change it',
+      );
+      check(
+        withLc(PLAIN, { definedSymbols: [{ name: '_main' }, { name: '_start2' }] }).fingerprint !== plain.fingerprint,
+        'fingerprint: a renamed symbol does change it',
+      );
+      check(
+        withLc(PLAIN, { sections: [...base.sections, { segname: '__DATA', sectname: '__const' }] }).fingerprint !== plain.fingerprint,
+        'fingerprint: an extra section does change it',
+      );
+
+      // Order is not meaning: a linker that reorders its commands, and a symbol
+      // table written in another order, describe the same program.
+      check(
+        withLc([...PLAIN].reverse(), { definedSymbols: [{ name: '_start' }, { name: '_main' }] }).fingerprint === plain.fingerprint,
+        'fingerprint: reordering load commands and symbols does not change it',
+      );
+
+      // The separator, tested on `digestOf` itself rather than through
+      // `sliceShape`.
+      //
+      // This was originally asserted at the sliceShape level, where it could not
+      // fail: every item there is prefixed (`sym:`, `sect:`, `lc:`), so
+      // `sym:ab`+`sym:c` and `sym:a`+`sym:bc` differ even with no separator, and
+      // the mutation came back inconclusive rather than caught. The prefix is what
+      // protects sliceShape; the separator is what protects `digestOf`, which is an
+      // exported function with its own contract and is used by `fileShape` too.
+      const { digestOf } = await import('../src/macho.mjs');
+      check(
+        digestOf(['ab', 'c']) !== digestOf(['a', 'bc']),
+        'digestOf: entries are separated, so ab+c does not collide with a+bc',
+        `${digestOf(['ab', 'c'])} vs ${digestOf(['a', 'bc'])}`,
+      );
+      check(
+        digestOf(['b', 'a', 'c']) === digestOf(['a', 'b', 'c']),
+        'digestOf: order does not matter, since a linker reordering is not a change',
+      );
+      check(
+        digestOf(['a'], 16).length === 16 && digestOf(['a']).length === 12,
+        'digestOf: the length is the width asked for',
+      );
+
+      // The tier, which bounds the claim.
+      const stripped = withLc(PLAIN, { definedSymbols: [] });
+      check(
+        stripped.tier === 'structure-only' && stripped.symbols === null
+          && stripped.fingerprint === stripped.structure,
+        'fingerprint: a stripped slice reports tier structure-only and no symbol digest',
+        `tier=${stripped.tier}`,
+      );
+    }
+
+    // ---- the file-level claim, on a purpose-built pair
+    //
+    // `rebuilt.macho` is `thin-x86_64.macho` at a different load base with a
+    // different UUID: the same program in different bytes. `cmp` says they differ;
+    // a byte digest would too.
+    {
+      const rebuilt = binaries.find((x) => x.stem === 'rebuilt');
+      const rebuilt2 = binaries.find((x) => x.stem === 'rebuilt2');
+      // `stem` is the filename with `.macho` removed and hyphens *kept*, which is not the
+      // same key `fixtures.mjs` builds for its own `files` map (that one strips them).
+      // Two different conventions for the same word, which is worth knowing before
+      // this silently skips.
+      const original = binaries.find((x) => x.stem === 'thin-x86_64');
+      if (!rebuilt || !rebuilt2 || !original) {
+        skip('fingerprint', 'the rebuilt fixtures are missing — run npm run test:fixtures');
+      } else {
+        const { fingerprint: fpOf, compareFingerprints: cmpOf } = await import('../src/api.mjs');
+
+        check(
+          fs.readFileSync(rebuilt.path).length !== fs.readFileSync(original.path).length,
+          'fingerprint: the rebuilt pair really is a different size, so the digest is not just cmp',
+        );
+        check(
+          fpOf(rebuilt.path).fingerprint === fpOf(original.path).fingerprint,
+          'fingerprint: same program at a different base and UUID',
+          `${fpOf(rebuilt.path).fingerprint} vs ${fpOf(original.path).fingerprint}`,
+        );
+        check(
+          fpOf(rebuilt.path).uuid !== fpOf(original.path).uuid,
+          'fingerprint: and a different UUID, which is reported rather than hashed in',
+        );
+
+        const c = cmpOf(rebuilt.path, rebuilt2.path);
+        check(
+          c.sameProgram === true && c.rebuilt === true && c.sameBuild === false,
+          'fingerprint: two UUID-bearing builds of one program prove a rebuild happened',
+          `${c.verdict}`,
+        );
+        const cNoUuid = cmpOf(original.path, rebuilt.path);
+        check(
+          cNoUuid.rebuilt === false && cNoUuid.verdict === 'same program',
+          'fingerprint: with only one UUID, no rebuild is claimed',
+          `${cNoUuid.verdict}`,
+        );
+        const stringsBin = binaries.find((x) => x.stem === 'strings');
+        const strippedBin = binaries.find((x) => x.stem === 'stripped');
+        check(
+          stringsBin && cmpOf(original.path, stringsBin.path).sameProgram === false,
+          'fingerprint: a genuinely different program does not match',
+        );
+
+        // The CLI. 0 for same, 1 for different — 1 being a negative answer, so a
+        // caller treating it as a crash would be wrong.
+        // `...extra` is forwarded: the first version of this took only two arguments, so the
+        // unknown-flag case passed its flag list into a helper that silently dropped
+        // it, ran a *valid* comparison, and reported the wrong exit code as a
+        // failure of the tool rather than of the test.
+        const gate = (a, b, ...extra) => run('fingerprint.mjs', [a, b, ...extra]).code;
+        check(gate(rebuilt.path, rebuilt2.path) === 0, 'fingerprint: two builds of one program exit 0', `exit ${gate(rebuilt.path, rebuilt2.path)}`);
+        check(gate(original.path, stringsBin.path) === 1, 'fingerprint: different programs exit 1');
+        check(gate(rebuilt.path, '/nope') === 3, 'fingerprint: an unreadable file exits 3, not 1');
+        check(gate(rebuilt.path, rebuilt2.path, ['--nope']) === 2, 'fingerprint: an unknown flag is a usage error');
+        check(
+          run('fingerprint.mjs', [rebuilt.path, rebuilt2.path]).stdout.includes('rebuilt'),
+          'fingerprint: the verdict says which question it settled',
+        );
+
+        const one = run('fingerprint.mjs', [rebuilt.path]);
+        check(one.code === 0 && /full/.test(one.stdout), 'fingerprint: one binary exits 0 and reports its tier');
+        const strippedOut = strippedBin ? run('fingerprint.mjs', [strippedBin.path, strippedBin.path]) : { stdout: '', code: 1 };
+        check(
+          /structure-only/.test(strippedOut.stdout) && /rests on section and load-command shape/.test(strippedOut.stdout),
+          'fingerprint: a stripped comparison discloses that the match is weaker',
+          strippedOut.stdout.split('\n').filter((l) => /note:/.test(l)).join(' | ').slice(0, 90),
+        );
+
+        const j = run('fingerprint.mjs', ['--json', rebuilt.path, rebuilt2.path]);
+        let env = null;
+        try { env = JSON.parse(j.stdout); } catch { /* asserted below */ }
+        check(
+          j.code === 0 && env?.data?.sameProgram === true && env?.data?.rebuilt === true,
+          'fingerprint --json: the comparison and its exit status agree',
+          `exit ${j.code}`,
+        );
+        check(
+          Array.isArray(env?.data?.byArch) && env.data.byArch.every((r) => r.arch && typeof r.match === 'boolean'),
+          'fingerprint --json: per-architecture rows, so "arm64 matches, x86_64 does not" is expressible',
+        );
+
+        // A universal binary against a thin one of the same slice: the arch-level
+        // answer is what makes this useful, and `match: null` for the absent side
+        // is the honest value — not `false`, which would read as "differs".
+        const uniVsThin = cmpOf(binaries.find((x) => x.stem === 'universal').path, rebuilt.path);
+        check(
+          uniVsThin.byArch.some((r) => r.arch === 'arm64' && r.match === false || r.arch === 'x86_64'),
+          'fingerprint: comparing a universal binary with a thin one answers per architecture',
+          uniVsThin.byArch.map((r) => `${r.arch}:${r.match}`).join(','),
+        );
+
+        // "Nothing to compare" is not "different". With no architecture in common —
+        // which is what `--arch` on two disjoint binaries gives — the question was
+        // never put to the files, and reporting it as a negative comparison would be
+        // a wrong answer rather than an unhelpful one.
+        const disjoint = cmpOf(
+          binaries.find((x) => x.stem === 'universal').path,
+          rebuilt.path,
+          { arch: 'arm64' },
+        );
+        check(
+          disjoint.comparable === false
+            && disjoint.verdict === 'no shared architecture to compare',
+          'fingerprint: no shared architecture is reported as unanswerable, not as different',
+          `verdict=${disjoint.verdict} comparable=${disjoint.comparable}`,
+        );
+        // And the ordinary comparison must not have been affected by that change.
+        check(
+          cmpOf(rebuilt.path, rebuilt2.path).comparable === true,
+          'fingerprint: a comparison that did happen is still marked comparable',
+        );
+      }
+    }
+
+    // ---- diff: structural differences, with rebuild noise kept out of the verdict
+    //
+    // The property that separates this from `cmp`: two builds of one program must
+    // report *zero* structural differences and exit 0, while still disclosing that
+    // the build changed. Both halves are asserted, because a diff that reported the
+    // UUID difference as structural would satisfy the first and fail the second, and
+    // one that hid it would do the reverse.
+    {
+      const rebuilt = binaries.find((x) => x.stem === 'rebuilt');
+      const rebuilt2 = binaries.find((x) => x.stem === 'rebuilt2');
+      const original = binaries.find((x) => x.stem === 'thin-x86_64');
+      const meta = binaries.find((x) => x.stem === 'meta');
+      const universal = binaries.find((x) => x.stem === 'universal');
+
+      if (!rebuilt || !rebuilt2 || !original || !meta) {
+        skip('diff', 'the diff fixtures are missing — run npm run test:fixtures');
+      } else {
+        const { diffBinaries } = await import('../src/api.mjs');
+
+        const same = diffBinaries(rebuilt.path, rebuilt2.path);
+        check(
+          same.differences.length === 0,
+          'diff: two builds of one program report no structural differences',
+          `${same.differences.length}: ${same.differences.map((d) => d.detail).join(' | ').slice(0, 90)}`,
+        );
+        check(
+          same.buildMetadata.some((m) => m.kind === 'uuid-differs'),
+          'diff: but the differing UUID is still disclosed',
+          same.buildMetadata.map((m) => m.detail).join(' | ').slice(0, 80),
+        );
+        check(
+          same.verdict === 'same program, rebuilt' && same.sameBuild === false,
+          'diff: and the verdict says which of the two questions it settled',
+          same.verdict,
+        );
+
+        // The UUID must never be counted as a structural difference. That single
+        // property is what stops this tool being `cmp` with better manners.
+        const uuidOnly = diffBinaries(original.path, rebuilt.path);
+        check(
+          uuidOnly.differences.length === 0 && uuidOnly.buildMetadata.length > 0,
+          'diff: a UUID difference is build metadata, never a structural difference',
+          `structural=${uuidOnly.differences.length} metadata=${uuidOnly.buildMetadata.length}`,
+        );
+
+        // Provenance commands route the same way, so `diff` and `fingerprint` cannot
+        // disagree about whether a rebuilt pair changed.
+        const withProvenance = diffBinaries(original.path, meta.path);
+        check(
+          !withProvenance.differences.some((d) => /LC_UUID|LC_SOURCE_VERSION|LC_CODE_SIGNATURE/.test(d.detail)),
+          'diff: provenance commands are not structural differences either',
+          withProvenance.differences.map((d) => d.detail).join(' | ').slice(0, 90),
+        );
+        // ...but a command that *is* part of the program must be.
+        check(
+          withProvenance.differences.some((d) => /LC_RPATH|LC_MAIN/.test(d.detail)),
+          'diff: while LC_RPATH and LC_MAIN are, since they describe the program',
+          withProvenance.differences.map((d) => d.detail).join(' | ').slice(0, 90),
+        );
+        check(
+          withProvenance.differences.every((d) => !/\bloads (MAIN|RPATH|SYMTAB|SEGMENT)\b/.test(d.detail)),
+          'diff: only dylib commands are described as something the binary "loads"',
+          withProvenance.differences.filter((d) => /loads/.test(d.detail)).map((d) => d.detail).join(' | '),
+        );
+
+        // A genuinely different program, with the categories broken out.
+        const different = diffBinaries(rebuilt.path, meta.path);
+        const cats = new Set(different.differences.map((d) => d.category));
+        check(
+          cats.has('load-commands') && cats.has('sections'),
+          'diff: a different program reports per-category differences',
+          [...cats].join(','),
+        );
+        check(
+          different.differences.some((d) => d.category === 'sections' && /S_REGULAR -> S_CSTRING_LITERALS/.test(d.detail)),
+          'diff: a section that changed kind is reported as a change, not as remove+add',
+        );
+        // Symbol differences need a pair that actually differs in symbols. `rebuilt` and
+        // `meta` share `codeFixture`'s four, so this uses the populated fixture —
+        // the first version of this check compared the wrong pair, saw no symbol
+        // difference, and correctly reported a failure that looked like a bug.
+        const populatedBin = binaries.find((x) => x.stem === 'populated');
+        if (populatedBin) {
+          const symDiff = diffBinaries(populatedBin.path, meta.path);
+          const symEntry = symDiff.differences.find((d) => d.category === 'symbols');
+          check(
+            symEntry && /60 symbol\(s\) removed/.test(symEntry.detail),
+            'diff: symbol additions and removals are counted',
+            symEntry ? symEntry.detail.slice(0, 60) : 'no symbol difference reported',
+          );
+          check(
+            symDiff.perArch.every((r) => r.symbols.a !== r.symbols.b),
+            'diff: and the per-architecture summary agrees with the counts',
+          );
+        }
+
+        // Symbol lists are capped, because a 19,000-symbol binary would otherwise
+        // produce a diff nobody reads past the first line.
+        const populatedForCap = binaries.find((x) => x.stem === 'populated');
+        const capped = populatedForCap ? diffBinaries(populatedForCap.path, meta.path, { maxNames: 3 }) : null;
+        const symDiff = capped?.differences.find((d) => d.category === 'symbols');
+        check(
+          !symDiff || (symDiff.detail.match(/,/g) || []).length <= 3,
+          'diff: --max caps how many symbol names are listed',
+          symDiff ? symDiff.detail.slice(0, 70) : 'no symbol diff',
+        );
+
+        // Slices present on one side only.
+        if (universal) {
+          const thinVsFat = diffBinaries(rebuilt.path, universal.path);
+          check(
+            thinVsFat.differences.some((d) => d.category === 'slices' && /present only in/.test(d.detail)),
+            'diff: an architecture present on one side only is reported',
+            thinVsFat.differences.filter((d) => d.category === 'slices').map((d) => d.detail).join(' | ').slice(0, 80),
+          );
+        }
+
+        // Identical input is a distinct answer from "same program rebuilt".
+        const self = diffBinaries(rebuilt.path, rebuilt.path);
+        check(
+          self.verdict === 'identical' && self.counts.differences === 0 && self.counts.buildMetadata === 0,
+          'diff: a file against itself is "identical", not "rebuilt"',
+          `${self.verdict} counts=${JSON.stringify(self.counts)}`,
+        );
+
+        // --- the CLI
+        const gate = (a, b, ...extra) => run('diff.mjs', [a, b, ...extra]).code;
+        check(gate(rebuilt.path, rebuilt.path) === 0, 'diff: identical files exit 0', `exit ${gate(rebuilt.path, rebuilt.path)}`);
+        check(gate(rebuilt.path, rebuilt2.path) === 0, 'diff: a rebuilt pair exits 0 — the whole point', `exit ${gate(rebuilt.path, rebuilt2.path)}`);
+        check(gate(rebuilt.path, meta.path) === 1, 'diff: different programs exit 1', `exit ${gate(rebuilt.path, meta.path)}`);
+        // Not through `gate`: that helper always supplies two paths, so calling it
+        // with one left `undefined` as a second positional — two arguments, the
+        // second unreadable, exit 3. The tool was right and the test was wrong.
+        check(run('diff.mjs', [rebuilt.path]).code === 2, 'diff: one argument is a usage error', `exit ${run('diff.mjs', [rebuilt.path]).code}`);
+        check(gate(rebuilt.path, rebuilt2.path, '/nope', 'extra') === 2, 'diff: three arguments is a usage error');
+        check(gate(rebuilt.path, '/nope') === 3, 'diff: an unreadable file exits 3, not 1', `exit ${gate(rebuilt.path, '/nope')}`);
+        check(gate(rebuilt.path, rebuilt2.path, ['--nope']) === 2, 'diff: an unknown flag is a usage error');
+
+        const out = run('diff.mjs', [rebuilt.path, rebuilt2.path]);
+        check(
+          /no structural differences/.test(out.stdout) && /build metadata/.test(out.stdout),
+          'diff: a clean diff says both things — nothing structural, and what did change',
+        );
+        const j = run('diff.mjs', ['--json', rebuilt.path, rebuilt2.path]);
+        let env = null;
+        try { env = JSON.parse(j.stdout); } catch { /* asserted below */ }
+        check(
+          j.code === 0 && env?.data?.differences?.length === 0 && env?.data?.buildMetadata?.length === 1,
+          'diff --json: the two lists are separate in the envelope, and the exit agrees',
+          `exit ${j.code}`,
+        );
+
+        // And it must work on real binaries, not only fixtures.
+        if (fs.existsSync('/bin/ls')) {
+          const real = run('diff.mjs', ['/bin/ls', '/bin/ls']);
+          check(real.code === 0, 'diff: a real universal binary against itself reports no differences', `exit ${real.code}`);
+        }
+      }
+    }
+
+    // ---- corpus mode: many binaries, one envelope
+    //
+    // The claim is not capability — other tools search a directory. It is that the
+    // answer *shape* is the same at any scale, so a pipeline needs no second code
+    // path. So the assertions are mostly about the envelope and the three-way
+    // outcome, not about the matching.
+    {
+      const { searchSymbolsIn } = await import('../src/api.mjs');
+      const corpusRoot = path.join(HERE, 'fixtures');
+
+      const all = searchSymbolsIn([corpusRoot], 'target_fn');
+      check(
+        all.totals.matchedFiles > 5 && all.totals.looked === all.totals.files,
+        'corpus: a directory of Mach-O files is searched, and every one was read',
+        `matched=${all.totals.matchedFiles} looked=${all.totals.looked} files=${all.totals.files}`,
+      );
+      check(
+        all.files.every((f) => f.path === all.files.slice().sort((x, y) => (x.path < y.path ? -1 : 1))[0].path
+          || true) && all.files.map((f) => f.path).join() === all.files.map((f) => f.path).slice().sort().join(),
+        'corpus: rows are sorted by path, so two runs are byte-identical',
+      );
+      check(
+        all.files.every((f) => f.ok && typeof f.count === 'number' && Array.isArray(f.matches)),
+        'corpus: each row carries a path, a count and a bounded match list',
+      );
+      check(
+        all.totals.skipped === 0,
+        'corpus: nothing was skipped, because the fixture directory holds only Mach-O',
+      );
+
+      // Non-Mach-O is skipped, not failed. A build directory is full of plists and
+      // headers, and failing the search over them would make the tool useless for
+      // the use it exists for.
+      const mixed = searchSymbolsIn([corpusRoot, '/etc/hosts'], 'target_fn');
+      check(
+        mixed.totals.skipped === 1 && mixed.totals.unreadable === 0,
+        'corpus: a non-Mach-O file in the set is skipped, not reported as an error',
+        `skipped=${mixed.totals.skipped} unreadable=${mixed.totals.unreadable}`,
+      );
+
+      // A path the caller named and that does not exist must be *reported*. This
+      // one was a real bug: the marker for a missing root was an object but the test
+      // for it asked for a string, so a typo fell through to the non-Mach-O filter
+      // and came back as "skipped" — silently dropped, which is the failure this
+      // project refuses most consistently.
+      const missing = searchSymbolsIn(['/nope/not/here'], 'target_fn');
+      check(
+        missing.totals.unreadable === 1 && missing.totals.skipped === 0
+          && missing.files.some((f) => !f.ok && f.path === '/nope/not/here'),
+        'corpus: a path that does not exist is reported as unreadable, never silently skipped',
+        `skipped=${missing.totals.skipped} unreadable=${missing.totals.unreadable}`,
+      );
+
+      // `looked` is the field that keeps the summary honest: `files` includes rows
+      // for paths that failed, so a count reading "N Mach-O read" computed from it
+      // would claim N files were read when none were.
+      check(
+        missing.totals.files === 1 && missing.totals.looked === 0,
+        'corpus: files and looked are separate, so "N read" cannot be a lie',
+        `files=${missing.totals.files} looked=${missing.totals.looked}`,
+      );
+
+      const only = searchSymbolsIn([corpusRoot], 'caller_a', { matchedOnly: true });
+      check(
+        only.files.every((f) => f.count > 0) && only.files.length === only.totals.matchedFiles,
+        'corpus: --matched-only leaves out the files that did not match',
+        `${only.files.length} rows, ${only.totals.matchedFiles} matched`,
+      );
+      const cappedNames = searchSymbolsIn([corpusRoot], 'caller', { perFile: 0 });
+      check(
+        cappedNames.files.every((f) => f.matches.length === 0 && f.count >= 0),
+        'corpus: --per-file 0 keeps counts and drops names',
+      );
+
+      // Imports, which is the question corpus mode is really for: which of these
+      // artifacts pull in a given symbol.
+      const imports = searchSymbolsIn([corpusRoot], '_malloc', { definedOnly: false });
+      check(
+        imports.totals.matchedFiles > 3,
+        'corpus: imports are searchable across a corpus',
+        `${imports.totals.matchedFiles} file(s)`,
+      );
+      const definedOnly = searchSymbolsIn([corpusRoot], '_malloc', { definedOnly: true });
+      check(
+        definedOnly.totals.matchedFiles === 0,
+        'corpus: and excluded by default, matching single-binary behaviour',
+      );
+
+      const re = searchSymbolsIn([corpusRoot], '^caller_[ab]$', { mode: 'regex' });
+      check(
+        re.totals.matchedFiles > 0 && re.files.some((f) => f.matches.some((m) => m.name === 'caller_a')),
+        'corpus: regex mode works across a corpus',
+        `${re.totals.matchedFiles} file(s)`,
+      );
+      let threw = null;
+      try { searchSymbolsIn([corpusRoot], '(unclosed', { mode: 'regex' }); } catch (e) { threw = e; }
+      check(
+        threw instanceof SyntaxError,
+        'corpus: an invalid regex is rejected before any file is opened',
+        threw ? threw.name : 'no error thrown',
+      );
+
+      // --- the CLI, and the three-way exit
+      const corpusDir = binaries.length ? path.dirname(binaries[0].path) : null;
+      if (corpusDir) {
+        const gate = (...args) => run('sym.mjs', args).code;
+        check(gate('target_fn', '--in', corpusDir) === 0, 'corpus CLI: a matching corpus exits 0', `exit ${gate('target_fn', '--in', corpusDir)}`);
+        check(gate('zzz-no-such-symbol', '--in', corpusDir) === 1, 'corpus CLI: a corpus with no match exits 1');
+        check(gate('x', '--in', '/nope/not/here') === 3, 'corpus CLI: nothing readable exits 3, not 1', `exit ${gate('x', '--in', '/nope/not/here')}`);
+        check(gate('pat', '--in', corpusDir, '/bin/ls') === 2, 'corpus CLI: an extra positional is a usage error');
+        check(gate('pat', '--in', corpusDir, '-b', '/bin/ls') === 2, 'corpus CLI: --in with --binary is a usage error');
+        check(gate('pat', '--in', corpusDir, '--nope') === 2, 'corpus CLI: an unknown flag is a usage error');
+        // `target_fn`, not `pat`: this assertion is about the flag being accepted, and a
+        // pattern that matches nothing would exit 1 for a correct reason and report
+        // as a failure of the flag.
+        check(gate('target_fn', '--in', corpusDir, '--per-file=0') === 0, 'corpus CLI: --per-file=0 is accepted');
+
+        // Envelope parity: the same door, whatever the scale. A consumer should not
+        // have to branch on how many files it asked about.
+        const one = run('sym.mjs', ['--json', 'target_fn', '-b', binaries[0].path]);
+        const many = run('sym.mjs', ['--json', 'target_fn', '--in', corpusDir]);
+        const ej = JSON.parse(many.stdout);
+        const eo = one.stdout.trim() ? JSON.parse(one.stdout) : null;
+        check(
+          ej.tool === 'sym' && typeof ej.ok === 'boolean' && Array.isArray(ej.errors) && ej.data !== undefined,
+          'corpus CLI: the envelope has the same keys as single-binary mode',
+          `keys=${Object.keys(ej).join(',')}`,
+        );
+        check(
+          eo !== null && Object.keys(ej).sort().join() === Object.keys(eo).sort().join(),
+          'corpus CLI: and is key-for-key identical, not a variant',
+          `single=${Object.keys(eo ?? {}).sort().join()} corpus=${Object.keys(ej).sort().join()}`,
+        );
+        check(
+          Array.isArray(ej.data.files) && typeof ej.data.totals.looked === 'number',
+          'corpus CLI: --json carries data.files[] and the looked/skipped/unreadable split',
+        );
+        check(
+          /non-Mach-O skipped/.test(run('sym.mjs', ['target_fn', '--in', corpusDir]).stdout),
+          'corpus CLI: the text output accounts for every file it walked',
+        );
+      }
     }
 
     // ---- the decode helpers directly, for the cases no fixture can hold

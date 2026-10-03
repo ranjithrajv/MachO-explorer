@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ranjithrajv/MachO-explorer/schema/envelope.schema.json",
+  "title": "MachO-explorer JSON envelope",
+  "description": "The single response shape every tool emits under --json, and the shape the MCP server returns in structuredContent. One envelope for every tool and both doors, so a consumer learns it once.\n\n`data` is deliberately unconstrained here. Each tool's own answer shape is a function of the file it read, is documented in the TypeScript declarations (src/api.d.ts), and is the thing most likely to grow; constraining it in one schema would make this file a second, worse copy of those declarations. What this schema pins is the envelope itself — which is the part every consumer must be able to rely on, and the part that has to stay identical across ten tools and two doors.\n\nAddresses inside `data` are hex strings, never JSON numbers: a 64-bit address does not survive one. That is enforced by convention rather than by this schema, because the schema cannot see inside an unconstrained object — the address-bearing types are documented in src/api.d.ts and asserted by test/types.mjs.",
+  "type": "object",
+  "required": ["schemaVersion", "tool", "ok", "binary", "errors", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Version of the envelope shape, not of the package. Bump the major on a removal, a rename, or a change of meaning; bump the minor when a field is added, since an added field is ignorable. Compare it against the value you were written against and fail loudly on a change, rather than discovering it from an empty field."
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Which tool produced this. Over MCP this is the tool name with the 'macho-' prefix; from the CLI it is the unprefixed name."
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "True when the tool ran, whether or not it found anything. An empty result is ok:true — 'ran and found nothing' is an answer, not a failure. False means the tool could not do its job."
+    },
+    "binary": {
+      "type": ["string", "null"],
+      "description": "The file that was read, or null when none was named. Over MCP there is no fallback binary, so this is null unless the caller passed one."
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "bad-arguments",
+          "bad-address",
+          "bad-pattern",
+          "no-match",
+          "no-call-sites",
+          "no-symbols",
+          "unknown-encoding",
+          "io"
+        ]
+      },
+      "description": "Machine-readable reason codes, empty when ok is true. These are what let a caller self-correct rather than parse prose: 'io' and 'unknown-encoding' are different problems, and conflating them sends a caller looking in the wrong place."
+    },
+    "messages": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Prose for a human, one per code above. Absent rather than empty when there is nothing to say, which keeps 'nothing to report' distinguishable from 'there is nothing there'."
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Caveats that do not make the answer wrong — that zero is the correct answer for a stripped binary, that a slice was chosen by preference rather than by request. Absent rather than empty, for the same reason as messages."
+    },
+    "data": {
+      "type": ["object", "null"],
+      "description": "The answer. Null when ok is false. Shape documented per function in src/api.d.ts."
+    }
+  },
+  "examples": [
+    {
+      "schemaVersion": "1.0",
+      "tool": "sym",
+      "ok": true,
+      "binary": "/path/to/binary",
+      "errors": [],
+      "notes": ["defined symbols only (N_SECT)"],
+      "data": {
+        "arch": "arm64",
+        "pattern": "target",
+        "matches": [{ "name": "target_fn", "addr": "0x100000220", "defined": true }],
+        "count": 1,
+        "uniqueCount": 1
+      }
+    },
+    {
+      "schemaVersion": "1.0",
+      "tool": "symlookup",
+      "ok": true,
+      "binary": "/path/to/binary",
+      "errors": [],
+      "data": {
+        "arch": "arm64",
+        "vaddr": "0x100000240",
+        "function": null,
+        "note": "address is not mapped by this slice — nothing here to resolve"
+      }
+    },
+    {
+      "schemaVersion": "1.0",
+      "tool": "describe",
+      "ok": false,
+      "binary": "/nope",
+      "errors": ["io"],
+      "messages": ["/nope: cannot be read (no such file, not a regular file, or not permitted)"],
+      "data": null
+    }
+  ]
+}

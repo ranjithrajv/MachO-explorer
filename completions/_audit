@@ -1,0 +1,17 @@
+#compdef audit
+#
+# zsh completion for audit. Install as _audit in a directory
+# on your $fpath.
+#
+# MachO-explorer 0.1.0.
+
+_macho_audit() {
+    _arguments -s -S \
+        '--strict[treat warnings as failures too, not only errors]' \
+        '--arch=[audit only this slice]:architecture:(x86_64 arm64 arm64e arm64_32 ppc ppc64 arm i386)' \
+        '--json[write one JSON object to stdout]' \
+        '(-h --help)'{-h,--help}'[show usage]' \
+        '1:Mach-O file or bundle:_files'
+}
+
+_macho_audit "$@"

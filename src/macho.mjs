@@ -42,6 +42,7 @@
  */
 
 import { openSync, closeSync, readSync, fstatSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 /** Mach-O and fat-header magics, big- and little-endian. */
 export const MH_MAGIC_64 = 0xfeedfacf;
@@ -1083,6 +1084,147 @@ export function resolveEntryPoint(thin) {
  * cheapest tool in the package the slowest one. Sampling a prefix also keeps the
  * measurement cheap for the fixture-sized files the suite runs on.
  */
+/* ------------------------------------------------------------------ *
+ * fingerprint
+ * ------------------------------------------------------------------ */
+
+/**
+ * A short, stable digest of a list of strings, order-independent.
+ *
+ * Sorted before hashing, because the same program produces these lists in whatever
+ * order the linker happened to emit them and a fingerprint that changed when the
+ * linker changed its mind would be useless for the only question it is asked.
+ *
+ * A digest rather than the list itself, for two reasons: the lists run to tens of
+ * thousands of entries, and the value is meant to be comparable at a glance and
+ * quotable in a bug report.
+ *
+ * Separated by a byte that cannot occur in a symbol name, so `["ab","c"]` and
+ * `["a","bc"]` cannot collide. Without the separator those two hash identically —
+ * which is not a theoretical concern, since C++ mangled names are built from exactly
+ * those pieces.
+ */
+export function digestOf(items, length = 12) {
+  const h = createHash('sha256');
+  for (const s of [...items].sort()) {
+    h.update(s, 'latin1');
+    h.update('\0');
+  }
+  return h.digest('hex').slice(0, length);
+}
+
+/**
+ * Load commands excluded from a slice's shape digest, because they record *this
+ * build's provenance* rather than what the program is.
+ *
+ * This list was not guessed. Comparing a fixture against a copy of itself with an
+ * `LC_UUID` appended reported "different programs", which is absurd: `LC_UUID`
+ * says which build produced a file, not what is in it, and the fingerprint already
+ * reports the UUID separately and exactly. Leaving it in the shape made the digest
+ * sensitive to precisely the kind of change the digest exists to ignore.
+ *
+ * Each entry, with the reason it earns its place:
+ *
+ *   LC_UUID              the build id. Already reported as `uuid`, exactly.
+ *   LC_CODE_SIGNATURE    present only once the file has been signed, so a build
+ *                        that skipped signing differs from one that did not while
+ *                        containing identical code.
+ *   LC_DYLIB_CODE_SIGN_DRS  the same, for the signature's own resource directory.
+ *   LC_SOURCE_VERSION    the source revision, which moves with the VCS state rather
+ *                        than with the program.
+ *
+ * Deliberately *not* excluded, because they are properties of the program rather
+ * than of the build: the version-minimum and build-version commands (what the
+ * binary requires), every dylib load (which library it needs), and everything else.
+ * A digest that ignored those would call two genuinely different binaries the same,
+ * which is the failure this whole feature is meant to avoid.
+ */
+const PROVENANCE_COMMANDS = new Set([
+  'LC_UUID',
+  'LC_CODE_SIGNATURE',
+  'LC_DYLIB_CODE_SIGN_DRS',
+  'LC_SOURCE_VERSION',
+]);
+
+/**
+ * A structural digest of one slice: what it *is*, with nothing that a rebuild moves.
+ *
+ * ## What goes in, and what is deliberately left out
+ *
+ * In: the architecture, the word size, the filetype, every section's name, every
+ * load command's *name* except the provenance ones, and every defined symbol's
+ * name.
+ *
+ * Out: every address, every size, every offset, the UUID, and the version numbers
+ * and paths inside `LC_LOAD_DYLIB`. All of those change between two builds of the
+ * same source — ASLR and a PIE base move every address, a dependency bump moves a
+ * dylib's current version, a rebuild moves a timestamp — so including any of them
+ * would make the fingerprint answer "were these built by the same invocation",
+ * which is a question the UUID already answers better.
+ *
+ * The one judgement call worth naming is section *sizes*, which are excluded for
+ * the same reason: a rebuild that changes a dependency's version changes a size
+ * without changing the program. That does make a stripped binary's fingerprint
+ * weaker, which is why {@link sliceShape} reports a `tier` rather than presenting
+ * a structure-only digest as though it were as strong as a full one.
+ *
+ * ## Pure, and deliberately so
+ *
+ * Takes its inputs rather than a file handle, so it is testable without a binary
+ * and cannot be confused with a function that reads anything.
+ *
+ * @param {object} p
+ * @param {string} p.arch      architecture name
+ * @param {number} p.bits      64 or 32
+ * @param {number} p.filetype  the `MH_*` value
+ * @param {Array<{segname: string, sectname: string}>} p.sections
+ * @param {Array<{name: string}>} p.loadCommands
+ * @param {Array<{name: string}>} p.definedSymbols  names only
+ * @returns {{structure: string, symbols: string|null, fingerprint: string, tier: 'full'|'structure-only', nsyms: number}}
+ */
+export function sliceShape({ arch, bits, filetype, sections, loadCommands, definedSymbols }) {
+  const structure = digestOf([
+    `arch:${arch}`,
+    `bits:${bits}`,
+    `filetype:${filetype}`,
+    ...sections.map((s) => `sect:${s.segname},${s.sectname}`),
+    // Names only. A dylib's path and version live inside the command and change on
+    // every dependency bump; the fact that the binary loads a dylib does not.
+    // Names only, and provenance excluded — see `PROVENANCE_COMMANDS`. A dylib's
+    // path and version live inside the command and change on every dependency bump;
+    // the fact that the binary loads a dylib does not.
+    ...loadCommands.filter((c) => !PROVENANCE_COMMANDS.has(c.name)).map((c) => `lc:${c.name}`),
+  ]);
+
+  const nsyms = definedSymbols.length;
+  if (nsyms === 0) {
+    // No names to work with, so the digest is structural only — and says so. A
+    // stripped binary is not a weaker *program*, but the fingerprint of one is a
+    // weaker claim, and presenting the two identically would overstate it.
+    return { structure, symbols: null, fingerprint: structure, tier: 'structure-only', nsyms: 0 };
+  }
+  const symbols = digestOf(definedSymbols.map((s) => `sym:${s.name}`));
+  // Both digests are folded in, so the result changes if *either* the structure or
+  // the symbol set does — including the case where a binary gains or loses symbols
+  // without gaining or losing sections.
+  const fingerprint = digestOf([`structure:${structure}`, `symbols:${symbols}`]);
+  return { structure, symbols, fingerprint, tier: 'full', nsyms };
+}
+
+/**
+ * A structural digest for a whole file, across every slice.
+ *
+ * Per-slice digests are combined rather than pooled, because a universal binary's
+ * slices are independently meaningful: two builds of the same program that gained
+ * an architecture should match on the slices they share and differ on the one that
+ * is new. Pooling would report "different" for both and hide which.
+ *
+ * @param {Array<{arch: string, fingerprint: string}>} slices
+ */
+export function fileShape(slices) {
+  return digestOf(slices.map((s) => `slice:${s.arch}:${s.fingerprint}`));
+}
+
 export function shannonEntropy(f, offset, length, maxBytes = 1 << 20) {
   const n = Math.min(length, maxBytes);
   if (n <= 0) return 0;
@@ -1162,7 +1304,28 @@ const PACKED_ENTROPY = 6.4;
 export function detectAbnormalities(f, thin, { sliceOffset = 0, sliceSize = null } = {}) {
   const out = [];
   const sliceEnd = sliceSize == null ? f.size - sliceOffset : sliceSize;
-  const add = (kind, detail) => out.push({ kind, detail });
+  /**
+   * Record one finding.
+   *
+   * `severity` is the distinction that lets this be used as a build gate rather
+   * than only as a report, and it is drawn on one question: **can the reader's
+   * answers still be trusted?**
+   *
+   *   `error`   — the file disagrees with itself. A size or an extent points at
+   *               bytes that are not there, so anything computed from it may be
+   *               wrong. A build should fail on these.
+   *   `warning` — the file parsed and the answers are probably right, but
+   *               something is unfamiliar (a flag or attribute bit this header
+   *               does not name) or explicitly heuristic (the entropy probe).
+   *
+   * The two unfamiliar-bit checks are warnings rather than errors on purpose. A
+   * binary built by a newer Xcode than this reader knows about sets a flag bit
+   * that has no name yet, and failing a build over that would make the gate
+   * useless within one toolchain release. The caller who wants the stricter
+   * reading asks for it — `audit --strict` — and a gate that only ever fires on
+   * genuine damage is a gate people leave switched on.
+   */
+  const add = (kind, detail, severity = 'error') => out.push({ kind, detail, severity });
 
   // Header flags this table cannot name. A real binary can set a bit added after
   // this reader was written, so the detail says "unrecognised" rather than
@@ -1172,6 +1335,7 @@ export function detectAbnormalities(f, thin, { sliceOffset = 0, sliceSize = null
     add(
       'unknown-header-flags',
       `header sets flag bits with no name in <mach-o/loader.h>: 0x${hdr.unknown.toString(16)}`,
+      'warning',
     );
   }
 
@@ -1202,6 +1366,7 @@ export function detectAbnormalities(f, thin, { sliceOffset = 0, sliceSize = null
         'unknown-section-attributes',
         `${sec.segname},${sec.sectname} sets attribute bits with no name in <mach-o/loader.h>: ` +
           `0x${sec.attributesUnknown.toString(16)}`,
+        'warning',
       );
     }
     if (sec.type.startsWith('S_UNKNOWN_')) {
@@ -1209,6 +1374,7 @@ export function detectAbnormalities(f, thin, { sliceOffset = 0, sliceSize = null
         'unknown-section-type',
         `${sec.segname},${sec.sectname} has section type 0x${sec.typeRaw.toString(16)}, ` +
           'which <mach-o/loader.h> does not define',
+        'warning',
       );
     }
   }
@@ -1261,6 +1427,7 @@ export function detectAbnormalities(f, thin, { sliceOffset = 0, sliceSize = null
           `the string table averages ${h.toFixed(2)} bits/byte over its first ` +
             `${Math.min(st.strsize, 1 << 20)} bytes — above the ~6.4 threshold, ` +
             'so it may be compressed or obfuscated rather than plain text',
+          'warning',
         );
       }
     }
@@ -1268,6 +1435,102 @@ export function detectAbnormalities(f, thin, { sliceOffset = 0, sliceSize = null
 
   return out;
 }
+
+/**
+ * Structural problems with the *fat container* — the table of slices, rather than
+ * anything inside a slice.
+ *
+ * ## Why this is separate from {@link detectAbnormalities}
+ *
+ * That function answers "does this slice hold together?", and every check in it is
+ * about bytes reachable from one Mach-O header. None of them can see a slice that
+ * overlaps its neighbour, because each slice is perfectly self-consistent in
+ * isolation — two slices claiming the same file range are individually fine and
+ * jointly a lie, and a per-slice check structurally cannot notice.
+ *
+ * So the fat table gets its own pass. It is small, and the three things that
+ * matter are all cross-slice:
+ *
+ *   - **overlapping slices.** Two slices claiming the same bytes means a reader
+ *     that maps an address through "the richest slice" can silently pick either,
+ *     and which one it picked depends on symbol counts rather than on anything the
+ *     file says. This is the check that most changes what a tool reports, because
+ *     it makes an existing ambiguity *visible* rather than resolving it silently.
+ *   - **a slice reaching past the end of the file.** Truncation, the usual cause.
+ *   - **a misaligned slice offset.** dyld requires slices to start on a 16 KiB
+ *     boundary. A file that violates it still parses — this reader reads slice
+ *     offsets from the table rather than assuming them — so it is a warning about
+ *     the producer, not a claim that the bytes are unreadable.
+ *
+ * Alignment is deliberately a *warning* and overlap a *error*, for the same
+ * reason the unfamiliar-bit checks are warnings: only one of them means a reader's
+ * answers cannot be trusted. A misaligned slice is read correctly by this reader
+ * and by every other that reads the table; overlapping slices mean two different
+ * answers are equally available.
+ *
+ * @param {object} f an `opener()` handle
+ * @returns {Array<{kind: string, detail: string, severity: string}>} empty for a
+ *   well-formed container, and also empty for a thin binary — a thin file has no
+ *   fat table to be inconsistent with, and reporting nothing is the honest answer
+ *   rather than reporting "0 slices".
+ */
+export function detectContainerAbnormalities(f) {
+  const out = [];
+  const fat = parseFat(f);
+  if (!fat) return out;
+  const add = (kind, detail, severity = 'error') => out.push({ kind, detail, severity });
+
+  for (const s of fat) {
+    if (s.offset + s.size > f.size) {
+      add(
+        'slice-past-file-end',
+        `the ${sliceArchName(s.cputype, s.cpusubtype)} slice claims bytes ${s.offset}..${s.offset + s.size}, ` +
+          `past the end of a ${f.size}-byte file`,
+      );
+    }
+    if (s.offset % FAT_SLICE_ALIGN !== 0) {
+      add(
+        'slice-misaligned',
+        `the ${sliceArchName(s.cputype, s.cpusubtype)} slice starts at 0x${s.offset.toString(16)}, ` +
+          `which is not a ${FAT_SLICE_ALIGN / 1024} KiB boundary — dyld requires alignment, ` +
+          'so this file was not produced by a current linker',
+        'warning',
+      );
+    }
+  }
+
+  // Overlap, by pairwise extent comparison rather than by sorting. A fat table has
+  // a handful of slices, so the quadratic form is not worth optimising and keeps
+  // the reporting order the same as the table's own order, which is what a reader
+  // comparing two files wants to see.
+  for (let i = 0; i < fat.length; i++) {
+    for (let j = i + 1; j < fat.length; j++) {
+      const a = fat[i];
+      const b = fat[j];
+      const lo = Math.max(a.offset, b.offset);
+      const hi = Math.min(a.offset + a.size, b.offset + b.size);
+      if (lo < hi) {
+        add(
+          'slices-overlap',
+          `the ${sliceArchName(a.cputype, a.cpusubtype)} slice (${a.offset}..${a.offset + a.size}) and the ` +
+            `${sliceArchName(b.cputype, b.cpusubtype)} slice (${b.offset}..${b.offset + b.size}) both claim ` +
+            `bytes ${lo}..${hi} — which slice a reader used would change the answer`,
+        );
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * dyld's required alignment for a fat slice's starting offset: 2^14.
+ *
+ * A named constant rather than a literal at the use site, because the value is a
+ * property of the loader's contract rather than of this check, and the next reader
+ * to need it should not have to re-derive it.
+ */
+const FAT_SLICE_ALIGN = 1 << 14;
 
 /**
  * Map a file offset to a vaddr within a parsed slice, or null if unmapped.

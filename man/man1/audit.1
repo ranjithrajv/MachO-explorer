@@ -1,0 +1,98 @@
+.TH AUDIT 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.SH NAME
+audit \- check a Mach-O for internal consistency
+.SH SYNOPSIS
+.B audit
+.RI [ binary | bundle ]
+.RB [ \-\-json ]
+.RB [ \-\-strict ]
+.RB [ \-\-arch= name ]
+.RB [ \-b | \-\-binary
+.IR path ]
+.RB [ \-h | \-\-help ]
+.SH DESCRIPTION
+Checks every structural claim the file makes about itself and reports a verdict,
+with an exit status a build can gate on.
+.BR describe (1)
+already reports abnormalities per slice; this exists because a report is not a
+gate.
+.SH EXIT STATUS
+.TP
+.B 0
+sound \- no findings at the requested strictness
+.TP
+.B 1
+unsound \- at least one finding. A
+.IR "negative answer" ,
+not an error
+.TP
+.B 2
+usage error
+.TP
+.B 3
+could not read the file at all
+.PP
+1 rather than 3 is the important distinction, and it follows the taxonomy every
+tool here uses: exit 1 means the tool ran and its answer was no. An audit that found
+something wrong has done its job. The distinction from 3 matters in the other
+direction too, because an unreadable file is
+.I not
+a passing audit:
+.B audit /nope
+exits 3, so a mistyped path in a CI script cannot be read as a clean bill of health.
+.SH SEVERITY
+Findings carry a severity, on one question: can the reader's answers still be
+trusted?
+.TP
+.B error
+the file disagrees with itself \- a size or an extent points at bytes that are not
+there, so anything computed from it may be wrong
+.TP
+.B warning
+the file parsed and the answers are probably right, but something is unfamiliar or
+explicitly heuristic
+.PP
+By default only errors fail.
+.B \-\-strict
+fails on warnings too, which is right for a release gate you control the toolchain
+for and wrong otherwise: a binary built by an Xcode newer than this reader sets a
+flag bit the header has no name for, and failing every build over that trains people
+to disable the gate.
+.SH WHAT IS NOT A FINDING
+Unknown
+.I load commands
+are not. They are already named by number by
+.BR "describe \-\-loads" ,
+on the principle that an unfamiliar-but-valid command is present rather than broken;
+grading it as damage here would fire on every binary from a newer linker.
+.PP
+An
+.B LC_MAIN
+entry point outside
+.B __TEXT
+is not either. That is the normal state of a dyld shared-cache stub, and measurement
+found it on a fully-symbolled 113 MB
+.I node
+as well. A warning that is always true teaches a reader to skip warnings.
+.SH THE FAT TABLE
+Overlapping slices
+.I are
+a finding, and the reason is worth stating: both slices parse cleanly and no
+per-slice check can see it, because each is internally consistent. What it costs is
+visible in the
+.I bent
+fixture, where the second slice's bytes overwrite the first's string table and that
+slice goes on to report six symbol entries and no names \- a shape otherwise
+indistinguishable from a stripped binary.
+.SH EXAMPLES
+.PP
+.nf
+audit build/Contents/MacOS/app
+audit \-\-strict ./dist/*.dylib
+audit \-\-json ./out | jq '.data.verdict, .data.counts'
+.fi
+.SH SEE ALSO
+.BR describe (1),
+.BR fingerprint (1),
+.BR diff (1),
+.BR sym (1)

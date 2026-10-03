@@ -653,7 +653,7 @@ function lcSourceVersion(a, b, c, d, e) {
  * exactly checkable by reading the source above rather than by running the tool
  * and believing it.
  */
-function codeFixture(cputype, { extraLoadcmds = 0 } = {}) {
+function codeFixture(cputype, { extraLoadcmds = 0, base = VMADDR_BASE } = {}) {
   const ARM = cputype === CPU_ARM64;
   // `extraLoadcmds` shifts where `__text` begins, and with it every encoded
   // displacement. Adding a load command to a fixture without saying so here is
@@ -661,7 +661,7 @@ function codeFixture(cputype, { extraLoadcmds = 0 } = {}) {
   // still a valid `call rel32`, they just point 24 bytes before the function they
   // name, so `findcall` reports zero and the failure looks like a broken reader
   // rather than a stale fixture.
-  const TEXT = textVaddr(HEADER_PLUS_LOADCMDS + extraLoadcmds);
+  const TEXT = textVaddr(HEADER_PLUS_LOADCMDS + extraLoadcmds, base);
   const CALLER_A = TEXT + 0x40n;
   const CALLER_B = TEXT + 0x80n;
   const TARGET = TEXT + 0x100n;
@@ -984,6 +984,220 @@ function universalArm64e() {
 }
 
 /**
+ * A universal binary whose **fat table lies**: the only shape that makes the
+ * container-level checks reachable.
+ *
+ * Every check in `detectAbnormalities` is about one slice's internal consistency,
+ * and a slice that overlaps its neighbour is perfectly consistent on its own — so
+ * those checks are structurally incapable of noticing, and no real binary has this
+ * defect because no linker emits it. Which is the whole argument for building the
+ * fixture: a check that can only ever run against good input has never been shown
+ * to work, and the corpus already exists to escape exactly that.
+ *
+ * Three defects, planted together and independently identifiable by `kind`:
+ *
+ *   1. **overlap.** The arm64 slice starts 0x200 bytes into the x86_64 slice, so
+ *      both claim the same file bytes. This is the one that changes behaviour
+ *      rather than just raising a flag: with two slices claiming one address range,
+ *      which slice a reader used to resolve an address becomes a matter of symbol
+ *      counts rather than of anything the file says.
+ *   2. **misalignment.** 0x4200 is not a 16 KiB boundary, which is dyld's
+ *      requirement. A warning rather than an error, because a reader that reads
+ *      slice offsets from the table — as this one does — handles it correctly.
+ *   3. **overrun.** The arm64 slice declares a size far past the end of the file,
+ *      which is what a truncated or tampered container looks like.
+ *
+ * The consequence worth stating, because it is the whole argument for a
+ * container-level check: **both slices still parse, and neither is flagged.**
+ *
+ * The arm64 slice lands 0x200 bytes into the x86_64 slice, so its bytes overwrite
+ * the tail of x86_64's — which is where that slice's string table lives. The
+ * x86_64 header, load commands and sections are all intact, so `parseThin`
+ * succeeds and every per-slice check passes. What is left is a slice reporting
+ * `nsyms: 6, defined: 0`: six symbol *entries* whose names have been destroyed by
+ * the overlap. On its own that shape is indistinguishable from a stripped binary,
+ * and `detectAbnormalities` has nothing to say about it — each slice is
+ * internally consistent, and the inconsistency is between them.
+ *
+ * This is exactly the defect a per-slice check is structurally unable to find, and
+ * it is why the container pass exists. An earlier draft of this fixture asserted
+ * that the overlapping slice would simply fail to parse; it does not, and the
+ * assertion was wrong. Overlapping slices are subtler than that.
+ */
+function bentFat() {
+  const x86 = thinMachO({ cputype: CPU_X86_64, ...codeFixture(CPU_X86_64) });
+  const arm = thinMachO({ cputype: CPU_ARM64, ...codeFixture(CPU_ARM64) });
+
+  const ALIGN = 16384;
+  const FIRST = ALIGN;                 // where a real linker would put slice 1
+  const OVERLAP = FIRST + 0x200;       // misaligned, and inside slice 1
+  const DECLARED_ARM_SIZE = arm.length + 0x10000; // runs well past the end
+
+  // The file ends shortly after the second slice's *offset*, so the overrun is
+  // unambiguous rather than marginal. Building the buffer from the real extents
+  // rather than a round number keeps the fixture honest if either slice's size
+  // ever changes.
+  const headerSize = 8 + 2 * 20;
+  const end = Math.max(FIRST + x86.length, OVERLAP + arm.length) + 64;
+  const buf = Buffer.alloc(Math.max(headerSize, end), 0);
+
+  buf.writeUInt32BE(FAT_MAGIC, 0);
+  buf.writeUInt32BE(2, 4);
+  const writeArch = (i, cputype, offset, size) => {
+    const o = 8 + i * 20;
+    buf.writeInt32BE(cputype, o);
+    buf.writeUInt32BE(3, o + 4);
+    buf.writeUInt32BE(offset, o + 8);
+    buf.writeUInt32BE(size, o + 12);
+    buf.writeUInt32BE(14, o + 16);
+  };
+  writeArch(0, CPU_X86_64, FIRST, x86.length);
+  writeArch(1, CPU_ARM64, OVERLAP, DECLARED_ARM_SIZE);
+  x86.copy(buf, FIRST);
+  arm.copy(buf, OVERLAP);
+
+  return {
+    buf,
+    // Stated from the generator's own arithmetic, so the assertions read intent
+    // rather than a copy of what the reader returned.
+    expect: {
+      firstOffset: FIRST,
+      overlapOffset: OVERLAP,
+      declaredArmSize: DECLARED_ARM_SIZE,
+      realArmSize: arm.length,
+      fileSize: buf.length,
+      kinds: ['slices-overlap', 'slice-misaligned', 'slice-past-file-end'],
+      // Severity is asserted, not assumed, so it lives beside the kind it belongs
+      // to rather than in the manifest — one source of truth, and a reader of this
+      // function can see the whole contract without looking anywhere else.
+      // Overlap can change which slice answers, so it is an error. Misalignment is
+      // read correctly by any reader that reads the fat table rather than assuming
+      // offsets, so it is only a warning.
+      severities: {
+        'slices-overlap': 'error',
+        'slice-misaligned': 'warning',
+        'slice-past-file-end': 'error',
+      },
+    },
+  };
+}
+
+/**
+ * A binary that is *valid but unfamiliar* — warnings only, no damage.
+ *
+ * It exists because without it the `--strict` gate cannot be tested at all. Both
+ * other broken fixtures (`damaged`, `bent`) mix warnings with errors, so they fail
+ * under the default strictness *and* under `--strict`, and the two settings are
+ * indistinguishable. A gate whose strict flag makes no observable difference is a
+ * flag nobody can tell they set.
+ *
+ * Two warnings, chosen to be the two kinds that must never fail a default build:
+ *
+ *   - a header flag bit `<mach-o/loader.h>` gives no name to, which is what a
+ *     binary built by a newer Xcode than this reader looks like;
+ *   - a section attribute bit with no name, which is the same situation one level
+ *     down.
+ *
+ * Everything else is left correct, so the file parses completely and every symbol,
+ * section and call site still resolves. The claim being pinned is narrow and
+ * specific: **unfamiliarity is not damage.** A tool that failed these would make
+ * its gate useless within one toolchain release, and people would switch it off.
+ */
+function newerFlagsFixture() {
+  const c = codeFixture(CPU_X86_64);
+  const buf = thinMachO({
+    cputype: CPU_X86_64,
+    ...c,
+    // Only the header word. Everything else is a stock fixture.
+    flags: DEFAULT_MH_FLAGS | MH_UNNAMED_BIT,
+  });
+
+  // An unknown *attribute* bit on `__text`, at the section level. Written by hand
+  // because `thinMachO` derives section flags from `textFlags`, so there is no
+  // parameter that reaches this field on purpose.
+  //
+  // Three offsets that must not be confused, and the first version of this wrote
+  // the wrong one: the load commands start at 32 (header), the `LC_SEGMENT_64`
+  // header is 72 bytes, so the first `section_64` *entry* begins at 104 — and
+  // `flags` is the eighth field of that 80-byte entry, at +64. So the byte to
+  // patch is 168. Reading at 104 patches the entry's `segname`, which is how this
+  // produced a fixture with one warning instead of two and still looked fine.
+  const SECTION_ENTRY_START = 32 + 72;
+  const SECTION_FLAGS_OFFSET = SECTION_ENTRY_START + 64;
+  const current = buf.readUInt32LE(SECTION_FLAGS_OFFSET);
+  buf.writeUInt32LE((current | 0x00100000) >>> 0, SECTION_FLAGS_OFFSET);
+
+  return {
+    buf,
+    // The code fixture's own addresses, so the assertions below can point a scan
+    // and a lookup at the planted call site and symbol without restating them.
+    addresses: c.addresses,
+    expect: {
+      headerBit: MH_UNNAMED_BIT,
+      // 0x00100000 is inside the attribute region and carries no name in the
+      // header, which is what makes it an unknown *attribute* rather than a type.
+      sectionAttributeBit: 0x00100000,
+      // Warnings and nothing else. If this list ever grows an error, the default
+      // gate stops passing and the fixture stops testing what it is for.
+      severities: ['warning', 'warning'],
+      kinds: ['unknown-header-flags', 'unknown-section-attributes'],
+    },
+  };
+}
+
+/**
+ * The *same program* as `thin-x86_64.macho`, in bytes that differ everywhere a
+ * rebuild would move them.
+ *
+ * This fixture exists to make the fingerprint feature falsifiable. Every other pair
+ * of fixtures in the corpus is either identical or a genuinely different program, so
+ * "same fingerprint" and "same file" cannot be told apart — and a digest that only
+ * ever agreed with `cmp` would pass any test built from those pairs.
+ *
+ * So this one is built to disagree at the byte level while describing the same
+ * program:
+ *
+ *   - **every address moves.** The load base is 0x200000000 rather than
+ *     0x100000000, so `__TEXT`, every section and every symbol value differs. This
+ *     is what a PIE base or a slide does, and it is the single biggest reason byte
+ *     comparison is useless for the question.
+ *   - **the file is larger**, because it carries an `LC_UUID` the original does not
+ *     — 24 bytes of build identity that says nothing about the program.
+ *   - the UUID itself is a distinct value, so a caller comparing the two is told
+ *     "different build, same program", which is the answer worth being able to give.
+ *
+ * The fingerprint of this file must equal that of `thin-x86_64.macho`, and the UUID
+ * must differ. Both are asserted at build time, and both must be asserted *together*:
+ * a digest that matched because it accidentally hashed the UUID would pass the first
+ * check and fail the second.
+ */
+/** `lc_uuid`'s own size: cmd, cmdsize, and a 16-byte value, in both word sizes. */
+const UUID_CMD_SIZE = 24;
+
+function rebuiltFixture({ uuid = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', base = 0x200000000n } = {}) {
+  const buf = thinMachO({
+    cputype: CPU_X86_64,
+    ...codeFixture(CPU_X86_64, { base, extraLoadcmds: UUID_CMD_SIZE }),
+    base,
+    uuid,
+  });
+  return {
+    buf,
+    expect: {
+      base: `0x${base.toString(16)}`,
+      uuid,
+      // The UUID command adds 24 bytes of load command, which pushes every section
+      // and every symbol 24 bytes later. Stated as a number because the fixture's
+      // call-site assertions have to account for it: computed without this, the
+      // expected target lands 24 bytes before the real one and the scan finds
+      // nothing — the exact stale-constant failure `codeFixture`'s own comment
+      // warns about.
+      extraLoadcmds: UUID_CMD_SIZE,
+    },
+  };
+}
+
+/**
  * A binary with no symbol table at all — the stripped case.
  *
  * `findcall` and `findliteral` read bytes and must still work on it; `sym`
@@ -1244,12 +1458,16 @@ async function verify(files) {
             `${name}/${s.arch}: __text is S_REGULAR, not ${text?.type} (the low byte of flags is the section type)`,
           );
         }
-        // And no fixture but `damaged` should report an attribute it cannot name,
+        // And no fixture but `newer` should report an attribute it cannot name,
         // which is what a reader masking the type byte as an attribute would do.
-        expect(
-          s.sections.every((x) => x.attributesUnknown === 0),
-          `${name}/${s.arch}: no section reports unknown attribute bits`,
-        );
+        // `newer` is exempt by name because carrying exactly one unknown attribute
+        // bit is its entire purpose.
+        if (name !== 'newer') {
+          expect(
+            s.sections.every((x) => x.attributesUnknown === 0),
+            `${name}/${s.arch}: no section reports unknown attribute bits`,
+          );
+        }
       }
     }
     expect(isMachO(p), `${name}: magic bytes are a Mach-O`);
@@ -1673,6 +1891,225 @@ async function verify(files) {
     );
   }
 
+  // The rebuilt fixture, and the claim the whole fingerprint feature rests on.
+  //
+  // Asserted as a *pair* of properties that pull against each other, because either
+  // alone is satisfiable by a broken digest:
+  //
+  //   same fingerprint  — it really is the same program
+  //   different UUID     — it really is a different build, and the digest is not
+  //                        quietly hashing the UUID to get the first answer
+  //
+  // A digest that hashed every byte would pass the second check and fail the first.
+  // A digest that ignored real structure would do the reverse.
+  {
+    const rb = rebuiltFixture();
+    const { fingerprint: fpOf, compareFingerprints: cmpOf } = await import('../src/api.mjs');
+    const original = files.thinx86_64;
+    const fa = fpOf(original);
+    const fb = fpOf(files.rebuilt);
+
+    expect(
+      fb.fingerprint === fa.fingerprint,
+      `rebuilt: same program as the original, so the fingerprint matches ` +
+        `(got ${fb.fingerprint}, expected ${fa.fingerprint})`,
+    );
+    expect(
+      fb.uuid !== fa.uuid && fb.uuid === rb.expect.uuid,
+      `rebuilt: a different UUID, so the digest is not hashing build identity ` +
+        `(got ${fb.uuid}, expected ${rb.expect.uuid}; original has ${fa.uuid})`,
+    );
+    // And the addresses must genuinely differ, or the first property is vacuous —
+    // two files at the same base with the same symbols would match trivially.
+    const a0 = (await import('../src/api.mjs')).describe(original).slices[0];
+    const b0 = (await import('../src/api.mjs')).describe(files.rebuilt).slices[0];
+    expect(
+      a0.textAddr !== b0.textAddr,
+      `rebuilt: __text really is at a different address (${a0.textAddr} vs ${b0.textAddr})`,
+    );
+    expect(
+      b0.textAddr >= 0x200000000n && b0.textAddr < 0x200000000n + 0x10000n,
+      `rebuilt: __text lies inside the intended load base (got 0x${b0.textAddr.toString(16)})`,
+    );
+    expect(
+      a0.textSize === b0.textSize,
+      'rebuilt: and the code is the same size, so only the base moved',
+    );
+
+    const cmp = cmpOf(original, files.rebuilt);
+    expect(
+      cmp.sameProgram === true && cmp.sameBuild === false,
+      `rebuilt: same program, not the same build (${cmp.verdict})`,
+    );
+    // `rebuilt` needs *two* UUIDs that differ, and the original has none — so the
+    // verdict must stop at "same program" rather than claiming a rebuild it cannot
+    // prove. Asserted because the opposite is the natural mistake.
+    expect(
+      cmp.rebuilt === false && cmp.verdict === 'same program',
+      `rebuilt: no rebuild is claimed when one side carries no UUID (${cmp.verdict})`,
+    );
+
+    // Two UUID-bearing builds of one program: now the rebuild *is* provable.
+    const pair = cmpOf(files.rebuilt, files.rebuilt2);
+    expect(
+      pair.sameProgram === true && pair.sameBuild === false && pair.rebuilt === true,
+      `rebuilt2: two UUID-bearing builds of one program prove a rebuild (${pair.verdict})`,
+    );
+    expect(
+      pair.byArch.every((x) => x.match === true),
+      'rebuilt2: and both sides match on every architecture',
+    );
+
+    // Both files are independently valid binaries, which is what makes the pair
+    // useful rather than a curiosity. The target carries `extraLoadcmds` because the
+    // UUID command pushes the whole layout 24 bytes later — computed without it, the
+    // expected address lands before the real one and the scan finds nothing.
+    const rbTarget = codeFixture(CPU_X86_64, {
+      base: 0x200000000n,
+      extraLoadcmds: rb.expect.extraLoadcmds,
+    }).addresses.target;
+    expect(
+      findCalls(files.rebuilt, rbTarget).count === 2,
+      'rebuilt: the call scan still finds both encoded sites at the new base',
+    );
+    expect(
+      findCalls(files.rebuilt2, rbTarget).count === 2,
+      'rebuilt2: and so does the second build',
+    );
+    expect(
+      lookupAddress(files.rebuilt, rbTarget).function === 'target_fn',
+      'rebuilt: symbols resolve at the new base — it is a real binary, not a curiosity',
+    );
+  }
+
+  // The valid-but-unfamiliar fixture. Its only job is to make `--strict` testable:
+  // both other broken fixtures mix errors with warnings, so they fail under either
+  // strictness and the two settings look identical.
+  {
+    const n = newerFlagsFixture();
+    const { audit } = await import('../src/api.mjs');
+    const d = describe(files.newer).slices[0];
+    const kinds = d.abnormalities.map((a) => a.kind);
+
+    for (const kind of n.expect.kinds) {
+      expect(kinds.includes(kind), `newer: reports ${kind} (got ${kinds.join(',') || 'none'})`);
+    }
+    const sevs = d.abnormalities.map((a) => a.severity);
+    expect(
+      sevs.length === n.expect.severities.length
+        && sevs.every((s, i) => s === n.expect.severities[i]),
+      `newer: every finding is a warning, and there are no others (got ${JSON.stringify(d.abnormalities.map((a) => a.kind + '/' + a.severity))})`,
+    );
+
+    // The gate behaviour this fixture exists for. Asserted at build time as well as
+    // in the suite, because a gate whose strict flag silently stops mattering is
+    // the failure mode, and it would not fail any other check here.
+    const lax = audit(files.newer);
+    const strictRun = audit(files.newer, { strict: true });
+    expect(lax.verdict === 'warnings' && lax.clean === true,
+      `newer: passes the default gate (verdict=${lax.verdict} clean=${lax.clean})`);
+    expect(strictRun.verdict === 'failed' && strictRun.strictClean === false,
+      `newer: fails the strict gate (verdict=${strictRun.verdict} strictClean=${strictRun.strictClean})`);
+
+    // And the file must still be a working binary, or the warnings would be
+    // hiding a parse failure rather than accompanying a good parse.
+    expect(
+      findCalls(files.newer, n.addresses.target).count === 2,
+      'newer: an unfamiliar flag bit does not disturb the call scan',
+    );
+    expect(
+      lookupAddress(files.newer, n.addresses.target).function === 'target_fn',
+      'newer: symbols still resolve — unfamiliarity is not damage',
+    );
+  }
+
+  // The bent-container fixture. Only this input can reach the container-level
+  // checks, so it is also the only thing that proves they fire.
+  {
+    const b = bentFat();
+    const { detectContainerAbnormalities, detectAbnormalities, slicesOf, parseThin, opener: openH } =
+      await import('../src/macho.mjs');
+    const { describe: describeFile2 } = await import('../src/api.mjs');
+    const h = openH(files.bent);
+    let found = [];
+    let perSliceFindings = [];
+    try {
+      found = detectContainerAbnormalities(h);
+      // Every per-slice finding across every slice, so the assertion below can say
+      // "no per-slice check noticed" as a measured fact rather than an assumption.
+      perSliceFindings = [];
+      for (const s of slicesOf(h)) {
+        const t = parseThin(h, s.offset);
+        if (!t) continue;
+        perSliceFindings.push(...detectAbnormalities(h, t, { sliceOffset: s.offset, sliceSize: s.size }));
+      }
+    } finally {
+      h.close();
+    }
+    const kinds = found.map((x) => x.kind);
+    for (const kind of b.expect.kinds) {
+      expect(kinds.includes(kind), `bent: reports ${kind} (got ${kinds.join(',') || 'none'})`);
+    }
+    // Severity is the part that makes this usable as a build gate, so it is
+    // asserted rather than assumed: overlap can change which slice answers, so it
+    // is an error; misalignment is read correctly by any reader that reads the
+    // table, so it is only a warning.
+    for (const [kind, want] of Object.entries(b.expect.severities)) {
+      const got = found.find((x) => x.kind === kind)?.severity;
+      expect(got === want, `bent: ${kind} is severity ${want} (got ${got})`);
+    }
+    // The overlap has to be *real*, or the check could pass on a fixture where it
+    // fires for some other reason.
+    expect(
+      b.expect.overlapOffset < b.expect.firstOffset + 0x800,
+      'bent: the second slice really does start inside the first',
+    );
+    expect(
+      b.expect.firstOffset + 0x800 > b.expect.overlapOffset,
+      'bent: the two slices share file bytes',
+    );
+    // A thin binary has no fat table to be inconsistent with, and reporting
+    // nothing must be the answer rather than a complaint about zero slices. The
+    // handle is closed on every path — `opener()` holds an fd, and a check that
+    // leaks one per run is a check that eventually exhausts the descriptor table
+    // on a machine running the full suite repeatedly.
+    const containerOf = (p) => {
+      const handle = openH(p);
+      try {
+        return detectContainerAbnormalities(handle);
+      } finally {
+        handle.close();
+      }
+    };
+    expect(
+      containerOf(files.thinx86_64).length === 0,
+      'bent: a thin binary has no container abnormalities',
+    );
+    expect(
+      containerOf(files.universal).length === 0,
+      'bent: a well-formed universal binary has none either — no false positives',
+    );
+    // And the consequence of overlapping slices — the reason this fixture exists and
+    // the reason the check is a container-level one. Both slices still parse, and
+    // no per-slice check fires, because the damage is *between* them: the arm64
+    // copy overwrote x86_64's string table, so that slice reports symbol entries
+    // with no names, a shape otherwise indistinguishable from a stripped binary.
+    {
+      const d = describeFile2(files.bent);
+      const x86 = d.slices.find((s) => s.arch === 'x86_64');
+      expect(
+        x86 && x86.readable && x86.nsyms > 0 && x86.defined === 0,
+        `bent: the overlap silently destroys one slice's names without any slice-level complaint ` +
+          `(readable=${x86?.readable} nsyms=${x86?.nsyms} defined=${x86?.defined})`,
+      );
+      expect(
+        perSliceFindings.length === 0,
+        `bent: and no per-slice check notices, which is why the container pass exists ` +
+          `(got ${perSliceFindings.map((x) => x.kind).join(',') || 'none'})`,
+      );
+    }
+  }
+
   // The damaged fixture. Its whole purpose is the three reports below, so this is
   // the assertion that proves the abnormality checks can actually fire.
   {
@@ -1869,6 +2306,14 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
   const b32 = bits32Fixture();
   const meta = metaFixture();
   const dmg = damagedFixture();
+  const bent = bentFat();
+  const newer = newerFlagsFixture();
+  const rebuilt = rebuiltFixture();
+  // A second build of the *same* program at the *same* base, differing only in its
+  // UUID. Two UUID-bearing files that are otherwise identical are the only input
+  // that can prove the "rebuilt" branch of the comparison, which needs two present
+  // UUIDs that differ — one UUID is not enough, and saying so is half the point.
+  const rebuilt2 = rebuiltFixture({ uuid: 'aabbccdd-eeff-4011-8223-445566778899' });
 
   const BUILT = {
     'universal.macho': universal(),
@@ -1899,6 +2344,19 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     // A file whose header disagrees with its contents. Present so the abnormality
     // checks run against something actually broken.
     'damaged.macho': dmg.buf,
+    // A file whose *fat table* disagrees with itself. Overlapping slices are
+    // invisible to any per-slice check, so this is the only input that can reach
+    // the container-level ones.
+    'bent.macho': bent.buf,
+    // Valid, complete, and merely newer than this reader: warnings with no damage.
+    // The only input that can tell `--strict` apart from the default gate.
+    'newer.macho': newer.buf,
+    // The same program as thin-x86_64, at a different load base and with a
+    // different UUID. The pair is what makes the fingerprint falsifiable.
+    'rebuilt.macho': rebuilt.buf,
+    // Same program and same base again, differing only in UUID — the only input
+    // that can prove a rebuild happened rather than merely allow it.
+    'rebuilt2.macho': rebuilt2.buf,
   };
 
 // Addresses are written alongside the binaries, because the suite's assertions
@@ -1920,6 +2378,7 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     bits32: BUILT['bits32.macho'].length,
     meta: BUILT['meta.macho'].length,
     damaged: BUILT['damaged.macho'].length,
+    bent: BUILT['bent.macho'].length,
     fixtureUuid: FIXTURE_UUID,
     // What the header-metadata fixture declares, so the assertions read the
     // generator's intent rather than a copy of the reader's output.
@@ -1943,6 +2402,15 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
       unnamedFlagBit: MH_UNNAMED_BIT,
       kinds: ['unknown-header-flags', 'load-commands-truncated', 'strtab-past-slice-end'],
     },
+    // The fat table's three planted lies, with the severity each should carry. Spread
+    // from the fixture so the manifest cannot disagree with the builder.
+    bentExpected: { ...bent.expect },
+    // Valid-but-unfamiliar. `severities` being warnings-only is the whole point of
+    // the fixture, so the manifest repeats it as an assertion rather than a label.
+    newerExpected: { ...newer.expect },
+    // The pair that makes the fingerprint falsifiable: same program, and a byte
+    // comparison would say otherwise.
+    rebuiltExpected: { ...rebuilt.expect, secondUuid: rebuilt2.expect.uuid },
     x86_64: { ...Object.fromEntries(Object.entries(x86.addresses).map(([k, v]) => [k, `0x${v.toString(16)}`])) },
     arm64: { ...Object.fromEntries(Object.entries(arm.addresses).map(([k, v]) => [k, `0x${v.toString(16)}`])) },
     decoyAddrs: { ...Object.fromEntries(Object.entries(decoy.addresses).map(([k, v]) => [k, `0x${v.toString(16)}`])) },

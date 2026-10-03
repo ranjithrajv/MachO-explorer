@@ -43,12 +43,13 @@
  */
 
 import fs from 'node:fs';
+import pathModule from 'node:path';
 import {
   opener, isMachOFile, slicesOf, parseThin, readSymbols, preferredSlice,
   richestSlice, sliceName, sliceArchName, textSection, codeSections, sectionOf, toVaddr,
   toFileOffset, isBackedByFile, archMatches,
   decodeHeaderFlags, decodeSectionFlags, decodeSourceVersion, detectAbnormalities,
-  resolveEntryPoint,
+  detectContainerAbnormalities, resolveEntryPoint, sliceShape, fileShape,
 } from './macho.mjs';
 
 /* ------------------------------------------------------------------ *
@@ -145,6 +146,11 @@ export function describe(path) {
       const syms = readSymbols(f, s.offset, thin);
       const text = textSection(thin);
       const hdr = decodeHeaderFlags(thin.flags);
+      // The fat table is checked here too, not only in `audit`. Every per-slice
+      // check is blind to a container defect by construction — two slices claiming
+      // the same bytes are each internally consistent — so a `describe` that omitted
+      // this would report a file with overlapping slices as entirely unremarkable,
+      // which is the confident-wrong-answer shape rather than a partial one.
       slices.push({
         arch,
         offset: s.offset,
@@ -193,6 +199,10 @@ export function describe(path) {
       size: f.size,
       fat: slices.length > 1 || slices.every((s) => !s.thin),
       slices,
+      // Findings about the fat table itself, kept beside the slices rather than
+      // merged into them: "this slice is broken" and "these two slices contradict
+      // each other" are different claims about different things.
+      containerAbnormalities: detectContainerAbnormalities(f),
     };
   });
 }
@@ -1319,6 +1329,859 @@ function mapOne(best, abs, f) {
     fileExtent: sec ? { offset: sec.offset, size: sec.size } : null,
     pointers: null,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * audit
+ * ------------------------------------------------------------------ */
+
+/**
+ * Is this file internally consistent? Every structural check, in one call.
+ *
+ * ## Why this is a function and not a report
+ *
+ * `describe` already carries per-slice `abnormalities`, but a report is not a
+ * gate. The difference matters commercially as well as technically: `describe`
+ * answers "what is in this file" for a person, while this answers "may I ship
+ * this" for a build — and a build needs an exit status, a single verdict, and the
+ * ability to choose how strict to be. Reporting three warnings on every binary
+ * built by a newer Xcode is fine for a log and useless for a gate, which is why
+ * severity is a first-class field rather than something the caller has to infer
+ * from the `kind` string.
+ *
+ * ## The three outcomes
+ *
+ * `verdict` is one of:
+ *
+ *   `ok`       — no findings at the requested strictness
+ *   `warnings` — warnings only, and `strict` was not asked for
+ *   `failed`   — at least one error, or any finding at all under `strict`
+ *
+ * Both non-`ok` verdicts are *negative answers*, not errors, which is what lets the
+ * CLI map them to exit 1 rather than to the "could not do the job" code. An audit
+ * that found nothing wrong is a successful run; an audit that found something
+ * wrong is also a successful run, and reports it.
+ *
+ * ## What is deliberately not a finding
+ *
+ * Unknown *load commands*. `describe --loads` already names those by number, on
+ * purpose: an unfamiliar-but-valid command is present, not broken. Grading it as
+ * damage would make this gate fire on every binary from a newer linker, which is
+ * how gates get switched off.
+ *
+ * @param {string} path
+ * @param {object} [opts]
+ * @param {string} [opts.arch]    audit only this slice of a universal binary
+ * @param {boolean} [opts.strict] treat warnings as failures too
+ * @returns {object} always succeeds for a readable Mach-O; throws only when the
+ *   file cannot be read at all, so "unreadable" stays distinguishable from
+ *   "unsound"
+ */
+export function audit(path, { arch = null, strict = false } = {}) {
+  return withFile(path, (f) => {
+    const slices = [];
+    const containerAbnormalities = detectContainerAbnormalities(f);
+
+    for (const s of slicesOf(f)) {
+      const thin = parseThin(f, s.offset);
+      const name = s.thin
+        ? sliceArchName(thin?.cputype, thin?.cpusubtype)
+        : sliceArchName(s.cputype, s.cpusubtype);
+      // `--arch` is a filter here rather than the preference it is everywhere else,
+      // and the difference is deliberate: the other tools answer a question about
+      // a *slice*, where falling back to another architecture would be wrong. This
+      // one answers "is this file sound", and a fat binary's soundness is a
+      // property of the whole file — so an `--arch` request selects which slices
+      // contribute, and the container findings are still reported because they are
+      // about the file rather than about a slice. The result says which slices
+      // were considered, so a caller cannot mistake a narrow audit for a whole-file
+      // one.
+      if (arch && !archMatches(name, arch)) continue;
+      if (!thin) {
+        slices.push({
+          arch: name,
+          offset: s.offset,
+          size: s.size,
+          readable: false,
+          // A slice with no header is not merely unreadable, it is a container
+          // claiming bytes that are not a Mach-O. That is a finding, not a skip:
+          // silently omitting it would let `audit` pass a file whose fat table
+          // points at nothing.
+          abnormalities: [{
+            kind: 'no-mach-o-header',
+            severity: 'error',
+            detail: `no Mach-O header at file offset ${s.offset} — the fat table points at bytes that are not a Mach-O`,
+          }],
+        });
+        continue;
+      }
+      slices.push({
+        arch: name,
+        offset: s.offset,
+        size: s.size,
+        readable: true,
+        ncmds: thin.ncmds,
+        nsects: thin.sections.length,
+        nsyms: thin.symtab ? thin.symtab.nsyms : 0,
+        abnormalities: detectAbnormalities(f, thin, { sliceOffset: s.offset, sliceSize: s.size }),
+      });
+    }
+
+    // Counts computed from the findings rather than accumulated alongside them, so
+    // they cannot disagree with what is reported.
+    const all = [
+      ...containerAbnormalities.map((a) => ({ slice: null, ...a })),
+      ...slices.flatMap((s) => s.abnormalities.map((a) => ({ slice: s.arch, ...a }))),
+    ];
+    const errors = all.filter((a) => a.severity === 'error').length;
+    const warnings = all.length - errors;
+
+    let verdict = 'ok';
+    if (errors > 0) verdict = 'failed';
+    else if (strict && all.length > 0) verdict = 'failed';
+    else if (all.length > 0) verdict = 'warnings';
+
+    return {
+      path,
+      size: f.size,
+      fat: slices.length > 1,
+      strict,
+      slices,
+      // Named `containerAbnormalities` rather than folded into the slices: these
+      // are properties of the fat table, and a caller that merged them would lose
+      // the distinction between "this slice is broken" and "these two slices
+      // contradict each other".
+      containerAbnormalities,
+      findings: all,
+      counts: { total: all.length, errors, warnings },
+      verdict,
+      // The two booleans a caller actually branches on. `clean` is the default
+      // gate; `strictClean` is the gate with `--strict`.
+      clean: errors === 0,
+      strictClean: all.length === 0,
+    };
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * fingerprint
+ * ------------------------------------------------------------------ */
+
+/**
+ * What is this binary, ignoring everything a rebuild moves?
+ *
+ * ## The question this answers
+ *
+ * "Is this the same program as that one?" — which is a different question from
+ * "are these the same file?", and the one you actually have when comparing a
+ * build against a baseline, a shipped binary against a rebuild, or two copies of
+ * an app that came out of two machines.
+ *
+ * Every existing answer is byte comparison, and byte comparison answers it wrong
+ * in both directions. Two builds of the same source differ in every address (PIE
+ * and ASLR), in the current-version fields of the dylibs they load, and in any
+ * timestamp — so `cmp` reports them different. Two *different* programs that were
+ * built from the same template with one function renamed differ in almost nothing
+ * structural — so a loose structural diff can report them the same. A UUID
+ * answers a third question, "same build", which is exact and useless the moment
+ * anything is rebuilt.
+ *
+ * So there are three answers, and the caller picks by which one they meant:
+ *
+ *   `uuid`         the same build. Exact. Changes if anything is relinked.
+ *   `fingerprint`  the same program. Survives a rebuild; changes if a symbol or a
+ *                  section does.
+ *   `structure`    the same shape. Weaker, and the only one available for a
+ *                  stripped binary.
+ *
+ * ## Why `tier` is reported
+ *
+ * A stripped binary has no symbol names, so its fingerprint is structural. That is
+ * not a worse program, but it *is* a weaker claim: two different stripped binaries
+ * with the same sections and load commands share a fingerprint. Reporting that
+ * digest as though it were as strong as a full one would overstate it, so
+ * `tier` says `structure-only` and the caller can decide whether that is enough.
+ *
+ * @param {string} path
+ * @param {object} [opts]
+ * @param {string} [opts.arch] fingerprint only this slice of a universal binary
+ * @returns {object}
+ */
+export function fingerprint(path, { arch = null } = {}) {
+  return withFile(path, (f) => {
+    const slices = [];
+    for (const s of slicesOf(f)) {
+      const thin = parseThin(f, s.offset);
+      if (!thin) continue;
+      const name = s.thin
+        ? sliceArchName(thin.cputype, thin.cpusubtype)
+        : sliceArchName(s.cputype, s.cpusubtype);
+      if (arch && !archMatches(name, arch)) continue;
+
+      const defined = readSymbols(f, s.offset, thin).entries
+        .filter((e) => e.defined)
+        .map((e) => ({ name: e.name }));
+      const shape = sliceShape({
+        arch: name,
+        bits: thin.is64 ? 64 : 32,
+        filetype: thin.filetype,
+        sections: thin.sections,
+        loadCommands: thin.loadCommands,
+        definedSymbols: defined,
+      });
+      slices.push({
+        arch: name,
+        fingerprint: shape.fingerprint,
+        structure: shape.structure,
+        symbols: shape.symbols,
+        tier: shape.tier,
+        nsyms: shape.nsyms,
+        uuid: thin.uuid,
+        nsects: thin.sections.length,
+        ncmds: thin.loadCommands.length,
+      });
+    }
+
+    // Combined across slices, so one number answers "same program?" for the file.
+    // Null when nothing parsed: there is no shape to report, and reporting a digest
+    // of nothing would be a value that matches every other unreadable file.
+    const combined = slices.length ? fileShape(slices) : null;
+    // Every slice agreeing is a stronger claim than one file-level digest, so it is
+    // reported separately rather than inferred from the combined value.
+    const uuids = slices.map((s) => s.uuid).filter((u) => u !== null);
+    const uuid = uuids.length === 1 && new Set(uuids).size === 1 ? uuids[0] : null;
+
+    return {
+      path,
+      size: f.size,
+      fat: slices.length > 1,
+      slices,
+      fingerprint: combined,
+      uuid,
+      // The weakest tier present, so a caller gating on this learns about the
+      // stripped slice rather than being reassured by the symbol-bearing ones.
+      tier: slices.length === 0
+        ? null
+        : slices.every((s) => s.tier === 'full') ? 'full' : 'structure-only',
+    };
+  });
+}
+
+/**
+ * Compare two binaries by fingerprint, and say *which* question the answer settles.
+ *
+ * Reporting the three answers separately is the whole point. Two files with the
+ * same UUID and different fingerprints have diverged since signing; the same
+ * fingerprint with different UUIDs are the same program rebuilt; and different
+ * fingerprints with different UUIDs are simply different programs. Collapsing
+ * those into one yes/no would throw away the distinction the caller needs most.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @param {object} [opts]
+ * @param {string} [opts.arch] compare only this architecture of each side
+ * @returns {object} both fingerprints, plus the three verdicts
+ */
+export function compareFingerprints(a, b, { arch = null } = {}) {
+  // `arch` is applied here rather than by the caller filtering afterwards. A caller
+  // that recomputed `a` and `b` but left `byArch` alone would produce a result whose
+  // summary describes one comparison and whose rows describe another — which is the
+  // kind of internal disagreement this package treats as a defect rather than a
+  // presentation detail.
+  const fa = fingerprint(a, arch ? { arch } : {});
+  const fb = fingerprint(b, arch ? { arch } : {});
+
+  // Per-arch rather than whole-file, because the useful case is "arm64 matches,
+  // x86_64 does not" — which a single boolean would report as a flat no.
+  const byArch = [];
+  for (const sa of fa.slices) {
+    const sb = fb.slices.find((x) => x.arch === sa.arch);
+    byArch.push({
+      arch: sa.arch,
+      presentInBoth: Boolean(sb),
+      fingerprint: sa.fingerprint,
+      other: sb ? sb.fingerprint : null,
+      match: sb ? sb.fingerprint === sa.fingerprint : null,
+      tier: sb && sa.tier !== 'full' ? 'structure-only' : sa.tier,
+    });
+  }
+  for (const sb of fb.slices) {
+    if (!fa.slices.some((x) => x.arch === sb.arch)) {
+      byArch.push({ arch: sb.arch, presentInBoth: false, fingerprint: null, other: sb.fingerprint, match: null, tier: sb.tier });
+    }
+  }
+
+  const shared = byArch.filter((x) => x.presentInBoth);
+  const sameBuild = fa.uuid !== null && fa.uuid === fb.uuid;
+  // Nothing comparable is not the same as "different". Two files with no
+  // architecture in common — which is what `--arch` on two disjoint binaries gives
+  // — have not been shown to be different programs; the question was not put to them.
+  // Saying "different programs" there would report a comparison that did not happen
+  // as a comparison that came out negative, which is the shape of a wrong answer
+  // rather than an unhelpful one.
+  const comparable = shared.length > 0;
+  const sameProgram = comparable && shared.every((x) => x.match);
+  // "Was it rebuilt?" is answerable only when both sides carry a UUID and they
+  // differ. Two UUIDs that match mean the same build; two files with no UUID at all
+  // that fingerprint alike mean the same program, and nothing more — they may be two
+  // copies of one identical file, which is not a rebuild. The first version of this
+  // reported "rebuilt" unconditionally and so claimed a rebuild when comparing a file
+  // with itself.
+  const rebuilt = sameProgram && fa.uuid !== null && fb.uuid !== null && fa.uuid !== fb.uuid;
+
+  return {
+    a: fa,
+    b: fb,
+    byArch,
+    /** False when the two share no architecture, so nothing was actually compared. */
+    comparable,
+    // The three answers, kept apart.
+    sameBuild,
+    sameProgram,
+    /** True only when differing UUIDs *prove* a rebuild happened. */
+    rebuilt,
+    // The one-line summary, and it names which question it settled rather than
+    // asserting more than the bytes support.
+    verdict: !comparable
+      ? 'no shared architecture to compare'
+      : sameBuild
+        ? 'same build — identical UUID'
+        : rebuilt
+          ? 'same program, rebuilt (UUIDs differ)'
+          : sameProgram
+            ? 'same program'
+            : 'different programs',
+    // Disclosed because it bounds the claim: a structure-only match is a weaker
+    // statement, and a caller gating a release should see that before relying on it.
+    caveat: fa.tier === 'structure-only' || fb.tier === 'structure-only'
+      ? 'at least one side is stripped, so the match rests on section and load-command shape alone'
+      : null,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * corpus
+ * ------------------------------------------------------------------ */
+
+/** How deep a `--in` directory walk goes before it stops descending. */
+const CORPUS_MAX_DEPTH = 6;
+
+/**
+ * Every file under `root`, breadth-first, bounded in both depth and count.
+ *
+ * Returns absolute paths. Depth-limited and count-limited rather than exhaustive,
+ * because the one thing a corpus walk must never do is appear to hang: pointed at a
+ * home directory or a `node_modules` tree it would otherwise read tens of thousands
+ * of files, most of them not Mach-O.
+ *
+ * Symlinked directories are **not** followed. A symlink cycle would make the walk
+ * non-terminating, and a corpus search that silently re-visits the same tree is
+ * worse than one that misses a corner of it — the counts would not mean what they
+ * appear to mean. Symlinked *files* are fine and are included, since they are just
+ * files.
+ */
+function walkCorpus(roots, { maxDepth = CORPUS_MAX_DEPTH, maxFiles = 20000 } = {}) {
+  const out = [];
+  const seenDirs = new Set();
+  let truncated = false;
+
+  const push = (p) => {
+    if (out.length >= maxFiles) { truncated = true; return false; }
+    out.push(p);
+    return true;
+  };
+
+  for (const root of roots) {
+    let st;
+    try {
+      st = fs.statSync(root);
+    } catch {
+      // A path that does not exist is reported by the caller, not here: this
+      // function's job is to enumerate what it can, and a missing root is a
+      // different kind of problem from an unreadable file inside a real tree.
+      out.push({ missing: root });
+      continue;
+    }
+
+    if (!st.isDirectory()) {
+      push(root);
+      continue;
+    }
+
+    const queue = [[root, 0]];
+    while (queue.length) {
+      const [dir, depth] = queue.shift();
+      // `realpath` rather than the literal path, so a tree reached twice by two
+      // different roots is walked once. Without it, `--in . --include=./sub`
+      // double-counts everything in `sub`.
+      let key;
+      try {
+        key = fs.realpathSync(dir);
+      } catch {
+        continue;
+      }
+      if (seenDirs.has(key)) continue;
+      seenDirs.add(key);
+
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        // An unreadable directory is skipped rather than fatal. A corpus is
+        // routinely a build output tree with a permission hole in it, and failing
+        // the whole search over one directory answers a question the caller did not
+        // ask.
+        continue;
+      }
+      entries.sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
+      for (const e of entries) {
+        const p = pathModule.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (depth + 1 <= maxDepth) queue.push([p, depth + 1]);
+          continue;
+        }
+        if (e.isSymbolicLink()) {
+          // Resolve to decide file-vs-directory without following a directory link.
+          let target;
+          try {
+            target = fs.statSync(p);
+          } catch {
+            continue; // dangling
+          }
+          if (target.isDirectory()) continue; // deliberately not followed
+          if (!push(p)) break;
+          continue;
+        }
+        if (e.isFile() && !push(p)) break;
+      }
+      if (truncated) break;
+    }
+    if (truncated) break;
+  }
+  return { files: out, truncated };
+}
+
+/**
+ * Search the symbol tables of many binaries, in one call.
+ *
+ * ## The contract this is really about
+ *
+ * The point is not the search — `searchSymbols` does that. The point is that the
+ * *answer shape* is the same whether the caller passed one binary or four thousand,
+ * so a pipeline does not need a second code path for scale. A caller asking "which
+ * of these artifacts import `CCCrypt`" gets `data.files[]` with the same envelope,
+ * the same exit taxonomy and the same error handling as every other tool here.
+ *
+ * That is the whole advantage, and it is a contract advantage rather than a
+ * capability one: the same question is answerable over a directory by tools with far
+ * more capability, but not by any of them through one uniform door.
+ *
+ * ## Non-Mach-O files are skipped, not failed
+ *
+ * Pointed at a build directory, a walk finds plists, headers, dSYMs-as-text and
+ * Mach-O-shaped nothing. Treating those as errors would make the tool unusable for
+ * its actual use case, so they are counted in `skipped` and nothing else. A file
+ * that *is* a Mach-O but cannot be read is different: that is recorded per file with
+ * its reason code, because silently dropping a file the caller named is exactly the
+ * failure mode this project keeps refusing.
+ *
+ * @param {string[]|string} roots files and/or directories
+ * @param {string} pattern
+ * @param {object} [opts]
+ * @param {string} [opts.arch]
+ * @param {'substring'|'regex'} [opts.mode='substring']
+ * @param {string} [opts.flags='i']
+ * @param {boolean} [opts.definedOnly=true]
+ * @param {boolean} [opts.dedupe=true]
+ * @param {number} [opts.max=4000]      cap per file
+ * @param {number} [opts.perFile=10]    match names kept per file
+ * @param {boolean} [opts.matchedOnly=false] omit files with no matches from `files`
+ * @param {number} [opts.maxFiles=20000]
+ * @param {number} [opts.maxDepth=6]
+ * @returns {object}
+ */
+export function searchSymbolsIn(roots, pattern, {
+  arch, mode = 'substring', flags = 'i', definedOnly = true, dedupe = true,
+  max = 4000, perFile = 10, matchedOnly = false, maxFiles = 20000, maxDepth = CORPUS_MAX_DEPTH,
+} = {}) {
+  if (typeof pattern !== 'string' || !pattern) throw new TypeError('searchSymbolsIn: a pattern is required');
+  const list = Array.isArray(roots) ? roots : [roots];
+  if (list.length === 0) throw new TypeError('searchSymbolsIn: at least one path is required');
+  // Built before any file is opened, so an invalid regex is a usage error about the
+  // pattern rather than a confusing failure partway through four thousand files.
+  const re = mode === 'regex' ? new RegExp(pattern, flags) : null;
+
+  const { files: walked, truncated } = walkCorpus(list, { maxFiles, maxDepth });
+  const files = [];
+  let skipped = 0;
+  let unreadable = 0;
+  let totalMatches = 0;
+  let matchedFiles = 0;
+
+  for (const entry of walked) {
+    // The missing-root marker is an *object*, not a string path. The first version
+    // of this test read `typeof entry === 'string' && entry.missing`, which is
+    // never true, so a path the caller named and that did not exist fell through to
+    // the non-Mach-O filter and was counted as "skipped" — reported as absent
+    // content rather than as a typo. Silently dropping a path the caller named is
+    // the exact failure this project keeps refusing, so it gets its own row.
+    if (entry !== null && typeof entry === 'object' && entry.missing) {
+      unreadable++;
+      files.push({
+        path: entry.missing,
+        ok: false,
+        error: 'io',
+        message: 'no such file or directory',
+        arch: null,
+        count: 0,
+        matches: [],
+      });
+      continue;
+    }
+    // `isMachOFile` opens the file, so this is the one filter that must happen
+    // before anything expensive. It is also why a non-Mach-O costs a 4-byte read
+    // rather than a full parse.
+    if (!isMachOFile(entry)) { skipped++; continue; }
+
+    try {
+      const r = searchSymbols(entry, pattern, { arch, mode, flags, definedOnly, dedupe, max });
+      if (r.count > 0) { matchedFiles++; totalMatches += r.count; }
+      if (matchedOnly && r.count === 0) continue;
+      files.push({
+        path: entry,
+        ok: true,
+        error: null,
+        arch: r.arch,
+        count: r.count,
+        uniqueCount: r.uniqueCount,
+        defined: r.defined,
+        total: r.total,
+        note: r.note,
+        // Names are capped per file by default: 4,000 files × 4,000 symbols is a
+        // 16-million-row answer, and the question "which files" is answered by the
+        // file list. `perFile: 0` keeps counts only.
+        matches: perFile > 0 ? r.matches.slice(0, perFile) : [],
+        matchesTruncated: r.matches.length > perFile,
+      });
+    } catch (e) {
+      // A named file that cannot be read is a per-file error, not a whole-run
+      // failure: one corrupt artifact in a build tree must not hide the other 3,999.
+      unreadable++;
+      files.push({
+        path: entry,
+        ok: false,
+        error: e.code ?? 'io',
+        message: e.message,
+        arch: null,
+        count: 0,
+        matches: [],
+      });
+    }
+  }
+
+  // Sorted by path, so two runs over the same tree produce byte-identical output.
+  // A corpus result that reorders between runs cannot be diffed, cached or cached
+  // against a baseline.
+  files.sort((x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0));
+
+  return {
+    pattern,
+    mode,
+    flags: mode === 'regex' ? flags : null,
+    definedOnly,
+    dedupe,
+    roots: list,
+    files,
+    totals: {
+      files: files.length,
+      // How many of those were actually *read*. `files` includes rows for paths
+      // that could not be read, because dropping them would hide a path the caller
+      // named — but a summary that says "N Mach-O read" when N of them failed is a
+      // count that lies, so the two are separate fields and the distinction travels
+      // with the answer rather than being recomputed by each caller.
+      looked: files.filter((x) => x.ok).length,
+      matchedFiles,
+      matches: totalMatches,
+      skipped,
+      unreadable,
+      considered: walked.length,
+    },
+    // Disclosed rather than silent: a walk that stopped early would otherwise look
+    // identical to a tree that genuinely contained nothing else.
+    truncated,
+    note: truncated
+      ? `stopped after ${maxFiles} file(s) or depth ${maxDepth} — the answer covers only what was reached`
+      : null,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * diff
+ * ------------------------------------------------------------------ */
+
+/**
+ * What changed between two binaries — and, just as importantly, what did not.
+ *
+ * ## Why not `cmp`
+ *
+ * A byte comparison between two builds of one source reports a difference in every
+ * byte from the load base onwards, because PIE and ASLR move every address, a
+ * dependency bump moves a dylib's version fields, and a rebuild moves any
+ * timestamp. The output is "everything changed", which is worse than useless: it
+ * cannot distinguish a rebuilt binary from a different program, and it cannot tell a
+ * reviewer that the one thing they cared about did not move.
+ *
+ * So this diff is over *structural facts* — which architectures are present, which
+ * header flags are set, which load commands and sections exist, which symbols are
+ * defined. None of those move when a binary is rebuilt, and all of them change when
+ * the program does.
+ *
+ * ## Two lists, not one
+ *
+ *   `differences`     structural changes. This is what the verdict is computed from.
+ *   `buildMetadata`   UUIDs and the presence of signing/provenance commands, which
+ *                     change on every rebuild and say nothing about the program.
+ *
+ * Reporting build metadata as a difference would make this tool report the same
+ * thing `cmp` does, more slowly. Reporting it as *nothing* would hide it, and a
+ * caller comparing a shipped binary against a baseline wants to know the build
+ * changed. So it is reported, in its own list, and kept out of the verdict —
+ * the same split the fingerprint makes, for the same reason.
+ *
+ * ## Sizes and addresses are deliberately absent
+ *
+ * A section that grew by 400 bytes is a real change, and it is also what a
+ * recompiled dependency does. Including sizes would put every rebuilt pair into the
+ * "different" bucket, so they are reported as `sizeChanges` — visible, counted
+ * separately from the verdict, and honest about being a weaker signal than a symbol
+ * appearing or a section appearing.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @param {object} [opts]
+ * @param {string} [opts.arch]    compare only this architecture
+ * @param {number} [opts.maxNames=20] cap on symbol names listed per direction
+ * @returns {object}
+ */
+export function diffBinaries(a, b, { arch = null, maxNames = 20 } = {}) {
+  const fa = fingerprint(a, arch ? { arch } : {});
+  const fb = fingerprint(b, arch ? { arch } : {});
+  const differences = [];
+  const buildMetadata = [];
+  const sizeChanges = [];
+  const add = (category, archName, kind, detail, av, bv) =>
+    differences.push({ category, arch: archName, kind, detail, a: av ?? null, b: bv ?? null });
+
+  // Which architectures each side has. Reported first because it bounds everything
+  // else: a slice present on one side only makes every per-slice comparison for it
+  // meaningless rather than different.
+  const archA = new Set(fa.slices.map((s) => s.arch));
+  const archB = new Set(fb.slices.map((s) => s.arch));
+  for (const archName of archA) {
+    if (!archB.has(archName)) add('slices', null, 'slice-only-in-a', `${archName} is present only in ${a}`, archName, null);
+  }
+  for (const archName of archB) {
+    if (!archA.has(archName)) add('slices', null, 'slice-only-in-b', `${archName} is present only in ${b}`, null, archName);
+  }
+
+  const perArch = [];
+  for (const archName of archA) {
+    if (!archB.has(archName)) continue;
+    const before = readSide(a, archName);
+    const after = readSide(b, archName);
+    if (!before || !after) continue;
+    const d0 = differences.length;
+
+    if (before.filetype !== after.filetype) {
+      add('header', archName, 'filetype-changed', `${archName}: filetype ${before.filetype} -> ${after.filetype}`,
+        before.filetype, after.filetype);
+    }
+    if (before.bits !== after.bits) {
+      add('header', archName, 'bits-changed', `${archName}: ${before.bits}-bit -> ${after.bits}-bit`,
+        before.bits, after.bits);
+    }
+
+    // Flags, both directions, so a cleared flag is as visible as a set one.
+    for (const f of before.flagsNamed.filter((x) => !after.flagsNamed.includes(x))) {
+      add('flags', archName, 'flag-removed', `${archName}: ${f} is no longer set`, f, null);
+    }
+    for (const f of after.flagsNamed.filter((x) => !before.flagsNamed.includes(x))) {
+      add('flags', archName, 'flag-added', `${archName}: ${f} is now set`, null, f);
+    }
+
+    // Load commands, by name. Provenance commands are routed to `buildMetadata`
+    // instead — see the note on the function's own comment.
+    const namesOf = (s) => new Set(s.loadCommands.map((c) => c.name));
+    const na = namesOf(before);
+    const nb = namesOf(after);
+    // "Loads X" is only true of the dylib commands. Every other command is a
+    // *declaration* — LC_MAIN is the entry point and LC_RPATH a search path, and
+    // describing either as something the binary "loads" is a small falsehood in a
+    // tool whose whole claim is that it reports facts.
+    const phrased = (name) => (DYLIB_COMMANDS.has(name)
+      ? `loads ${name.slice('LC_'.length)}`
+      : `declares ${name}`);
+    for (const name of na) {
+      if (nb.has(name)) continue;
+      if (PROVENANCE.has(name)) {
+        buildMetadata.push({ arch: archName, kind: 'provenance-removed', detail: `${archName}: ${name} is no longer present`, name });
+      } else {
+        add('load-commands', archName, 'load-command-removed', `${archName}: no longer ${phrased(name)}`, name, null);
+      }
+    }
+    for (const name of nb) {
+      if (na.has(name)) continue;
+      if (PROVENANCE.has(name)) {
+        buildMetadata.push({ arch: archName, kind: 'provenance-added', detail: `${archName}: now carries ${name}`, name });
+      } else {
+        add('load-commands', archName, 'load-command-added', `${archName}: now ${phrased(name)}`, null, name);
+      }
+    }
+
+    // Sections, by identity and then by type. A section that is still there but has
+    // become a different kind is the interesting case, so it is not folded into
+    // remove+add.
+    const byName = (s) => new Map(s.sections.map((x) => [`${x.segname},${x.sectname}`, x]));
+    const sa = byName(before);
+    const sb = byName(after);
+    for (const [name, sec] of sa) {
+      const other = sb.get(name);
+      if (!other) {
+        add('sections', archName, 'section-removed', `${archName}: ${name} is gone`, name, null);
+        continue;
+      }
+      if (sec.type !== other.type) {
+        add('sections', archName, 'section-type-changed', `${archName}: ${name} is ${sec.type} -> ${other.type}`, sec.type, other.type);
+      }
+      const attrA = sec.attributes.join(',');
+      const attrB = other.attributes.join(',');
+      if (attrA !== attrB) {
+        add('sections', archName, 'section-attributes-changed', `${archName}: ${name} attributes [${attrA}] -> [${attrB}]`, attrA, attrB);
+      }
+      if (sec.size !== other.size) {
+        sizeChanges.push({ arch: archName, section: name, a: sec.size, b: other.size, delta: other.size - sec.size });
+      }
+    }
+    for (const name of sb.keys()) {
+      if (!sa.has(name)) add('sections', archName, 'section-added', `${archName}: ${name} is new`, null, name);
+    }
+
+    // Symbols. Counts always, names capped — a 19,000-symbol binary would otherwise
+    // produce a diff nobody reads, and a diff nobody reads is a diff nobody reads
+    // past the first line.
+    const symA = new Set(before.symbolNames);
+    const symB = new Set(after.symbolNames);
+    const added = [...symB].filter((x) => !symA.has(x));
+    const removed = [...symA].filter((x) => !symB.has(x));
+    if (added.length) {
+      add('symbols', archName, 'symbols-added',
+        `${archName}: ${added.length} symbol(s) added${added.length > maxNames ? `, first ${maxNames}: ${added.slice(0, maxNames).join(', ')}` : `: ${added.join(', ')}`}`,
+        null, added.length);
+    }
+    if (removed.length) {
+      add('symbols', archName, 'symbols-removed',
+        `${archName}: ${removed.length} symbol(s) removed${removed.length > maxNames ? `, first ${maxNames}: ${removed.slice(0, maxNames).join(', ')}` : `: ${removed.join(', ')}`}`,
+        removed.length, null);
+    }
+
+    perArch.push({
+      arch: archName,
+      differenceCount: differences.length - d0,
+      symbols: { a: symA.size, b: symB.size, added: added.length, removed: removed.length },
+      sections: { a: sa.size, b: sb.size },
+    });
+  }
+
+  // The UUID, kept out of `differences` for the same reason the commands are.
+  if (fa.uuid !== fb.uuid) {
+    buildMetadata.push({
+      arch: null,
+      kind: 'uuid-differs',
+      detail: fa.uuid && fb.uuid
+        ? 'the two builds carry different UUIDs, so they are different builds of whatever they are'
+        : `only one side carries a UUID (${fa.uuid ?? 'none'} vs ${fb.uuid ?? 'none'})`,
+      name: null,
+    });
+  }
+
+  const sameShape = fa.fingerprint !== null && fa.fingerprint === fb.fingerprint;
+  const identical = differences.length === 0 && sameShape && buildMetadata.length === 0;
+  return {
+    a: fa,
+    b: fb,
+    perArch,
+    differences,
+    buildMetadata,
+    sizeChanges,
+    counts: {
+      differences: differences.length,
+      buildMetadata: buildMetadata.length,
+      sizeChanges: sizeChanges.length,
+    },
+    // The three questions again, so a caller does not have to correlate this with a
+    // separate fingerprint call to know what kind of difference it is looking at.
+    sameBuild: fa.uuid !== null && fa.uuid === fb.uuid,
+    sameShape,
+    verdict: identical
+      ? 'identical'
+      : sameShape
+        ? 'same program, rebuilt'
+        : differences.length === 0
+          ? 'same structure, different symbol set'
+          : 'different structure',
+  };
+}
+
+/**
+ * Load commands whose *presence* records the build rather than the program.
+ *
+ * Deliberately the same set the fingerprint excludes, and for the same reason — two
+ * lists that disagreed would mean `macho-diff` reported a rebuilt pair as changed
+ * while `macho-fingerprint` reported it as the same program, in the same breath.
+ */
+const PROVENANCE = new Set([
+  'LC_UUID',
+  'LC_CODE_SIGNATURE',
+  'LC_DYLIB_CODE_SIGN_DRS',
+  'LC_SOURCE_VERSION',
+]);
+
+/** The commands that genuinely mean "this binary needs something at link time". */
+const DYLIB_COMMANDS = new Set([
+  'LC_LOAD_DYLIB',
+  'LC_LOAD_WEAK_DYLIB',
+  'LC_REEXPORT_DYLIB',
+  'LC_LAZY_LOAD_DYLIB',
+  'LC_LOAD_UPWARD_DYLIB',
+  'LC_ID_DYLIB',
+]);
+
+/** Everything a per-slice comparison needs, read once. */
+function readSide(path, arch) {
+  const f = opener(path);
+  try {
+    for (const s of slicesOf(f)) {
+      const thin = parseThin(f, s.offset);
+      if (!thin) continue;
+      const name = s.thin
+        ? sliceArchName(thin.cputype, thin.cpusubtype)
+        : sliceArchName(s.cputype, s.cpusubtype);
+      if (name !== arch) continue;
+      return {
+        filetype: thin.filetype,
+        bits: thin.is64 ? 64 : 32,
+        flagsNamed: decodeHeaderFlags(thin.flags).names,
+        loadCommands: thin.loadCommands,
+        sections: thin.sections,
+        symbolNames: readSymbols(f, s.offset, thin).entries
+          .filter((e) => e.defined)
+          .map((e) => e.name),
+      };
+    }
+    return null;
+  } finally {
+    f.close();
+  }
 }
 
 /* ------------------------------------------------------------------ *

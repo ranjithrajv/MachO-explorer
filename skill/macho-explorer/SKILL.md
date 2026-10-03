@@ -56,6 +56,65 @@ than dropped. Each section's `flags` are split into `type` (`S_CSTRING_LITERALS`
 `S_SYMBOL_STUBS`, …) and `attributes` (`S_ATTR_PURE_INSTRUCTIONS`, …) — two
 disjoint halves of one word, so a section is routinely `code` *and* `S_REGULAR`.
 
+## Three questions about two binaries
+
+"Is this the same thing?" has three answers, and `cmp` gets both directions wrong:
+two builds of one source differ in every address (PIE and ASLR move them), in the
+dylib version fields and in any timestamp, while two *different* programs built
+from one template differ in almost nothing structural.
+
+| ask | tool | the answer |
+|---|---|---|
+| same build? | `fingerprint` | identical `uuid` — exact, useless once anything relinks |
+| same program? | `fingerprint` | identical `fingerprint` — survives a rebuild |
+| what changed? | `diff` | structural facts only, so a rebuilt pair reads as unchanged |
+
+```sh
+fingerprint a.dylib b.dylib          # "same program, rebuilt"
+diff a.dylib b.dylib                 # 0 structural differences, exit 0
+```
+
+`diff` keeps three lists apart and only the first decides the verdict:
+`differences` (structural), `buildMetadata` (UUIDs, signing — reported, never
+counted) and `sizeChanges` (a recompiled dependency moves a size without changing
+the program). **A UUID difference is never a structural difference.** If you see
+one in `differences`, that is a bug worth reporting.
+
+Check `tier` before relying on a `fingerprint` match: `structure-only` means the
+binary is stripped, so the match rests on section and load-command shape alone —
+two different stripped binaries with the same sections share a fingerprint.
+
+## Is this file even sound? — `audit`
+
+Run this before trusting anything else. It checks every structural claim the file
+makes about itself and returns a verdict plus `clean` / `strictClean`.
+
+```sh
+audit /path/to/binary                 # exit 0 sound, 1 unsound, 3 unreadable
+audit --strict ./dist/*.dylib
+```
+
+Every finding carries a **severity**, and that is what you branch on:
+
+| `severity` | means |
+|---|---|
+| `error` | the file disagrees with itself — extents point at bytes that are not there, so addresses computed from it may be wrong |
+| `warning` | it parsed and the answers are probably right, but something is unfamiliar or explicitly heuristic |
+
+Branch on `clean`, never on `verdict`: `verdict: "warnings"` with `clean: true` is
+a **passing** audit, and an exit status derived from the label instead of the
+boolean would fail a build over a binary this tool calls sound.
+
+Findings are reported *alongside* a successful parse, never instead of one — a
+damaged file still returns the sections and symbols that could genuinely be read.
+So a non-empty `findings` means "these specific parts are untrustworthy", **not**
+"discard everything above".
+
+Two things are deliberately **not** findings, and both would otherwise make the
+tool cry wolf: unknown *load commands* (named by number on purpose — unfamiliar is
+not broken), and an `LC_MAIN` entry point outside `__TEXT` (normal for a dyld
+shared-cache stub, and also seen on a fully-symbolled 113 MB `node`).
+
 ### When `abnormalities` is non-empty
 
 `describe` reports structural problems **alongside** a successful parse, never
@@ -76,6 +135,34 @@ suspect:
 
 An **unknown load command is not an abnormality** — those are named by number by
 `--loads` on purpose, so an unfamiliar-but-valid command is not graded as damage.
+
+## Many binaries at once
+
+`sym --in` searches a file **or a directory**, and the answer arrives in the same
+envelope as a single-binary search — `data.files[]` instead of `data.matches`.
+
+```sh
+sym CCCrypt --in ./artifacts --matched-only --json
+sym --all-imp _objc_msgSend --in ./build --per-file=0    # counts only
+```
+
+Other tools search directories too, but not through one uniform door, which is the
+part that matters if you are writing a pipeline: a consumer that can read one
+binary's output can read four thousand.
+
+Three things it keeps apart, each of which is a distinction rather than a detail:
+
+- **non-Mach-O files are skipped, not failed.** A build tree is full of plists and
+  headers. `totals.skipped` counts them.
+- **a path that does not exist is reported**, per file, with reason code `io`.
+- **`totals.files` is not `totals.looked`.** The first counts every Mach-O found;
+  the second only those actually read. Use `looked` whenever you would otherwise
+  write "N files read".
+
+Exit status: **0** something matched, **1** nothing matched, **3** nothing could be
+read at all. 3 versus 1 matters — "no matches" and "could not look" are different
+answers, and treating the second as the first concludes a build contains no such
+symbol when in fact nothing was readable.
 
 ## Listing what a binary already contains
 

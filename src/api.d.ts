@@ -220,7 +220,182 @@ export interface EntryPoint {
 export interface Abnormality {
   /** A stable slug, e.g. `strtab-past-slice-end`. Safe to branch on. */
   kind: string;
+  /**
+   * `error` — the file disagrees with itself, so a reader's answers may be wrong.
+   * `warning` — the file parsed and something is unfamiliar or explicitly
+   * heuristic. This is what `audit --strict` switches on.
+   */
+  severity: 'error' | 'warning';
   detail: string;
+}
+
+/** One slice's contribution to an {@link audit}. */
+export interface AuditSlice {
+  arch: string;
+  offset: number;
+  size: number;
+  readable: boolean;
+  ncmds?: number;
+  nsects?: number;
+  nsyms?: number;
+  abnormalities: Abnormality[];
+}
+
+/** The result of {@link audit} — the verdict a build gate branches on. */
+export interface AuditResult {
+  path: string;
+  size: number;
+  fat: boolean;
+  strict: boolean;
+  slices: AuditSlice[];
+  /** Findings about the fat table, kept apart from the per-slice ones. */
+  containerAbnormalities: Abnormality[];
+  /** Every finding, tagged with the slice it came from (`null` for the container). */
+  findings: Array<Abnormality & { slice: string | null }>;
+  counts: { total: number; errors: number; warnings: number };
+  /** `ok` / `warnings` / `failed` — a label for a person, not the gate. */
+  verdict: 'ok' | 'warnings' | 'failed';
+  /** No errors. This, not `verdict`, is the default gate. */
+  clean: boolean;
+  /** No findings at all. The gate when `strict` was asked for. */
+  strictClean: boolean;
+}
+
+/** How strongly one slice's shape pins a program. */
+export type FingerprintTier = 'full' | 'structure-only';
+
+/** One slice's fingerprint. */
+export interface SliceFingerprint {
+  arch: string;
+  fingerprint: string;
+  structure: string;
+  /** Null when stripped — no names to digest. */
+  symbols: string | null;
+  tier: FingerprintTier;
+  nsyms: number;
+  uuid: string | null;
+  nsects: number;
+  ncmds: number;
+}
+
+/** The result of {@link fingerprint}. */
+export interface FingerprintResult {
+  path: string;
+  size: number;
+  fat: boolean;
+  slices: SliceFingerprint[];
+  /** One digest across every slice; null when nothing parsed. */
+  fingerprint: string | null;
+  /** The single agreeing UUID, or null when absent or disagreeing. */
+  uuid: string | null;
+  /** The weakest tier present, so a stripped slice is not hidden by a full one. */
+  tier: FingerprintTier | null;
+}
+
+/** One architecture's row in a {@link compareFingerprints} result. */
+export interface FingerprintComparisonRow {
+  arch: string;
+  presentInBoth: boolean;
+  fingerprint: string | null;
+  other: string | null;
+  /** Null when the architecture is absent on one side — not `false`. */
+  match: boolean | null;
+  tier: FingerprintTier;
+}
+
+/** The result of {@link compareFingerprints} — three questions, three answers. */
+export interface FingerprintComparison {
+  a: FingerprintResult;
+  b: FingerprintResult;
+  byArch: FingerprintComparisonRow[];
+  /**
+   * False when the two share no architecture, so nothing was actually compared.
+   * Distinct from "not the same program", which is a comparison that came out
+   * negative rather than one that never happened.
+   */
+  comparable: boolean;
+  /** Same UUID: the same build, exactly. */
+  sameBuild: boolean;
+  /** Same fingerprint: the same program, modulo a rebuild. */
+  sameProgram: boolean;
+  /** True only when differing UUIDs *prove* a rebuild happened. */
+  rebuilt: boolean;
+  verdict: string;
+  /** Present when a match rests on shape alone, bounding the claim. */
+  caveat: string | null;
+}
+
+/** One structural difference between two binaries. */
+export interface BinaryDifference {
+  category: 'slices' | 'header' | 'flags' | 'load-commands' | 'sections' | 'symbols';
+  arch: string | null;
+  kind: string;
+  detail: string;
+  a: unknown;
+  b: unknown;
+}
+
+/** The result of {@link diffBinaries}. */
+export interface BinaryDiff {
+  a: FingerprintResult;
+  b: FingerprintResult;
+  perArch: Array<{
+    arch: string;
+    differenceCount: number;
+    symbols: { a: number; b: number; added: number; removed: number };
+    sections: { a: number; b: number };
+  }>;
+  /** Structural changes. The verdict is computed from these alone. */
+  differences: BinaryDifference[];
+  /** UUID and provenance-command changes — reported, never counted. */
+  buildMetadata: Array<{ arch: string | null; kind: string; detail: string; name: string | null }>;
+  /** Section sizes, reported because they matter and counted separately. */
+  sizeChanges: Array<{ arch: string; section: string; a: number; b: number; delta: number }>;
+  counts: { differences: number; buildMetadata: number; sizeChanges: number };
+  sameBuild: boolean;
+  sameShape: boolean;
+  verdict: 'identical' | 'same program, rebuilt' | 'same structure, different symbol set' | 'different structure';
+}
+
+/** One file's row in a {@link searchSymbolsIn} result. */
+export interface CorpusFile {
+  path: string;
+  ok: boolean;
+  error: string | null;
+  message?: string;
+  arch: string | null;
+  count: number;
+  uniqueCount?: number;
+  defined?: number;
+  total?: number;
+  note?: string | null;
+  /** Names, capped by `perFile`. */
+  matches: SymbolEntry[];
+  matchesTruncated: boolean;
+}
+
+/** The result of {@link searchSymbolsIn}. */
+export interface CorpusSearch {
+  pattern: string;
+  mode: 'substring' | 'regex';
+  flags: string | null;
+  definedOnly: boolean;
+  dedupe: boolean;
+  roots: string[];
+  files: CorpusFile[];
+  totals: {
+    files: number;
+    /** How many of `files` were actually read. Separate, so "N read" cannot lie. */
+    looked: number;
+    matchedFiles: number;
+    matches: number;
+    skipped: number;
+    unreadable: number;
+    considered: number;
+  };
+  /** True when the walk stopped early, so the answer covers only what was reached. */
+  truncated: boolean;
+  note: string | null;
 }
 
 /** A parsed `LC_SYMTAB`. */
@@ -329,6 +504,70 @@ export declare function decodeSourceVersion(v: bigint): SourceVersion;
  */
 export declare function resolveEntryPoint(thin: Thin): EntryPoint | null;
 
+/**
+ * Is this file internally consistent? Every structural check, in one call.
+ *
+ * `verdict` is a label for a person; `clean` and `strictClean` are the gate.
+ * Branch on the booleans — mapping `verdict` straight onto an exit status fails a
+ * build over a binary that `clean: true` says is fine.
+ */
+export declare function audit(
+  path: string,
+  opts?: { arch?: string | null; strict?: boolean },
+): AuditResult;
+
+/**
+ * What is this binary, ignoring everything a rebuild moves?
+ *
+ * Three answers, kept apart: `uuid` (same build), `fingerprint` (same program),
+ * `structure` (same shape — and all a stripped binary can offer, which `tier`
+ * discloses).
+ */
+export declare function fingerprint(
+  path: string,
+  opts?: { arch?: string | null },
+): FingerprintResult;
+
+/** Compare two binaries, reporting which of the three questions the answer settles. */
+export declare function compareFingerprints(a: string, b: string): FingerprintComparison;
+
+/**
+ * What changed between two binaries, structurally.
+ *
+ * Addresses, sizes, offsets and the UUID are not differences — a rebuilt binary
+ * should not read as a different one. Build-metadata changes are reported in
+ * `buildMetadata` and excluded from the verdict.
+ */
+export declare function diffBinaries(
+  a: string,
+  b: string,
+  opts?: { arch?: string | null; maxNames?: number },
+): BinaryDiff;
+
+/**
+ * Search the symbol tables of many binaries in one call, through the same envelope
+ * as a single-binary search.
+ *
+ * Non-Mach-O files are counted in `totals.skipped`, not reported as errors; a path
+ * that does not exist is reported per file with reason code `io`.
+ */
+export declare function searchSymbolsIn(
+  roots: string[] | string,
+  pattern: string,
+  opts?: {
+    arch?: string;
+    mode?: 'substring' | 'regex';
+    flags?: string;
+    definedOnly?: boolean;
+    dedupe?: boolean;
+    max?: number;
+    perFile?: number;
+    matchedOnly?: boolean;
+    maxFiles?: number;
+    maxDepth?: number;
+  },
+): CorpusSearch;
+
 /** Shannon entropy of a buffer, in bits per byte (0..8). */
 export declare function shannonEntropy(
   f: Opener,
@@ -350,6 +589,43 @@ export declare function detectAbnormalities(
   thin: Thin,
   opts?: { sliceOffset?: number; sliceSize?: number | null },
 ): Abnormality[];
+
+/**
+ * Structural problems with the *fat table* — overlapping slices, a slice past the
+ * end of the file, a misaligned slice offset.
+ *
+ * Separate from {@link detectAbnormalities} because none of those checks can see a
+ * slice that overlaps its neighbour: each slice is internally consistent, and the
+ * lie is between them. Returns `[]` for a thin binary, which has no fat table to be
+ * inconsistent with.
+ */
+export declare function detectContainerAbnormalities(f: Opener): Abnormality[];
+
+/** A short, stable, order-independent digest of a list of strings. */
+export declare function digestOf(items: string[], length?: number): string;
+
+/**
+ * A structural digest of one slice, excluding everything a rebuild moves: no
+ * address, no size, no offset, and none of the provenance load commands
+ * (`LC_UUID`, `LC_CODE_SIGNATURE`, `LC_DYLIB_CODE_SIGN_DRS`, `LC_SOURCE_VERSION`).
+ */
+export declare function sliceShape(p: {
+  arch: string;
+  bits: number;
+  filetype: number;
+  sections: Array<{ segname: string; sectname: string }>;
+  loadCommands: LoadCommand[];
+  definedSymbols: Array<{ name: string }>;
+}): {
+  structure: string;
+  symbols: string | null;
+  fingerprint: string;
+  tier: FingerprintTier;
+  nsyms: number;
+};
+
+/** A digest for a whole file, combining per-slice digests. */
+export declare function fileShape(slices: Array<{ arch: string; fingerprint: string }>): string;
 
 /** Every slice of a binary, fat or thin. */
 export declare function slicesOf(f: Opener): Slice[];
@@ -482,6 +758,15 @@ export declare function describe(path: string): {
     /** Structural problems. Empty on a healthy binary. */
     abnormalities: Abnormality[];
   }>;
+  /**
+   * Problems with the fat table itself — overlapping slices, a slice past the end
+   * of the file, a misaligned offset.
+   *
+   * Reported here as well as by `audit` because no per-slice check can see these:
+   * two slices claiming the same bytes are each internally consistent. Empty for a
+   * thin binary, which has no fat table to be inconsistent with.
+   */
+  containerAbnormalities: Abnormality[];
 };
 
 /**

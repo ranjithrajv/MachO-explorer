@@ -101,10 +101,57 @@ means. That is not a footnote: see
 | `a2o.mjs` | Which byte of the file is this vaddr? Both the slice-relative and the absolute offset, and zero-fill as its own answer |
 | `o2a.mjs` | Which vaddr does this file offset have? Every slice's answer, since one offset means a different address in each |
 | `disasm.mjs` | Where do instructions start and end at this address, and where do they branch? Instruction lengths plus resolved **direct** branch edges for `arm64`, `arm64e` and `x86_64` — bytes, not mnemonics |
+| `audit.mjs` | Is this file internally consistent? Every structural claim it makes about itself, checked, with a verdict and an exit status a build can gate on |
+| `fingerprint.mjs` | Is this the same **program** as that one? A digest that survives a rebuild, which a byte comparison cannot |
+| `diff.mjs` | What changed between two binaries — structural facts only, so a rebuilt pair does not read as a different program |
 
-Nine tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
-`sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, and
-eight until `disasm.mjs` added the boundary decoder.
+Twelve tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
+`sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, eight
+until `disasm.mjs` added the boundary decoder, and nine until `audit`, `fingerprint`
+and `diff` answered the three questions a build or a reviewer asks about *two*
+binaries at once.
+
+### Three questions about two binaries
+
+The last three tools exist because one question — "is this the same thing?" — has
+three different answers, and every existing tool gives you the wrong one:
+
+| | |
+|---|---|
+| **same build** | the `LC_UUID`. Exact, and useless the moment anything is relinked |
+| **same program** | a `fingerprint`. Survives a rebuild; changes if a symbol or a section does |
+| **what changed** | a `diff`. Structural facts only, so a rebuilt pair is not a changed one |
+
+Byte comparison gets both directions wrong. Two builds of one source differ in every
+address — PIE and ASLR move them — in the dylib version fields, and in any
+timestamp, so `cmp` calls them different. Two *different* programs built from one
+template with a function renamed differ in almost nothing structural, so a loose
+structural diff calls them the same.
+
+```sh
+$ fingerprint v1.0/libthing.dylib v1.1/libthing.dylib
+  same program, rebuilt
+$ diff v1.0/libthing.dylib v1.1/libthing.dylib
+  same program, rebuilt  —  0 structural difference(s), 1 build-metadata change(s)
+  exit 0
+```
+
+`audit` is the fourth thing in this family, and the one aimed at a build rather than
+a person: it checks every structural claim a file makes about itself and exits
+non-zero when it does not hold up. Findings carry a **severity** — `error` means the
+file disagrees with itself, `warning` means it parsed and something is merely
+unfamiliar — so `--strict` can widen the gate without failing every build produced
+by a newer Xcode:
+
+```sh
+$ audit --strict build/Contents/MacOS/app
+app — FAILED  2 error(s), 1 warning(s)
+exit 1
+```
+
+It also checks the fat table itself, which no per-slice check can: two slices
+claiming the same file bytes are *each* internally consistent, and the damage only
+exists between them.
 
 ### Installing
 
@@ -137,12 +184,14 @@ address by *looking* like one turns a typo into a confident wrong answer.
 
 | Flag | Meaning |
 |---|---|
-| `--json` | Emit one JSON object on stdout; diagnostics go to stderr |
+| `--json` | Emit one JSON object on stdout; diagnostics go to stderr. Every response carries `schemaVersion`; the shape is published in [`schema/envelope.schema.json`](schema/envelope.schema.json) |
 | `-b`, `--binary <path>` | The binary, for tools where every positional is a query |
 | `--arch=<name>` | Restrict to one architecture. A preference, not a requirement: if the slice is absent another is read, and the note says which |
 | `--sections`, `--segments`, `--loads` | `describe`: list sections, segments, or load commands by name. The lists themselves are always in `--json` |
 | `--strings`, `--min`, `--filter` | `findliteral`: list the strings already in the binary instead of searching for one. On an encrypted binary this reports `encrypted` rather than "no strings" |
 | `--include-data` | `findcall`: widen the scan from code sections to every section |
+| `--in`, `--matched-only`, `--per-file`, `--max-files`, `--max-depth` | `sym`: search a **file or directory** instead of one binary, through the same envelope. `--in` takes a comma-separated list; non-Mach-O files under a directory are skipped, not failed |
+| `--strict` | `audit`: fail on warnings as well as errors. The default fails only where the file disagrees with itself |
 | `--branches` | `disasm`: report only branches, as `{from, to}` edges, with the byte column dropped |
 | `--count=<n>`, `--bytes=<n>` | `disasm`: stop after `n` instructions, or after `n` bytes. `--count 0` means no cap, and is only sensible with `--bytes` |
 | `-h`, `--help` | Print usage |
@@ -562,15 +611,46 @@ question it was never built for is not.
 Every tool takes `--json`, with two guarantees so a consumer does not have to
 learn one dialect: **stdout is JSON only** (progress lines, per-slice narration
 and "none found" prose all go to stderr), and **one envelope, always** —
-`{ tool, ok, binary, errors, messages?, notes?, data }`, where `errors` holds
-machine-readable reason codes (`bad-arguments`, `bad-address`, `bad-pattern`,
-`no-match`, `no-call-sites`, `no-symbols`, `unknown-encoding`, `io`) rather than
-prose.
+`{ schemaVersion, tool, ok, binary, errors, messages?, notes?, data }`, where
+`errors` holds machine-readable reason codes (`bad-arguments`, `bad-address`,
+`bad-pattern`, `no-match`, `no-call-sites`, `no-symbols`, `unknown-encoding`,
+`io`) rather than prose.
+
+The envelope's shape is published as JSON Schema in
+[`schema/envelope.schema.json`](schema/envelope.schema.json), and every response
+carries `schemaVersion` — so a consumer can pin the version it was written
+against and fail loudly when it changes, instead of discovering it from an empty
+field. `test/types.mjs` runs every tool and checks its real output against that
+schema, because a schema that has drifted from the code is worse than none.
 
 `io` and `unknown-encoding` are deliberately distinct, because the two are
 different problems: one is a file that cannot be read, the other a file that
 reads fine and is not a Mach-O. Told "not a Mach-O binary" about a path that
 does not exist, a caller goes looking for the wrong file entirely.
+
+### One envelope, any scale
+
+`sym --in` searches a directory, and the answer arrives in the **same envelope** —
+`data.files[]` instead of `data.matches`. A caller that can read one binary's
+output can read four thousand, which is the whole point: other tools can search a
+directory, but not through one uniform door.
+
+```sh
+$ sym --all-imp CCCrypt --in ./artifacts --matched-only --json | jq -r \
+    '.data.files[] | "\(.count)\t\(.path)"'
+```
+
+Three distinctions the output keeps apart, each of which a naive implementation
+conflates:
+
+- **non-Mach-O is skipped, not failed.** A build tree is full of plists and
+  headers; failing over them would make the tool useless for its actual use.
+- **a path that does not exist is reported**, with reason code `io`. Silently
+  dropping a path the caller named is the failure this project refuses most
+  consistently.
+- **`files` and `looked` are separate.** The first counts every Mach-O found, the
+  second only those actually read — so a summary saying "N Mach-O read" cannot
+  claim N files were read when none were.
 
 Addresses are emitted as `"0x..."` strings, never JSON numbers: a 64-bit vaddr
 does not survive a `Number`, and a silent precision loss would be
@@ -582,6 +662,11 @@ indistinguishable from a correct answer.
 | 1 | **Ran, found nothing.** Deliberately distinct from an error |
 | 2 | Usage error — bad or missing arguments |
 | 3 | Could not do the job — unreadable file, unparseable Mach-O |
+
+`audit` and `diff` both use 1 for a *negative answer* rather than an absence: exit 1
+from `audit` means "this file is not sound", and from `diff` "these are different
+programs". An unreadable file still exits 3, so a mistyped path in a CI script can
+never be mistaken for a clean result.
 
 A caller that cannot tell "found nothing" from "could not look" has the problem
 this project keeps fixing, so it is encoded in the exit status. The status is
@@ -609,10 +694,16 @@ claude mcp add macho -- node /absolute/path/to/src/mcp.mjs
     "env": { "MACHO_EXPLORER_BINARY": "/path/to/a/binary" } } } }
 ```
 
-Eight tools — `describe`, `sym`, `symlookup`,
+Eleven tools — `describe`, `sym`, `symlookup`,
 `findcall`, `findliteral`, `mapliteral`, `a2o`,
-`o2a` — each returning the **same envelope** the CLIs emit under `--json`,
+`o2a`, `audit`, `fingerprint`, `diff` — each returning
+the **same envelope** the CLIs emit under `--json`,
 plus a short text block. Nothing new to learn depending on how you arrived.
+
+`disasm` is the one CLI with no MCP tool yet, which breaks the "every tool has
+both doors" rule above. It is called out rather than quietly counted: a reader who
+compares this list with the tool table will notice the gap, and it is better that
+they notice it than that they assume the list is wrong.
 
 It speaks both protocol eras, because clients in the wild still use both: the
 modern `2026-07-28` revision (per-request `_meta`, no handshake) and the legacy

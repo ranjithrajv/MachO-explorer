@@ -74,7 +74,7 @@ export const TOOLS = [
  * or path. Keeping the list here rather than per-tool is what makes that a
  * single edit instead of one per tool that later grows a numeric flag.
  */
-export const VALUE_FLAGS = new Set(['b', 'binary', 'arch', 'max', 'include', 'count', 'bytes']);
+export const VALUE_FLAGS = new Set(['b', 'binary', 'arch', 'max', 'include', 'count', 'bytes', 'in', 'per-file', 'max-files', 'max-depth']);
 
 /**
  * Flags every tool accepts, whatever else it does.
@@ -197,6 +197,35 @@ export function toJSON(value) {
  * can branch on `code === "no-symbols"` without pattern-matching an English
  * sentence. The prose lives in `messages` for the human reading stderr.
  */
+/**
+ * The version of the JSON envelope this build emits.
+ *
+ * ## Why a version at all
+ *
+ * The envelope is the package's only stable surface. `--json` is how every tool is
+ * scripted and how the MCP server answers an agent, so once anything consumes it,
+ * changing a field name or a meaning is a breaking change whether or not the
+ * package.json version says so. A consumer that cannot detect that will keep
+ * parsing and quietly believe the wrong thing — which is the failure this project
+ * exists to prevent, arrived at through a dependency instead of through a typo.
+ *
+ * So the version travels *in* every response rather than in documentation beside it.
+ * A consumer pins the value it was written against and fails loudly on a change,
+ * instead of discovering it from an empty field.
+ *
+ * ## When to bump it
+ *
+ * Bump the **major** on a removal, a rename, or a change of meaning. Bump the
+ * **minor** when a field is added, since an added field is ignorable and existing
+ * consumers keep working. Nothing else warrants a bump — in particular, a new tool
+ * is not a change to the envelope, which is the point of having one envelope.
+ *
+ * Kept as a string rather than a number so `1.10` sorts after `1.9` to a reader as
+ * well as to a version comparison, and so it can never be compared with `>` by a
+ * consumer that forgets the coercion.
+ */
+export const SCHEMA_VERSION = '1.0';
+
 export function emitJSON({ tool, binary, ok = true, data = null, errors = [], messages = [], notes = [] }, code = 0) {
   // Normalised rather than trusted: `notes: null` is a natural thing to write
   // when a tool has nothing to say, and it crashed the emitter rather than
@@ -207,6 +236,10 @@ export function emitJSON({ tool, binary, ok = true, data = null, errors = [], me
   for (const m of [...msgs, ...nts]) process.stderr.write(m + '\n');
   process.stdout.write(
     toJSON({
+      // First key, so it is the first thing anyone reading a raw response sees.
+      // The envelope's own version, before the tool's name: it qualifies everything
+      // that follows.
+      schemaVersion: SCHEMA_VERSION,
       tool,
       ok,
       binary: binary ?? null,

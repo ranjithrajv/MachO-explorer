@@ -1,0 +1,18 @@
+#compdef fingerprint
+#
+# zsh completion for fingerprint. Install as _fingerprint in a directory
+# on your $fpath.
+#
+# MachO-explorer 0.1.0.
+
+_macho_fingerprint() {
+    # One or two positionals: the second is a Mach-O, not an address, which is why
+    # this cannot reuse the a2o/o2a pattern.
+    _arguments -s -S \
+        '--arch=[fingerprint only this slice]:architecture:(x86_64 arm64 arm64e arm64_32 ppc ppc64 arm i386)' \
+        '--json[write one JSON object to stdout]' \
+        '(-h --help)'{-h,--help}'[show usage]' \
+        '*:Mach-O file or bundle to identify or compare:_files'
+}
+
+_macho_fingerprint "$@"

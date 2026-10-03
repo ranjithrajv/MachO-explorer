@@ -36,6 +36,7 @@
     "src",
     "test/fixtures.mjs",
     "test/fixtures",
+    "schema",
     "man",
     "completions",
     "skill",
@@ -55,7 +56,10 @@
     "man/man1/a2o.1",
     "man/man1/o2a.1",
     "man/man1/disasm.1",
-    "man/man1/mcp.1"
+    "man/man1/mcp.1",
+    "man/man1/audit.1",
+    "man/man1/fingerprint.1",
+    "man/man1/diff.1"
   ],
   "bin": {
     "describe": "src/describe.mjs",
@@ -67,7 +71,10 @@
     "a2o": "src/a2o.mjs",
     "o2a": "src/o2a.mjs",
     "disasm": "src/disasm.mjs",
-    "mcp": "src/mcp.mjs"
+    "mcp": "src/mcp.mjs",
+    "audit": "src/audit.mjs",
+    "fingerprint": "src/fingerprint.mjs",
+    "diff": "src/diff.mjs"
   },
   "scripts": {
     "test": "node test/smoke.mjs",

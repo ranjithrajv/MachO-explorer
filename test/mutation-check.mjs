@@ -246,6 +246,79 @@ const MUTATIONS = [
     replace: `          entryoff: raw, // MUTATED: always the full 64 bits`,
     expect: /32-bit value, not the next command glued on|uninitialised upper half/,
   },
+
+  // The gate follows the boolean, not the three-valued label.
+  //
+  // This was a real inconsistency rather than a hypothetical: `verdict` was mapped
+  // straight onto the exit status, so a file the API called `clean: true` exited 1.
+  // The same binary was described as passing and failing in the same breath, which is
+  // the defect this whole project exists to refuse — and nothing else would have
+  // caught it, because the API fields were individually correct.
+  {
+    name: "audit's exit status follows clean, not the verdict label",
+    file: 'src/audit.mjs',
+    find: `const status = (strict ? result.strictClean : result.clean) ? EXIT.ok : EXIT.empty;`,
+    replace: `const status = result.verdict === 'ok' ? EXIT.ok : EXIT.empty; // MUTATED: label, not boolean`,
+    expect: /verdict "warnings" and clean:true both agree|--strict is the only thing that fails it/,
+  },
+
+  // A path the caller named must be reported, not silently dropped.
+  //
+  // The missing-root marker is an object; the test for it asked for a string, so it
+  // was never true and a mistyped path fell through to the non-Mach-O filter and came
+  // back as "skipped" — indistinguishable from a plist in the directory.
+  {
+    name: 'a corpus path that does not exist is reported, not skipped',
+    file: 'src/api.mjs',
+    find: `    if (entry !== null && typeof entry === 'object' && entry.missing) {`,
+    replace: `    if (typeof entry === 'string' && entry.missing) { // MUTATED: never true, so it is dropped`,
+    expect: /does not exist is reported as unreadable, never silently skipped/,
+  },
+
+  // The digest's separator.
+  //
+  // Without it, `["ab","c"]` and `["a","bc"]` hash identically — which matters
+  // because C++ mangled names are built from exactly those pieces, so the
+  // collision is reachable with real symbol tables rather than only in theory.
+  {
+    name: 'digest entries are separated, so ab+c does not collide with a+bc',
+    file: 'src/macho.mjs',
+    find: `  for (const s of [...items].sort()) {
+    h.update(s, 'latin1');
+    h.update('\\0');
+  }`,
+    replace: `  for (const s of [...items].sort()) h.update(s, 'latin1'); // MUTATED: no separator`,
+    expect: /separated, so ab\+c does not collide/,
+  },
+
+  // A UUID difference is build metadata, never a structural difference.
+  //
+  // Without the routing, `macho-diff` reports every rebuilt pair as changed — which
+  // is `cmp` with better manners, and would contradict `macho-fingerprint`
+  // reporting the same pair as the same program.
+  {
+    name: 'a differing UUID is build metadata, not a structural difference',
+    file: 'src/api.mjs',
+    find: `const PROVENANCE = new Set([
+  'LC_UUID',`,
+    replace: `const PROVENANCE = new Set([ // MUTATED: LC_UUID no longer excluded
+  // 'LC_UUID',`,
+    expect: /UUID difference is build metadata, never a structural difference/,
+  },
+
+  // `looked` must stay separate from `files`.
+  //
+  // `files` includes a row per path that could not be read, because dropping it
+  // would hide a path the caller named. So a count derived from `files` claims N
+  // files were read when none were — which is exactly what the CLI summary said
+  // before this was split out.
+  {
+    name: 'corpus reports how many files were read, separately from files found',
+    file: 'src/api.mjs',
+    find: `      looked: files.filter((x) => x.ok).length,`,
+    replace: `      looked: files.length, // MUTATED: counts unreadable rows as read`,
+    expect: /files and looked are separate, so "N read" cannot be a lie/,
+  },
 ];
 
 function run(cmd, args, opts = {}) {
