@@ -63,6 +63,7 @@ export const REASON_CODES = [
   'no-match',        // ran fine, the literal was not there
   'no-call-sites',   // ran fine, nothing calls the target: a value, not a failure
   'no-symbols',      // ran fine, nothing matched
+  'encrypted',       // could NOT run: the bytes are ciphertext, so a zero is not an answer
   'unknown-encoding', // readable, but not a Mach-O
   'io',              // the path could not be read
 ];
@@ -329,10 +330,22 @@ function lines(tool, env) {
     case 'macho-describe':
       L.push(`${env.binary} — ${(d.size / 1048576).toFixed(1)} MB, ${d.fat ? 'universal' : 'thin'}, ${d.slices.length} slice(s)`);
       for (const s of d.slices) {
+        const what = [s.platformName, s.filetypeName].filter(Boolean).join(' ');
         L.push(
           `  ${s.arch.padEnd(7)} ${s.readable ? `${n(s.defined)} defined / ${n(s.nsyms)} symbols` : `unreadable — ${s.note}`}` +
+            `${what ? `  ${what}` : ''}` +
             `  ${s.codeSections} of ${s.sections.length} sections are code  __text ${hex(s.textAddr)}+${n(s.textSize)}`,
         );
+        // The encryption warning leads the per-slice detail, because it changes
+        // what any later scan result means and a model that reads the sections
+        // first will have already drawn a conclusion from them.
+        if (s.encrypted) {
+          L.push(
+            `      ENCRYPTED (cryptid=${s.cryptid}) — __TEXT is ciphertext (App Store build). ` +
+              `macho-findcall, macho-findliteral and --strings cannot read it; macho-symlookup still can, ` +
+              `because the symbol table is not encrypted.`,
+          );
+        }
         // Segments and sections are the two things a caller most often wants next
         // and cannot get from any other tool here, so they lead the text block
         // rather than sitting only in structuredContent.
@@ -649,11 +662,18 @@ export const TOOLS = [
           // Empty is not a failure, and `isError` is what a model reads — see the
           // note on REASON_CODES. The CLI distinguishes this case with exit 1;
           // this layer does it with `ok: true` and `data.count: 0`.
-          errors: [],
+          //
+          // `encrypted` is the exception, and it is the whole reason the
+          // distinction exists: the scan did not run, so zero hits is not an
+          // answer. Reporting `ok: true` here would tell a model that an App
+          // Store binary has no callers, which is a claim about ciphertext.
+          errors: r.unreadable ? ['encrypted'] : [],
           notes: [
-            r.count
-              ? null
-              : 'no direct call site found. This finds only calls whose target is encoded in the instruction, so indirect, register and PLT calls are invisible here — an empty result does NOT mean nothing calls this.',
+            r.unreadable
+              ? 'the slice is encrypted (App Store build), so its code sections are ciphertext and were not scanned. This is NOT a result — the binary may call the target any number of times.'
+              : (r.count
+                ? null
+                : 'no direct call site found. This finds only calls whose target is encoded in the instruction, so indirect, register and PLT calls are invisible here — an empty result does NOT mean nothing calls this.'),
             'scanned code sections only; pass include_data to widen',
           ].filter(Boolean),
         };
@@ -718,13 +738,18 @@ export const TOOLS = [
             max: args.max || 0,
             filter: args.filter || null,
           });
+          // Same exception as findcall: `__cstring` lives in the encrypted
+          // `__TEXT` segment of an App Store build, so a zero here is
+          // "unreadable", not "this binary has no strings".
           return {
             data: r,
-            errors: [],
+            errors: r.count === 0 && r.encryptedSections.length ? ['encrypted'] : [],
             notes: [
-              r.count === 0
-                ? `no NUL-terminated strings in ${r.sections.join(', ')}. A Go binary keeps its strings length-prefixed in __gopclntab, so a C-string reader legitimately finds none there.`
-                : null,
+              r.encryptedSections.length
+                ? `${r.encryptedSections.join(', ')} is encrypted (App Store build), so these bytes are ciphertext. A zero here is NOT "this binary has no strings".`
+                : (r.count === 0
+                  ? `no NUL-terminated strings in ${r.sections.join(', ')}. A Go binary keeps its strings length-prefixed in __gopclntab, so a C-string reader legitimately finds none there.`
+                  : null),
               r.truncated ? `truncated to ${r.strings.length} of ${r.count}` : null,
             ].filter(Boolean),
           };
@@ -737,11 +762,15 @@ export const TOOLS = [
         // Empty is an answer. See the note on REASON_CODES: `isError` is what
         // the model reads, and "this literal is not in the file" is the answer
         // to the question, not a failure to answer it.
+        const overCiphertext = r.count === 0 && r.searchedCiphertext.length > 0;
         return {
           data: r,
-          errors: [],
+          // A zero over ciphertext is "could not look", not "not there".
+          errors: overCiphertext ? ['encrypted'] : [],
           notes: [
-            r.count ? null : 'no contiguous match — a value assembled at runtime from parts never appears as one literal',
+            overCiphertext
+              ? `${r.searchedCiphertext.join(', ')}: the searched range is encrypted (App Store build), so a zero here is NOT evidence the literal is absent.`
+              : (r.count ? null : 'no contiguous match — a value assembled at runtime from parts never appears as one literal'),
             r.truncated ? `truncated to ${r.hits.length} of the occurrences found` : null,
             r.arch && r.archHonoured === null
               ? `arch=${r.arch} is not in this binary; read ${r.archRead.join(', ')} instead. The answer is real but is not the slice you asked for.`

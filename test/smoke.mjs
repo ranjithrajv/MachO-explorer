@@ -969,6 +969,127 @@ console.log('\na2o / o2a: address and file offset');
     }
   }
 
+  // iOS: the facts that make an iOS binary an iOS binary.
+  //
+  // A Mach-O from an iPhone and one from a Mac are byte-compatible everywhere
+  // this reader used to look — same magic, same word size, same load-command
+  // shape — so none of the four things below could be answered before, and the
+  // corpus was 100% macOS so none of them could be tested either.
+  //
+  // The one that matters most is encryption. An App Store binary ships with
+  // `__TEXT` encrypted, and a byte scanner that does not know it returns zero
+  // hits and reports "nothing calls this" — a claim about code that was never
+  // readable. That is the failure this whole block exists to prevent, and it is
+  // checked at the exit code, not just in a field.
+  {
+    const ios = binaries.find((x) => x.stem === 'ios');
+    if (!ios) {
+      skip('iOS binaries', 'the ios fixture is missing — run npm run test:fixtures');
+    } else {
+      const { describe: describeFile, findCalls: callsFor, findLiteral: literalsFor,
+        findStrings: stringsFor, lookupAddress: lookUp } = await import('../src/api.mjs');
+      const s = describeFile(ios.path).slices[0];
+
+      check(
+        s.arch === 'arm64e',
+        'iOS: arm64e is not reported as plain arm64 (they share a cputype, differ in subtype)',
+        `got ${s.arch} with cpusubtype ${s.cpusubtype}`,
+      );
+      check(
+        s.platformName === 'ios' && s.platform === 2,
+        'iOS: LC_BUILD_VERSION names the target platform',
+        `got ${s.platformName} (${s.platform})`,
+      );
+      check(
+        s.minos === '13.2.1' && s.sdk === '17.0.0',
+        'iOS: minos and sdk unpack from the xxxx.yy.zz nibble packing',
+        `minos=${s.minos} sdk=${s.sdk}`,
+      );
+      check(
+        s.filetypeName === 'MH_EXECUTE',
+        'iOS: the filetype distinguishes an app from a framework or extension',
+        `got ${s.filetypeName}`,
+      );
+      check(
+        s.encrypted === true && s.cryptid === 1,
+        'iOS: an App Store binary is reported as encrypted',
+        `encrypted=${s.encrypted} cryptid=${s.cryptid}`,
+      );
+
+      // The scanners must refuse, not report zero. Each reaches the check by a
+      // different path, so each is asserted separately.
+      const d = describeFile(ios.path).slices[0];
+
+      const lit = literalsFor(ios.path, 'ios-fixture-alpha');
+      check(
+        lit.count === 0 && lit.searchedCiphertext.length > 0,
+        'iOS: findliteral reports the searched range as ciphertext, not as an absent literal',
+        `count=${lit.count} ciphertext=${JSON.stringify(lit.searchedCiphertext)}`,
+      );
+
+      const strs = stringsFor(ios.path);
+      check(
+        strs.count === 0 && strs.encryptedSections.includes('__TEXT,__cstring'),
+        'iOS: --strings names __cstring as ciphertext rather than reporting no strings',
+        `count=${strs.count} encrypted=${JSON.stringify(strs.encryptedSections)}`,
+      );
+
+      // The exit codes, which is where "found nothing" and "could not look" are
+      // kept apart. A zero that exits 1 is the silent wrong answer.
+      const cliLit = run('findliteral.mjs', ['--json', 'ios-fixture-alpha', ios.path]);
+      let litEnv = null;
+      try { litEnv = JSON.parse(cliLit.stdout); } catch { /* asserted below */ }
+      check(
+        cliLit.code === 3 && litEnv?.errors?.includes('encrypted'),
+        'iOS: findliteral exits 3 (could not look), not 1 (found nothing), over ciphertext',
+        `exit ${cliLit.code}, errors ${JSON.stringify(litEnv?.errors)}`,
+      );
+
+      const cliStr = run('findliteral.mjs', ['--json', '--strings', ios.path]);
+      check(
+        cliStr.code === 3,
+        'iOS: --strings on an encrypted binary is not reported as "no strings"',
+        `exit ${cliStr.code}`,
+      );
+
+      // And the asymmetry that makes this realistic: the symbol table is not
+      // encrypted, so names still resolve on a binary whose code cannot be read.
+      const sym = lookUp(ios.path, 0x100000250n);
+      check(
+        sym.function === 'target_fn',
+        'iOS: the symbol table is readable even though the code is not',
+        `got ${JSON.stringify(sym.function)}`,
+      );
+      check(
+        d.encrypted === true && d.arch === 'arm64e',
+        'iOS: describe reports both facts on the same slice',
+      );
+
+      // A macOS binary must be unaffected: absent commands stay absent rather
+      // than defaulting to false, because "never encrypted" is not "not
+      // encrypted" and a null is the honest answer for a binary with no
+      // LC_ENCRYPTION_INFO at all.
+      const mac = binaries.find((x) => x.stem === 'populated');
+      if (mac) {
+        const ms = describeFile(mac.path).slices[0];
+        check(
+          ms.encrypted === null && ms.platformName === null,
+          'macOS: a binary with neither command reports neither, rather than false',
+          `encrypted=${ms.encrypted} platform=${ms.platformName}`,
+        );
+      }
+
+      // Both doors, because a fact that reaches JSON but not the text block
+      // still leaves the common case unreadable.
+      const cli = run('describe.mjs', [ios.path]);
+      check(
+        /arm64e/.test(cli.stdout) && /ios/.test(cli.stdout) && /ENCRYPTED/.test(cli.stdout),
+        'iOS: describe prints the architecture, platform and encryption warning',
+        cli.stdout.split('\n').slice(2, 5).join(' | '),
+      );
+    }
+  }
+
   // The UUID, which identifies a build rather than describing one.
   //
   // A UUID is the only field in the file that says *which* build this is, as

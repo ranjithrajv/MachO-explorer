@@ -45,8 +45,9 @@
 import fs from 'node:fs';
 import {
   opener, isMachOFile, slicesOf, parseThin, readSymbols, preferredSlice,
-  richestSlice, sliceName, textSection, codeSections, sectionOf, toVaddr,
-  toFileOffset, isBackedByFile, archMatches,
+  richestSlice, sliceName, sliceArchName, platformName, filetypeName,
+  unpackVersion, textSection, codeSections, sectionOf,
+  toVaddr, toFileOffset, isBackedByFile, archMatches,
 } from './macho.mjs';
 
 /* ------------------------------------------------------------------ *
@@ -128,19 +129,27 @@ export function describe(path) {
     const slices = [];
     for (const s of slicesOf(f)) {
       const thin = parseThin(f, s.offset);
-      const arch = s.thin ? sliceName(thin?.cputype) : sliceName(s.cputype);
+      const arch = s.thin
+        ? sliceArchName(thin?.cputype, thin?.cpusubtype)
+        : sliceArchName(s.cputype, s.cpusubtype);
       if (!thin) {
         slices.push({
           arch, offset: s.offset, size: s.size, thin: s.thin, readable: false,
           nsyms: 0, defined: 0, codeSections: 0, textAddr: null, textSize: 0,
           uuid: null, segments: [], sections: [], loadCommands: [],
-          segments: [], sections: [], loadCommands: [],
+          filetype: null, filetypeName: null, platform: null, platformName: null,
+          minos: null, sdk: null, cpusubtype: null, encrypted: null,
           note: 'no Mach-O header at this offset',
         });
         continue;
       }
       const syms = readSymbols(f, s.offset, thin);
       const text = textSection(thin);
+      // `cryptid` is 0 on a binary that was never encrypted, and null when there
+      // is no LC_ENCRYPTION_INFO at all. Those are different facts — a simulator
+      // build has no such command, an App Store build has one saying 1 — so they
+      // stay distinct rather than collapsing into a boolean.
+      const cryptid = thin.encryption ? thin.encryption.cryptid : null;
       slices.push({
         arch,
         offset: s.offset,
@@ -148,6 +157,18 @@ export function describe(path) {
         thin: s.thin,
         readable: true,
         bits: thin.is64 ? 64 : 32,
+        // The iOS-facing facts. A Mach-O from an iPhone and one from a Mac are
+        // byte-compatible everywhere this reader used to look, so without these
+        // nothing here could tell you which you were holding.
+        filetype: thin.filetype,
+        filetypeName: thin.filetypeName,
+        platform: thin.platform ? thin.platform.platform : null,
+        platformName: thin.platform ? thin.platform.name : null,
+        minos: thin.platform ? thin.platform.minos : null,
+        sdk: thin.platform ? thin.platform.sdk : null,
+        cpusubtype: thin.cpusubtype,
+        cryptid,
+        encrypted: cryptid == null ? null : cryptid !== 0,
         nsyms: syms.total,
         defined: syms.defined,
         note: syms.note,
@@ -217,7 +238,7 @@ function layoutSlices(f, arch) {
     if (thin) {
       out.push({
         offset: s.offset,
-        arch: s.thin ? sliceName(thin.cputype) : sliceName(s.cputype),
+        arch: s.thin ? sliceArchName(thin.cputype, thin.cpusubtype) : sliceArchName(s.cputype, s.cpusubtype),
         thin,
         size: s.size,
       });
@@ -648,12 +669,16 @@ export function findCalls(path, target, { arch, includeData = false, max = 0 } =
     const hits = [];
     const slices = [];
     const unsupported = [];
+    // Named separately from `slices[].skipped` so a caller can branch on
+    // "there was code here I could not read" without walking the per-slice
+    // records — the same reason `unsupported` exists for architectures.
+    const encryptedSlices = [];
     let scanned = 0;
 
     for (const s of slicesOf(f)) {
       const thin = parseThin(f, s.offset);
       if (!thin) continue;
-      const name = s.thin ? sliceName(thin.cputype) : sliceName(s.cputype);
+      const name = s.thin ? sliceArchName(thin.cputype, thin.cpusubtype) : sliceArchName(s.cputype, s.cpusubtype);
       if (arch && name !== arch) continue;
 
       const enc = callEncoding(name);
@@ -669,6 +694,26 @@ export function findCalls(path, target, { arch, includeData = false, max = 0 } =
         scanned: 0,
         skipped: null,
       };
+
+      // An encrypted slice is not a slice with no callers. App Store binaries
+      // ship with `__TEXT` encrypted, so every byte this would scan is
+      // ciphertext: the scan returns zero, and zero reads as "nothing calls
+      // this". That is a claim about code that was never readable, which is the
+      // exact failure this project treats as worse than an error.
+      //
+      // Checked before the target-mapping test, because "encrypted" explains the
+      // result on its own and a caller should not have to distinguish it from a
+      // target that happens to be unmapped.
+      if (thin.encryption && thin.encryption.cryptid !== 0) {
+        record.skipped =
+          `slice is encrypted (cryptid=${thin.encryption.cryptid}, ` +
+          `${thin.encryption.cryptsize} bytes of ciphertext from file offset ` +
+          `${thin.encryption.cryptoff}) — code sections are not readable, so no ` +
+          `scan result here is meaningful`;
+        encryptedSlices.push(name);
+        slices.push(record);
+        continue;
+      }
 
       // Whether the *target* is in this slice at all — a slice that cannot
       // contain the destination cannot hold a call to it, and saying so is not
@@ -708,6 +753,12 @@ export function findCalls(path, target, { arch, includeData = false, max = 0 } =
       scanned,
       slices,
       unsupported,
+      encryptedSlices,
+      // True when every slice that could have held an answer was unreadable. The
+      // distinction matters at the exit code: zero hits from a slice that was
+      // scanned is "found nothing", and zero from an encrypted one is "could not
+      // look", which the contract says must not be reported the same way.
+      unreadable: encryptedSlices.length > 0 && scanned === 0,
       typed: !includeData,
     };
   });
@@ -731,7 +782,7 @@ export function listCallTargets(path, { arch, includeData = false, minSites = 0 
     for (const s of slicesOf(f)) {
       const thin = parseThin(f, s.offset);
       if (!thin) continue;
-      const name = s.thin ? sliceName(thin.cputype) : sliceName(s.cputype);
+      const name = s.thin ? sliceArchName(thin.cputype, thin.cpusubtype) : sliceArchName(s.cputype, s.cpusubtype);
       if (arch && name !== arch) continue;
       const enc = callEncoding(name);
       if (!enc) { unsupported.push(name); continue; }
@@ -924,6 +975,13 @@ export function findLiteral(path, literal, { textOnly = false, arch, max = 0 } =
   return withFile(path, (f) => {
     const slices = [];
     const hits = [];
+    // Slices carrying an `LC_ENCRYPTION_INFO` with a non-zero `cryptid`, and the
+    // subset of those whose ciphertext actually overlaps the searched range.
+    // Kept apart because "this slice is encrypted" and "the bytes I searched
+    // were ciphertext" are different facts, and only the second one qualifies a
+    // zero result.
+    const encryptedSlices = [];
+    const searchedCiphertext = [];
     let scanned = 0;
     // `--arch` bookkeeping. `matched` is whether any slice satisfied the request;
     // `fallback` is the first slice that did not, kept so an unsatisfiable
@@ -937,7 +995,7 @@ export function findLiteral(path, literal, { textOnly = false, arch, max = 0 } =
     for (const s of slicesOf(f)) {
       const thin = parseThin(f, s.offset);
       if (!thin) continue;
-      const name = s.thin ? sliceName(thin.cputype) : sliceName(s.cputype);
+      const name = s.thin ? sliceArchName(thin.cputype, thin.cpusubtype) : sliceArchName(s.cputype, s.cpusubtype);
       // `arch` is a preference, not a filter, and this tool now matches the
       // other five: a named slice wins if present, otherwise the richest slice is
       // read anyway. Filtering instead would report a usage mistake — an absent
@@ -955,9 +1013,30 @@ export function findLiteral(path, literal, { textOnly = false, arch, max = 0 } =
 
       const from = textOnly && text ? textLo : s.offset;
       const to = textOnly && text ? textHi : s.offset + s.size;
+
+      // An App Store binary encrypts the whole of `__TEXT`, which is where
+      // `__cstring` lives, so a literal search over an encrypted slice is a
+      // search over ciphertext. The bytes are still scanned — they are what is
+      // in the file, and a caller may legitimately be looking for a signature or
+      // a ciphertext marker — but the *result* is qualified, because zero hits
+      // from encrypted bytes does not mean the string is absent.
+      const crypt = thin.encryption && thin.encryption.cryptid !== 0 ? thin.encryption : null;
+      if (crypt) {
+        encryptedSlices.push(name);
+        // Whether the encrypted range actually overlaps what will be searched.
+        // Stating the overlap rather than the mere presence of the command keeps
+        // the note honest for a binary whose ciphertext is elsewhere.
+        const lo = s.offset + crypt.cryptoff;
+        const hi = lo + crypt.cryptsize;
+        if (hi > from && lo < to) searchedCiphertext.push(name);
+      }
+
       const found = searchRange(f, needle, from, to);
       scanned += to - from;
-      slices.push({ arch: name, offset: s.offset, size: s.size, from, to, hits: found.length });
+      slices.push({
+        arch: name, offset: s.offset, size: s.size, from, to, hits: found.length,
+        encrypted: crypt ? true : null,
+      });
 
       for (const off of found) {
         const inText = text && off >= textLo && off < textHi;
@@ -1017,6 +1096,12 @@ export function findLiteral(path, literal, { textOnly = false, arch, max = 0 } =
       arch: arch ?? null,
       archHonoured: arch && matched ? arch : null,
       archRead: slices.map((x) => x.arch),
+      // Which slices carry ciphertext, and which of those had it inside the
+      // range actually searched. A zero count over `searchedCiphertext` is not
+      // evidence the literal is absent, and the caller cannot work that out from
+      // the count alone.
+      encryptedSlices,
+      searchedCiphertext,
     };
   });
 }
@@ -1053,12 +1138,26 @@ export function findStrings(path, { arch, min = 4, max = 0, filter = null } = {}
   return withFile(path, (f) => {
     const slices = [];
     const strings = [];
+    // The string sections whose bytes are ciphertext on this binary. A zero
+    // count over these is not a binary with no strings.
+    const encryptedSections = [];
     let scanned = 0;
 
-    for (const s of slicesOf(f)) {
-      const thin = parseThin(f, s.offset);
-      if (!thin) continue;
-      const name = s.thin ? sliceName(thin.cputype) : sliceName(s.cputype);
+    // `layoutSlices` rather than `slicesOf`, and this is a fix rather than a
+    // preference: the loop used to walk `slicesOf(f)`, so `--arch` narrowed
+    // nothing while the returned `arch` field echoed the request straight back.
+    // `findStrings(bin, {arch:'arm64'})` reported `arch: 'arm64'` having read
+    // *every* slice — a caller asking one architecture's strings could not tell
+    // that from having been given them. `findLiteral` already reports
+    // `archHonoured`/`archRead` for this and gets it right; these are the same
+    // two fields for the same reason.
+    const layouts = layoutSlices(f, arch);
+    const honoured = arch && layouts.some((l) => l.arch === arch) ? arch : null;
+
+    for (const l of layouts) {
+      const s = { offset: l.offset, thin: l.thin, cputype: l.thin.cputype };
+      const thin = l.thin;
+      const name = l.arch;
 
       // The C-string sections. `__cstring` is the real one; `__cfstring` is
       // CFString literals, whose pointers are 32 bytes of structure rather than
@@ -1067,6 +1166,17 @@ export function findStrings(path, { arch, min = 4, max = 0, filter = null } = {}
       // are exactly what someone reversing a binary wants, so they are included
       // and labelled, not filtered out.
       const wanted = CSTRING_SECTIONS.filter((n) => thin.sections.some((x) => x.sectname === n));
+
+      // An App Store binary encrypts the `__TEXT` segment, and `__cstring` lives
+      // inside it — so the string sections are ciphertext, and scanning them
+      // returns zero for a binary that is full of strings. Recorded per slice and
+      // checked against the sections actually read, so the note is only raised
+      // when the encryption really does cover them.
+      const crypt = thin.encryption && thin.encryption.cryptid !== 0 ? thin.encryption : null;
+      const cryptRange = crypt
+        ? [s.offset + crypt.cryptoff, s.offset + crypt.cryptoff + crypt.cryptsize]
+        : null;
+
       if (!wanted.length) {
         slices.push({ arch: name, offset: s.offset, size: s.size, sections: [], strings: 0, scanned: 0 });
         continue;
@@ -1084,6 +1194,12 @@ export function findStrings(path, { arch, min = 4, max = 0, filter = null } = {}
         if (hi <= lo) continue;
         const buf = f.read(lo, hi - lo);
         scanned += buf.length;
+        // Does the ciphertext cover this section? Stated per section rather than
+        // per slice, because "the binary is encrypted" and "these strings were
+        // unreadable" are different claims and only the second explains a zero.
+        if (cryptRange && cryptRange[1] > lo && cryptRange[0] < hi) {
+          encryptedSections.push(`${sec.segname},${sec.sectname}`);
+        }
 
         const label = `${sec.segname},${sec.sectname}`;
         // Walk NUL-delimited runs rather than regexing the whole buffer, so the
@@ -1119,6 +1235,11 @@ export function findStrings(path, { arch, min = 4, max = 0, filter = null } = {}
     const capped = max > 0 ? strings.slice(0, max) : strings;
     return {
       arch: arch ?? null,
+      // Same pair, same meaning as `findLiteral`: `arch` is what was asked for,
+      // `archHonoured` is that value only when a slice satisfied it, and
+      // `archRead` is the ground truth of what actually answered.
+      archHonoured: honoured,
+      archRead: slices.map((x) => x.arch),
       min,
       count: strings.length,
       truncated: capped.length < strings.length,
@@ -1126,6 +1247,10 @@ export function findStrings(path, { arch, min = 4, max = 0, filter = null } = {}
       scanned,
       slices,
       sections: CSTRING_SECTIONS,
+      // Non-empty when a string section was ciphertext. `--strings` on an
+      // encrypted App Store binary must not read as "this binary has no
+      // strings", which is what a bare zero says.
+      encryptedSections,
     };
   });
 }
@@ -1171,7 +1296,7 @@ export function mapLiteral(path, literal, { arch, offsets = null, maxPointers = 
     for (const s of slicesOf(f)) {
       const thin = parseThin(f, s.offset);
       if (!thin) continue;
-      const name = s.thin ? sliceName(thin.cputype) : sliceName(s.cputype);
+      const name = s.thin ? sliceArchName(thin.cputype, thin.cpusubtype) : sliceArchName(s.cputype, s.cpusubtype);
       if (arch && name !== arch) continue;
       const text = textSection(thin);
       const inText = text
@@ -1310,4 +1435,7 @@ export function contextAround(f, off, preLen = 16, hitLen = 8) {
   return { pre: printable(pre), preFrom: lo, hit: printable(f.read(off, hitLen)) };
 }
 
-export { isMachOFile, sliceName, textSection, codeSections };
+export {
+  isMachOFile, sliceName, sliceArchName, platformName, filetypeName,
+  unpackVersion, textSection, codeSections,
+};

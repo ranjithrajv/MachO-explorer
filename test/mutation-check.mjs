@@ -200,6 +200,32 @@ const MUTATIONS = [
     replace: `if (!explicitBinary && positional.length === -1) { // MUTATED: never fires`,
     expect: /lone Mach-O path is a usage error|lone Mach-O path/,
   },
+
+  // The iOS facts. Each is a distinct way to lose one, and the encryption one is
+  // the only mutation here that restores a *silent wrong answer* rather than a
+  // missing field: without it a scanner reads ciphertext, finds nothing, and
+  // reports "nothing calls this".
+  {
+    name: 'LC_ENCRYPTION_INFO is read, so an encrypted slice is not scanned as if readable',
+    file: 'src/macho.mjs',
+    find: `    } else if (cmd === LC_ENCRYPTION_INFO || cmd === LC_ENCRYPTION_INFO_64) {`,
+    replace: `    } else if (false) { // MUTATED: encryption never read`,
+    expect: /cryptid is 1|encrypted|unreadable/,
+  },
+  {
+    name: 'arm64e is distinguished from arm64 by cpusubtype',
+    file: 'src/macho.mjs',
+    find: `  if (cputype === CPU_ARM64 && (cpusubtype & 0xff) === CPU_SUBTYPE_ARM64E) return 'arm64e';`,
+    replace: `  if (false) return 'arm64e'; // MUTATED: cputype alone names the slice`,
+    expect: /arm64e is not reported as plain arm64|arm64e/,
+  },
+  {
+    name: 'LC_BUILD_VERSION names the platform (ios, not just "a Mach-O")',
+    file: 'src/macho.mjs',
+    find: `    if (cmd === LC_BUILD_VERSION || VERSION_MIN_CMDS[cmd]) {`,
+    replace: `    if (false) { // MUTATED: platform never read`,
+    expect: /platform is ios|platform/,
+  },
 ];
 
 function run(cmd, args, opts = {}) {

@@ -101,6 +101,29 @@ try {
 }
 
 const notes = [];
+
+// Encryption is stated before any "no match" prose, because it changes what a
+// zero means. An App Store binary encrypts `__TEXT`, and `__cstring` lives
+// inside it, so a miss here is a miss over ciphertext — the literal may be
+// present and simply unreadable. Without this, `--strings` on an encrypted
+// binary reports "0 strings" with the confident tone of a real answer.
+if (listStrings && r.encryptedSections?.length) {
+  notes.push(
+    `${r.encryptedSections.join(', ')}: encrypted (App Store build) — these sections are ` +
+      `ciphertext, so a zero result does not mean the binary has no strings`,
+  );
+} else if (r.searchedCiphertext?.length) {
+  notes.push(
+    `${r.searchedCiphertext.join(', ')}: the searched range is encrypted (App Store build) — ` +
+      `these bytes are ciphertext, so a zero result does not mean the literal is absent`,
+  );
+} else if (r.encryptedSlices?.length) {
+  notes.push(
+    `${r.encryptedSlices.join(', ')}: encrypted (cryptid != 0), but the ciphertext does not ` +
+      `overlap the range searched`,
+  );
+}
+
 if (r.count === 0) {
   if (listStrings) {
     notes.push('no NUL-terminated strings found in __cstring, __objc_methname, __swift5_reflstr or __objc_classname');
@@ -115,11 +138,20 @@ if (r.count === 0) {
   }
 }
 
+// Same rule as findcall: a zero over ciphertext is "could not look", not "found
+// nothing", so it takes a distinct reason code and the failure exit. A positive
+// count from an encrypted binary is still a real answer — the hits came from
+// bytes that were readable — so encryption only downgrades the zero case.
+const unreadable = r.count === 0
+  && ((r.searchedCiphertext?.length ?? 0) > 0 || (listStrings && (r.encryptedSections?.length ?? 0) > 0));
+const reason = r.count > 0 ? null : (unreadable ? 'encrypted' : 'no-match');
+const exit = r.count > 0 ? EXIT.ok : (unreadable ? EXIT.fail : EXIT.empty);
+
 if (flags.has('json')) {
   emitJSON({
     tool: 'findliteral', binary, ok: r.count > 0,
-    errors: r.count ? [] : ['no-match'], notes, data: r,
-  }, r.count ? EXIT.ok : EXIT.empty);
+    errors: reason ? [reason] : [], notes, data: r,
+  }, exit);
 }
 
 const hex = (v) => `0x${v.toString(16)}`;

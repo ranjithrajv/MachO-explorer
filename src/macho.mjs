@@ -53,6 +53,73 @@ export const LC_SEGMENT = 0x1;
 export const LC_SYMTAB = 0x2;
 export const LC_SEGMENT_64 = 0x19;
 export const LC_UUID_CMD = 0x1b;
+export const LC_ENCRYPTION_INFO = 0x21;
+export const LC_ENCRYPTION_INFO_64 = 0x2d;
+export const LC_BUILD_VERSION = 0x32;
+
+/**
+ * `LC_VERSION_MIN_*`, the pre-`LC_BUILD_VERSION` way of naming a platform.
+ *
+ * Mapped to the same `PLATFORM_*` numbers so the two forms produce one shape —
+ * iOS binaries from before Xcode 10 carry these instead, and a caller should not
+ * have to know which spelling it got to find out the binary is for iOS.
+ */
+export const VERSION_MIN_CMDS = {
+  0x24: 1,  // LC_VERSION_MIN_MACOSX  -> PLATFORM_MACOS
+  0x25: 2,  // LC_VERSION_MIN_IPHONEOS -> PLATFORM_IOS
+  0x2f: 3,  // LC_VERSION_MIN_TVOS     -> PLATFORM_TVOS
+  0x30: 4,  // LC_VERSION_MIN_WATCHOS  -> PLATFORM_WATCHOS
+};
+
+/**
+ * `PLATFORM_*` from `<mach-o/loader.h>`, transcribed rather than inferred.
+ *
+ * The simulator entries matter more than they look: a binary built for the iOS
+ * simulator is an *iOS* binary that happens to run on a Mac, and collapsing it
+ * into `ios` would hide the one fact that explains why it is x86_64.
+ */
+export const PLATFORMS = {
+  1: 'macos', 2: 'ios', 3: 'tvos', 4: 'watchos', 5: 'bridgeos',
+  6: 'maccatalyst', 7: 'ios-simulator', 8: 'tvos-simulator',
+  9: 'watchos-simulator', 10: 'driverkit', 11: 'visionos',
+  12: 'visionos-simulator',
+  15: 'macos-exclavecore', 16: 'macos-exclavekit',
+};
+
+/** `MH_*` filetypes from `<mach-o/loader.h>`, by value. */
+export const FILETYPES = {
+  0x1: 'MH_OBJECT', 0x2: 'MH_EXECUTE', 0x3: 'MH_FVMLIB', 0x4: 'MH_CORE',
+  0x5: 'MH_PRELOAD', 0x6: 'MH_DYLIB', 0x7: 'MH_DYLINKER', 0x8: 'MH_BUNDLE',
+  0x9: 'MH_DYLIB_STUB', 0xa: 'MH_DSYM', 0xb: 'MH_KEXT_BUNDLE', 0xc: 'MH_FILESET',
+};
+
+/** A filetype's `MH_*` name, or the raw number when it is not one we know. */
+export function filetypeName(n) {
+  if (n == null) return null;
+  return FILETYPES[n] ?? `filetype=${n}`;
+}
+
+/** A platform number's name, or the raw number when it is not one we know. */
+export function platformName(n) {
+  if (n == null) return null;
+  return PLATFORMS[n] ?? `platform=${n}`;
+}
+
+/**
+ * Unpack the `xxxx.yy.zz` nibble encoding used by `minos` and `sdk`.
+ *
+ * The three fields are not a decimal fraction and not a bitfield; they are
+ * fixed-width nibble groups, so `0x0d0300` is 13.3.0 and string concatenation
+ * would produce 13.30. `minor` and `patch` are two nibbles each, which is why
+ * this cannot be done by dividing.
+ */
+export function unpackVersion(v) {
+  if (v == null) return null;
+  const major = (v >> 16) & 0xffff;
+  const minor = (v >> 8) & 0xff;
+  const patch = v & 0xff;
+  return `${major}.${minor}.${patch}`;
+}
 
 /**
  * Load-command names, for `describe --loads`.
@@ -199,6 +266,32 @@ export function sliceName(cputype) {
   return `cputype=0x${cputype.toString(16)}`;
 }
 
+/** `CPU_SUBTYPE_ARM64E`, masked past the capability bits in the high byte. */
+export const CPU_SUBTYPE_ARM64E = 2;
+
+/**
+ * A slice's architecture name, including the `arm64e` distinction.
+ *
+ * `arm64e` is not a different `cputype` — it is `CPU_TYPE_ARM64` with a different
+ * *subtype*, so {@link sliceName} cannot see it and every arm64e slice was
+ * reported as plain `arm64`. On iOS that is the difference between a binary that
+ * uses pointer authentication and one that does not, which is the first question
+ * anything PAC-related asks.
+ *
+ * The subtype is masked because the high byte carries capability flags
+ * (`CPU_SUBTYPE_LIB64` is 0x80000000) rather than the subtype itself. Comparing
+ * the raw value would work on the binaries seen so far and fail on one that set
+ * a flag, which is the kind of bug that only appears on someone else's machine.
+ *
+ * `sliceName` is kept as the type-only function because a fat slice's subtype
+ * may not have been read, and "arm64" is a better answer than a fabricated
+ * "arm64e".
+ */
+export function sliceArchName(cputype, cpusubtype) {
+  if (cputype === CPU_ARM64 && (cpusubtype & 0xff) === CPU_SUBTYPE_ARM64E) return 'arm64e';
+  return sliceName(cputype);
+}
+
 /**
  * Open a file and return a bounded reader with a small read cache.
  *
@@ -255,6 +348,11 @@ export function parseFat(f) {
     if (o.length < 20) break;
     slices.push({
       cputype: o.readUInt32BE(0),
+      // Read so a fat slice's architecture can be named without opening it —
+      // `arm64e` is a subtype, so the fat header's own record is enough to say
+      // it. A thin file has no fat header and takes the subtype from its own
+      // `mach_header` instead.
+      cpusubtype: o.readUInt32BE(4),
       offset: o.readUInt32BE(8),
       size: o.readUInt32BE(12),
     });
@@ -276,6 +374,12 @@ export function parseThin(f, base = 0) {
   if (!is64 && magic !== MH_MAGIC_32) return null;
 
   const cputype = hdr.readUInt32LE(4);
+  // Read for one reason: `arm64e` is `CPU_TYPE_ARM64` with a different *subtype*,
+  // not a different type, so the type alone cannot tell a pointer-authenticated
+  // slice from a plain one. On iOS that distinction is the whole question for
+  // anything PAC-related, and reporting `arm64` for an `arm64e` binary is a
+  // confident answer to a question nobody asked.
+  const cpusubtype = hdr.readUInt32LE(8);
   const filetype = hdr.readUInt32LE(12);
   const ncmds = hdr.readUInt32LE(16);
   const sizeofcmds = hdr.readUInt32LE(20);
@@ -285,6 +389,8 @@ export function parseThin(f, base = 0) {
   const loadCommands = [];
   let symtab = null;
   let uuid = null;
+  let platform = null;
+  let encryption = null;
 
   for (let i = 0; i < ncmds; i++) {
     const lc = f.read(off, 8);
@@ -299,7 +405,54 @@ export function parseThin(f, base = 0) {
     // which is the shape of a wrong answer rather than a partial one.
     loadCommands.push({ cmd, name: loadCommandName(cmd), cmdsize, offset: off - base });
 
-    if (cmd === LC_UUID_CMD) {
+    if (cmd === LC_BUILD_VERSION || VERSION_MIN_CMDS[cmd]) {
+      // Which OS this binary is *for*, and the oldest one it will run on. Read
+      // rather than interpreted: `platform`, `minos` and `sdk` are fixed-layout
+      // integers, the same class of fact as a segment's `vmaddr`.
+      //
+      // This is the single most "iOS" thing a caller can ask, and until it was
+      // read the answer was unavailable from any tool here — a Mach-O from an
+      // iPhone and one from a Mac are byte-compatible at every level this reader
+      // looked at, so nothing could tell them apart.
+      const s = f.read(off, 24);
+      if (s.length >= 24) {
+        if (cmd === LC_BUILD_VERSION) {
+          platform = {
+            platform: s.readUInt32LE(8),
+            name: platformName(s.readUInt32LE(8)),
+            minos: unpackVersion(s.readUInt32LE(12)),
+            sdk: unpackVersion(s.readUInt32LE(16)),
+            via: 'LC_BUILD_VERSION',
+          };
+        } else {
+          platform = {
+            platform: VERSION_MIN_CMDS[cmd],
+            name: platformName(VERSION_MIN_CMDS[cmd]),
+            minos: unpackVersion(s.readUInt32LE(8)),
+            sdk: unpackVersion(s.readUInt32LE(12)),
+            via: loadCommandName(cmd),
+          };
+        }
+      }
+    } else if (cmd === LC_ENCRYPTION_INFO || cmd === LC_ENCRYPTION_INFO_64) {
+      // App Store binaries ship with `__TEXT` encrypted and `cryptid` set to 1.
+      // This is the difference between a binary whose bytes can be read and one
+      // whose code is ciphertext — and a byte scanner that does not know the
+      // difference returns zero hits for both, which reads as "nothing here"
+      // rather than "nothing readable".
+      //
+      // `cryptid` is read, and the signature it belongs to is not, for the same
+      // reason the UUID is read: a five-integer struct is a fact about the file,
+      // while verifying a signature means reimplementing someone else's format.
+      const s = f.read(off, 24);
+      if (s.length >= 24) {
+        encryption = {
+          cryptoff: s.readUInt32LE(8),
+          cryptsize: s.readUInt32LE(12),
+          cryptid: s.readUInt32LE(16),
+        };
+      }
+    } else if (cmd === LC_UUID_CMD) {
       // 16 bytes at offset 8. A UUID is a value rather than an interpretation,
       // which is why it is read here and `LC_CODE_SIGNATURE` is not: reading the
       // bytes of an identifier is the same class of act as reading a section's
@@ -379,7 +532,16 @@ export function parseThin(f, base = 0) {
     }
     off += cmdsize;
   }
-  return { is64, cputype, filetype, ncmds, sizeofcmds, segments, sections, loadCommands, symtab, uuid };
+  return {
+    is64, cputype, cpusubtype, filetype,
+    // `filetypeName` is computed here so every consumer names MH_EXECUTE,
+    // MH_DYLIB and MH_BUNDLE the same way. On macOS those are usually one binary
+    // each; an iOS `.app` contains all three, and "which one is this" is the
+    // first question a bundle raises.
+    filetypeName: filetypeName(filetype),
+    ncmds, sizeofcmds, segments, sections, loadCommands, symtab, uuid,
+    platform, encryption,
+  };
 }
 
 /**
@@ -533,7 +695,7 @@ export function richestSlice(f) {
     const syms = readSymbols(f, s.offset, thin);
     const entry = {
       ...s,
-      arch: s.thin ? sliceName(thin.cputype) : sliceName(s.cputype),
+      arch: s.thin ? sliceArchName(thin.cputype, thin.cpusubtype) : sliceArchName(s.cputype, s.cpusubtype),
       thin,
       names: syms.names,
       nsyms: syms.total,
@@ -570,7 +732,7 @@ export function preferredSlice(f, prefer) {
   for (const s of slicesOf(f)) {
     const thin = parseThin(f, s.offset);
     if (!thin) continue;
-    const arch = s.thin ? sliceName(thin.cputype) : sliceName(s.cputype);
+    const arch = s.thin ? sliceArchName(thin.cputype, thin.cpusubtype) : sliceArchName(s.cputype, s.cpusubtype);
     const nsyms = thin.symtab ? thin.symtab.nsyms : 0;
     const entry = { offset: s.offset, arch, nsyms, thin, size: s.size };
     if (prefer && arch === prefer) return entry; // a named request wins outright
