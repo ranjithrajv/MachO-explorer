@@ -84,6 +84,10 @@ export const PLATFORMS = {
   9: 'watchos-simulator', 10: 'driverkit', 11: 'visionos',
   12: 'visionos-simulator',
   15: 'macos-exclavecore', 16: 'macos-exclavekit',
+  // The visionOS pair, added after the macOS one. They are separate constants
+  // (23/24, not 15/16) and a binary carrying one is still a visionOS binary —
+  // reporting `platform=23` would be a raw number where a name exists.
+  23: 'visionos-exclavecore', 24: 'visionos-exclavekit',
 };
 
 /** `MH_*` filetypes from `<mach-o/loader.h>`, by value. */
