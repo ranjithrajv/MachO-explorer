@@ -1,8 +1,8 @@
-.TH MACHO\-DESCRIBE 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH DESCRIBE 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-describe \- report what is in a Mach\-O file
+describe \- report what is in a Mach\-O file
 .SH SYNOPSIS
-.B macho\-describe
+.B describe
 .RI [ binary | bundle ]
 .RB [ \-\-json ]
 .RB [ \-b | \-\-binary
@@ -32,14 +32,14 @@ strings rather than numbers, because a 64\-bit virtual address does not survive
 a JSON number.
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 The binary to read when none is given on the command line.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle to read, tried after
-.BR MACHO_BINARY .
+.BR MACHO_EXPLORER_BINARY .
 .TP
-.B MACHO_CONFIG
+.B MACHO_EXPLORER_CONFIG
 Path to a replacement
 .IR config.json .
 .SH EXIT STATUS
@@ -55,26 +55,26 @@ The file could not be read, or is not a Mach\-O.
 .SH EXAMPLES
 .RS
 .nf
-macho\-describe /usr/local/go/bin/go
-macho\-describe "/Applications/Some App.app"
-macho\-describe \-\-json /usr/bin/ssh | jq '.slices[].arch'
+describe /usr/local/go/bin/go
+describe "/Applications/Some App.app"
+describe \-\-json /usr/bin/ssh | jq '.slices[].arch'
 .fi
 .RE
 .SH NOTES
 If every slice reports no symbol table, the binary is stripped and there are no
 names to search.
-.BR macho\-sym (1),
-.BR macho\-symlookup (1)
+.BR sym (1),
+.BR symlookup (1)
 and
-.BR macho\-findcall (1)
+.BR findcall (1)
 will then have little or nothing to work with, while
-.BR macho\-findliteral (1)
+.BR findliteral (1)
 still works because it reads bytes rather than names.
 .SH SEE ALSO
-.BR macho\-sym (1),
-.BR macho\-symlookup (1),
-.BR macho\-findcall (1),
-.BR macho\-findliteral (1),
-.BR macho\-mapliteral (1),
+.BR sym (1),
+.BR symlookup (1),
+.BR findcall (1),
+.BR findliteral (1),
+.BR mapliteral (1),
 .BR otool (1),
 .BR lipo (1)

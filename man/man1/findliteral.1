@@ -1,8 +1,8 @@
-.TH MACHO\-FINDLITERAL 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH FINDLITERAL 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-findliteral \- find a byte string inside a Mach\-O file
+findliteral \- find a byte string inside a Mach\-O file
 .SH SYNOPSIS
-.B macho\-findliteral
+.B findliteral
 .I literal
 .RI [ binary | bundle ]
 .RB [ \-\-text ]
@@ -40,14 +40,14 @@ Restrict the search to the
 section, which is much cheaper when the literal is already known to be there.
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 The binary to read when none is given on the command line.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle to read, tried after
-.BR MACHO_BINARY .
+.BR MACHO_EXPLORER_BINARY .
 .TP
-.B MACHO_CONFIG
+.B MACHO_EXPLORER_CONFIG
 Path to a replacement
 .IR config.json ,
 including the scan chunk size and overlap, which are performance knobs and never
@@ -69,8 +69,8 @@ The file could not be read.
 .SH EXAMPLES
 .RS
 .nf
-macho\-findliteral LZ4 "/Applications/Some App.app"
-macho\-findliteral \\x1f\\x8b \-\-text /usr/bin/ssh
+findliteral LZ4 "/Applications/Some App.app"
+findliteral \\x1f\\x8b \-\-text /usr/bin/ssh
 .fi
 .RE
 .SH NOTES
@@ -80,10 +80,10 @@ it was found in.
 .PP
 To go from an occurrence to the code that handles it, map the literal to its
 addresses with
-.BR macho\-mapliteral (1),
+.BR mapliteral (1),
 which also searches for pointers to those addresses.
 .SH SEE ALSO
-.BR macho\-mapliteral (1),
-.BR macho\-findcall (1),
-.BR macho\-describe (1),
+.BR mapliteral (1),
+.BR findcall (1),
+.BR describe (1),
 .BR strings (1)

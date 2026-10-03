@@ -3,10 +3,10 @@
  * Can this package actually be published, and does it say what it publishes?
  *
  * `npm publish --dry-run` is the command that looks like this check and is not
- * one. It packs the tarball, prints `+ MachO-explorer@0.1.0` and exits 0 — on a name
+ * one. It packs the tarball, prints `+ MachO-Tools@0.1.0` and exits 0 — on a name
  * npm refuses outright:
  *
- *     npm error 404 'MachO-explorer@*' is not in this registry.
+ *     npm error 404 'MachO-Tools@*' is not in this registry.
  *     npm error 404 This package name is not valid, because
  *     npm error 404 1. name can no longer contain capital letters
  *
@@ -162,9 +162,9 @@ if (!bins.length) {
 
 // The MCP server is the integration claim, and it only works if it is published
 // as a binary rather than left as a source file.
-if (bins.includes('macho-mcp') && !(pkg.exports ?? {})['./macho']) {
-  console.log('  note  macho-mcp ships as a binary but ./macho is not an export subpath');
-} else if (bins.includes('macho-mcp')) {
+if (bins.includes('mcp') && !(pkg.exports ?? {})['./macho']) {
+  console.log('  note  mcp ships as a binary but ./macho is not an export subpath');
+} else if (bins.includes('mcp')) {
   ok('the MCP server is both a published binary and a reachable export');
 }
 

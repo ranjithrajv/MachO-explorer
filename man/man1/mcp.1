@@ -1,25 +1,25 @@
-.TH MACHO\-MCP 1 "2026-10-03" "MachO-explorer 0.1.0" "User Commands"
+.TH MCP 1 "2026-10-03" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-mcp \- serve MachO\-Tools over the Model Context Protocol
+mcp \- serve MachO\-Tools over the Model Context Protocol
 .SH SYNOPSIS
-.B macho\-mcp
+.B mcp
 .SH DESCRIPTION
-.B macho\-mcp
+.B mcp
 serves this package's eight readers to a coding agent over the Model Context
 Protocol, on stdin and stdout. It is meant to be launched by an MCP client
 rather than run by hand: the process reads JSON\-RPC messages, one per line,
 and writes them back the same way.
 .PP
 The tools are
-.BR macho\-describe ,
-.BR macho\-sym ,
-.BR macho\-symlookup ,
-.BR macho\-findcall ,
-.BR macho\-findliteral ,
-.BR macho\-mapliteral ,
-.B macho\-a2o
+.BR describe ,
+.BR sym ,
+.BR symlookup ,
+.BR findcall ,
+.BR findliteral ,
+.BR mapliteral ,
+.B a2o
 and
-.BR macho\-o2a .
+.BR o2a .
 Each returns the same JSON envelope the command\-line tools emit under
 .BR \-\-json ,
 alongside a short text summary.
@@ -47,12 +47,12 @@ answers for either. An unsupported version is rejected with \-32022 and a list
 of the versions that are supported.
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 Default binary, so a client need not repeat the path on every call.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle, used when
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 is unset.
 .SH EXAMPLES
 Register with a client:
@@ -71,7 +71,7 @@ Or in a project's
 { "mcpServers": { "macho": {
     "command": "node",
     "args": ["/absolute/path/to/src/mcp.mjs"],
-    "env": { "MACHO_BINARY": "/path/to/a/binary" } } } }
+    "env": { "MACHO_EXPLORER_BINARY": "/path/to/a/binary" } } } }
 .RE
 .fi
 .SH EXIT STATUS
@@ -98,11 +98,11 @@ when the path cannot be read, or
 .B unknown\-encoding
 when it can be read and is not a Mach\-O.
 .SH SEE ALSO
-.BR macho\-describe (1),
-.BR macho\-sym (1),
-.BR macho\-symlookup (1),
-.BR macho\-findcall (1),
-.BR macho\-findliteral (1),
-.BR macho\-mapliteral (1),
-.BR macho\-a2o (1),
-.BR macho\-o2a (1)
+.BR describe (1),
+.BR sym (1),
+.BR symlookup (1),
+.BR findcall (1),
+.BR findliteral (1),
+.BR mapliteral (1),
+.BR a2o (1),
+.BR o2a (1)

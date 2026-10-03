@@ -13,8 +13,8 @@
  * ## Resolution order
  *
  *   1. an explicit argument, where the tool accepts one
- *   2. `$MACHO_BINARY` — a path to an executable
- *   3. `$MACHO_APP`   — a bundle; the executable is found inside it
+ *   2. `$MACHO_EXPLORER_BINARY` — a path to an executable
+ *   3. `$MACHO_EXPLORER_APP`   — a bundle; the executable is found inside it
  *   4. that tool's own fallback, so a bare invocation still finds something
  *
  * Step 4 is why each tool may pass its own default rather than sharing one
@@ -25,7 +25,7 @@
  * named a specific commercial product, and this package deliberately knows
  * nothing about any application — an inherited convention from a caller is not
  * a good enough reason for a published tool to carry a vendor's name in its
- * public interface. A caller that used them can set `MACHO_BINARY`/`MACHO_APP`
+ * public interface. A caller that used them can set `MACHO_EXPLORER_BINARY`/`MACHO_EXPLORER_APP`
  * instead; there is no behaviour here that depended on the old spelling.
  *
  * ## A bundle, not just a path
@@ -62,7 +62,7 @@ import { bundleLayout, BUNDLE_EXT, isBundle, fallbackTarget } from './bundle.mjs
 /**
  * The last-resort target for a bare invocation: a Mach-O that exists on every
  * machine, so the tools print something useful rather than a usage error.
- * Overridable per tool, and per run via `$MACHO_BINARY`.
+ * Overridable per tool, and per run via `$MACHO_EXPLORER_BINARY`.
  */
 /**
  * The last-resort target for a bare invocation.
@@ -144,9 +144,9 @@ export function resolveBinary({ argv, fallback } = {}) {
     if (isBundle(argv)) return executableIn(argv) || null;
     return argv;
   }
-  const binary = process.env.MACHO_BINARY;
+  const binary = process.env.MACHO_EXPLORER_BINARY;
   if (binary) return binary;
-  const app = process.env.MACHO_APP;
+  const app = process.env.MACHO_EXPLORER_APP;
   if (app) return executableIn(app) || null;
   return resolveTarget(fallback) || resolveTarget(FALLBACK_TARGET);
 }
@@ -204,20 +204,20 @@ export function requireBinary(opts = {}) {
   if (bin) return bin;
   const where = [
     opts.argv ? `argument: ${opts.argv}` : null,
-    process.env.MACHO_BINARY
-      ? `MACHO_BINARY=${process.env.MACHO_BINARY}` : null,
-    process.env.MACHO_APP
-      ? `MACHO_APP=${process.env.MACHO_APP}` : null,
+    process.env.MACHO_EXPLORER_BINARY
+      ? `MACHO_EXPLORER_BINARY=${process.env.MACHO_EXPLORER_BINARY}` : null,
+    process.env.MACHO_EXPLORER_APP
+      ? `MACHO_EXPLORER_APP=${process.env.MACHO_EXPLORER_APP}` : null,
   ].filter(Boolean).join('\n  ');
   console.error(
     'no binary found.\n\n' +
       (where ? `  tried:\n  ${where}\n\n` : '') +
       '  pass a path:      node <tool>.mjs "/path/to/Some Binary' + BUNDLE_EXT() + '"\n' +
-      '  or set:           MACHO_BINARY=/path/to/executable\n' +
-      '  or set:           MACHO_APP="/path/to/Some App' + BUNDLE_EXT() + '"\n' +
+      '  or set:           MACHO_EXPLORER_BINARY=/path/to/executable\n' +
+      '  or set:           MACHO_EXPLORER_APP="/path/to/Some App' + BUNDLE_EXT() + '"\n' +
       (process.platform === 'win32'
         ? '  note: there is no system Mach-O to fall back to on Windows, so a bare\n' +
-          '        invocation has no target. Pass a path or set MACHO_BINARY.\n'
+          '        invocation has no target. Pass a path or set MACHO_EXPLORER_BINARY.\n'
         : ''),
   );
   process.exit(2);

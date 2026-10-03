@@ -432,7 +432,7 @@ function symbolsFor(f, arch) {
 /**
  * Search a symbol table by substring or regex, with one coherent set of rules.
  *
- * This is the primitive behind the `macho-sym` CLI, which replaced `symgrep`
+ * This is the primitive behind the `sym` CLI, which replaced `symgrep`
  * and `symfind` — two tools that answered the same question with different
  * defaults. `symgrep` matched regexes, defaulted to defined symbols and returned
  * one row per table entry; `symfind` matched substrings, included imports and

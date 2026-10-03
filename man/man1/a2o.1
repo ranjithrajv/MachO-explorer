@@ -1,8 +1,8 @@
-.TH MACHO\-A2O 1 "October 3, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH A2O 1 "October 3, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-a2o \- map a virtual address to a file offset
+a2o \- map a virtual address to a file offset
 .SH SYNOPSIS
-.B macho\-a2o
+.B a2o
 .I hex-vaddr
 .RI [ hex-vaddr ...]
 .RB [ \-\-json ]
@@ -80,14 +80,14 @@ strings: a 64\-bit virtual address does not survive a JSON number.
 Print usage and exit 0.
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 The binary to read when none is given.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle to read, tried after
-.BR MACHO_BINARY .
+.BR MACHO_EXPLORER_BINARY .
 .TP
-.B MACHO_CONFIG
+.B MACHO_EXPLORER_CONFIG
 Path to a replacement
 .IR config.json .
 .SH EXIT STATUS
@@ -110,8 +110,8 @@ The file could not be read or parsed.
 .PP
 .RS
 .nf
-macho\-a2o 0x100001000 \-b /usr/local/go/bin/go
-macho\-a2o \-\-json 0x100001000 \-b /usr/local/go/bin/go | jq '.data.queries[0].offset'
+a2o 0x100001000 \-b /usr/local/go/bin/go
+a2o \-\-json 0x100001000 \-b /usr/local/go/bin/go | jq '.data.queries[0].offset'
 .fi
 .RE
 .PP
@@ -119,7 +119,7 @@ Read six bytes from the file at an address reported by another tool:
 .PP
 .RS
 .nf
-macho\-a2o \-\-json 0x100085c30 \-b /usr/local/go/bin/go |
+a2o \-\-json 0x100085c30 \-b /usr/local/go/bin/go |
   jq -r '.data.queries[0].absoluteOffset' |
   xargs -I{} dd if=/usr/local/go/bin/go bs=1 skip={} count=6 2>/dev/null
 .fi
@@ -128,12 +128,12 @@ macho\-a2o \-\-json 0x100085c30 \-b /usr/local/go/bin/go |
 Every positional argument is an address, so the binary comes from
 .B \-b
 rather than from the last positional. This is the same rule
-.BR macho\-symlookup (1)
+.BR symlookup (1)
 follows, and for the same reason: a path guessed from whether it looks like a
 query turns a typo into a confident wrong answer.
 .SH SEE ALSO
-.BR macho\-o2a (1),
-.BR macho\-symlookup (1),
-.BR macho\-describe (1),
+.BR o2a (1),
+.BR symlookup (1),
+.BR describe (1),
 .BR otool (1),
 .BR nm (1)

@@ -328,8 +328,8 @@ A new tool is small and the shape is fixed:
 7. **A negative answer is a value, not an exception.** No match is
    `{ matches: [] }` or `{ function: null }`. Genuine I/O failures still throw,
    so "no result" and "could not look" stay distinguishable.
-8. **A man page and both completions.** `man/man1/macho-<name>.1`,
-   `completions/macho.bash`, and `completions/_macho-<name>`; plus the `bin`,
+8. **A man page and both completions.** `man/man1/<name>.1`,
+   `completions/macho-explorer.bash`, and `completions/_<name>`; plus the `bin`,
    `man` and `files` entries in `package.json`.
 9. **A README row.** The tools table, the flags table if you added a flag, and
    any claim about the new tool's accuracy.

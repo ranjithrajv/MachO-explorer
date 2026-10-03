@@ -2,11 +2,11 @@
   "$comment": [
     "Shipped defaults for macho-explorer. Every value here is a site-specific fact",
     "rather than a property of the Mach-O format, which is why it is data.",
-    "Override wholesale by setting MACHO_CONFIG=/path/to/your.json."
+    "Override wholesale by setting MACHO_EXPLORER_CONFIG=/path/to/your.json."
   ],
 
   "$comment.override": {
-    "explicit": "MACHO_CONFIG=/path/to/your.json",
+    "explicit": "MACHO_EXPLORER_CONFIG=/path/to/your.json",
     "noRepoLocal": "there is deliberately no cwd walk-up: these tools are run as CLIs from anywhere, and a config found by accident in an unrelated directory is worse than no config"
   },
 
@@ -17,7 +17,7 @@
   },
 
   "fallback": {
-    "$comment": "last-resort target for a bare invocation: a Mach-O that exists on every machine this runs on, so a tool prints something useful rather than a usage error. null on platforms with no such guarantee. Overridable per run with MACHO_BINARY.",
+    "$comment": "last-resort target for a bare invocation: a Mach-O that exists on every machine this runs on, so a tool prints something useful rather than a usage error. null on platforms with no such guarantee. Overridable per run with MACHO_EXPLORER_BINARY.",
     "unix": "/bin/ls",
     "win32": null
   },

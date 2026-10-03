@@ -1,17 +1,17 @@
-#compdef macho-o2a
+#compdef a2o
 #
-# zsh completion for macho-o2a. Install as _macho-o2a in a directory
+# zsh completion for a2o. Install as _a2o in a directory
 # on your $fpath.
 #
 # MachO-explorer 0.1.0.
 
-_macho_o2a() {
+_macho_a2o() {
     _arguments -s -S \
         '--arch=[prefer an architecture]:architecture:(x86_64 arm64)' \
         '(-b --binary)'{-b,--binary}'[the binary or bundle to read]:Mach-O file or bundle:_files' \
         '--json[write one JSON object to stdout]' \
         '(-h --help)'{-h,--help}'[show usage]' \
-        '*:file offset (decimal, or hex with 0x): '
+        '*:hexadecimal address (with 0x): '
 }
 
-_macho_o2a "$@"
+_macho_a2o "$@"

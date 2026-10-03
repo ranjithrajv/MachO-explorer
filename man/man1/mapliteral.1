@@ -1,8 +1,8 @@
-.TH MACHO\-MAPLITERAL 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MAPLITERAL 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-mapliteral \- map a byte literal to addresses, then find pointers to them
+mapliteral \- map a byte literal to addresses, then find pointers to them
 .SH SYNOPSIS
-.B macho\-mapliteral
+.B mapliteral
 .I literal
 .RI [ binary | bundle ]
 .RI [ file-offset ...]
@@ -36,17 +36,17 @@ strings rather than numbers.
 One or more absolute file offsets to map instead of searching for the literal.
 Use this for a magic that is assembled at runtime and therefore never appears
 whole in the file. Offsets are absolute, as reported by
-.BR macho\-findliteral (1).
+.BR findliteral (1).
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 The binary to read when none is given on the command line.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle to read, tried after
-.BR MACHO_BINARY .
+.BR MACHO_EXPLORER_BINARY .
 .TP
-.B MACHO_CONFIG
+.B MACHO_EXPLORER_CONFIG
 Path to a replacement
 .IR config.json .
 .SH EXIT STATUS
@@ -65,8 +65,8 @@ The file could not be read.
 .SH EXAMPLES
 .RS
 .nf
-macho\-mapliteral LZ4 "/Applications/Some App.app"
-macho\-mapliteral \\x1f\\x8b \-\-json /usr/bin/ssh | jq '.data.locations[].pointers'
+mapliteral LZ4 "/Applications/Some App.app"
+mapliteral \\x1f\\x8b \-\-json /usr/bin/ssh | jq '.data.locations[].pointers'
 .fi
 .RE
 .PP
@@ -74,10 +74,10 @@ Mapping offsets you already have:
 .PP
 .RS
 .nf
-macho\-mapliteral irrelevant 0x3f8a0 /usr/bin/ssh
+mapliteral irrelevant 0x3f8a0 /usr/bin/ssh
 .fi
 .RE
 .SH SEE ALSO
-.BR macho\-findliteral (1),
-.BR macho\-findcall (1),
-.BR macho\-symlookup (1)
+.BR findliteral (1),
+.BR findcall (1),
+.BR symlookup (1)

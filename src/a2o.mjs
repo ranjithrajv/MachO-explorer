@@ -44,7 +44,7 @@ const HELP = [
   'usage: node src/a2o.mjs <hex-vaddr> [<hex-vaddr> ...] [--json] [--arch=<name>] [-b <binary>]',
   '',
   '  every positional is an address, so the binary comes from -b/--binary,',
-  '  $MACHO_BINARY or $MACHO_APP.',
+  '  $MACHO_EXPLORER_BINARY or $MACHO_EXPLORER_APP.',
   '',
   'options:',
   '  --arch=<name>      read one architecture (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',

@@ -1,17 +1,17 @@
-#compdef macho-a2o
+#compdef describe
 #
-# zsh completion for macho-a2o. Install as _macho-a2o in a directory
+# zsh completion for describe. Install as _describe in a directory
 # on your $fpath.
 #
 # MachO-explorer 0.1.0.
 
-_macho_a2o() {
+_macho_describe() {
     _arguments -s -S \
-        '--arch=[prefer an architecture]:architecture:(x86_64 arm64)' \
         '(-b --binary)'{-b,--binary}'[the binary or bundle to read]:Mach-O file or bundle:_files' \
         '--json[write one JSON object to stdout]' \
         '(-h --help)'{-h,--help}'[show usage]' \
-        '*:hexadecimal address (with 0x): '
+        '1:Mach-O file or bundle:_files' \
+        '*:: :->args'
 }
 
-_macho_a2o "$@"
+_macho_describe "$@"

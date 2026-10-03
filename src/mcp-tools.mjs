@@ -37,10 +37,11 @@
  *
  * ## Naming
  *
- * Prefixed with `macho-` even though the server already scopes them, because
- * tool names are only unique within a server and every real client aggregates
- * several. `describe` and `search` are the two most collision-prone words in
- * this space; the spec's own guidance is to prefix.
+ * Unprefixed, matching the CLI verbs one-for-one (`describe`, `sym`, ...). The
+ * server already scopes them, but the spec advises a prefix because a client
+ * aggregating several servers can collide on a word like `describe`. Keeping one
+ * vocabulary across the shell and an agent session was judged the stronger
+ * property here.
  */
 
 /**
@@ -108,7 +109,7 @@ const ADDRESS = {
 const OFFSET = {
   type: 'integer',
   minimum: 0,
-  description: 'An absolute file offset, exactly as reported by macho-findliteral.',
+  description: 'An absolute file offset, exactly as reported by findliteral.',
 };
 
 const BINARY = {
@@ -256,19 +257,19 @@ export function parseAddress(v, key = 'address') {
 /**
  * The binary a call refers to, or a reason code saying why there isn't one.
  *
- * `$MACHO_BINARY` is honoured so an MCP client can be configured once rather
+ * `$MACHO_EXPLORER_BINARY` is honoured so an MCP client can be configured once rather
  * than every call repeating the path. The CLI's documented fallback binary is
- * deliberately *not* used: a person running `macho-describe` with no argument
+ * deliberately *not* used: a person running `describe` with no argument
  * getting `/bin/ls` is a convenience, and an agent being handed `/bin/ls`
  * because it forgot the argument is a wrong answer with a real-looking shape.
  */
 function binaryOf(args) {
-  const b = args.binary || process.env.MACHO_BINARY || process.env.MACHO_APP;
+  const b = args.binary || process.env.MACHO_EXPLORER_BINARY || process.env.MACHO_EXPLORER_APP;
   if (!b) {
     return {
       error: {
         errors: ['bad-arguments'],
-        messages: ['no binary given. Pass `binary`: an absolute path to a Mach-O file or an application bundle. Set $MACHO_BINARY or $MACHO_APP to avoid repeating it.'],
+        messages: ['no binary given. Pass `binary`: an absolute path to a Mach-O file or an application bundle. Set $MACHO_EXPLORER_BINARY or $MACHO_EXPLORER_APP to avoid repeating it.'],
       },
     };
   }
@@ -326,7 +327,7 @@ function lines(tool, env) {
   }
 
   switch (tool) {
-    case 'macho-describe':
+    case 'describe':
       L.push(`${env.binary} — ${(d.size / 1048576).toFixed(1)} MB, ${d.fat ? 'universal' : 'thin'}, ${d.slices.length} slice(s)`);
       for (const s of d.slices) {
         L.push(
@@ -375,7 +376,7 @@ function lines(tool, env) {
         }
       }
       if (d.slices.every((s) => s.readable && s.defined === 0)) {
-        L.push('No symbols in any slice (stripped, or a dyld-cache stub). macho-findcall and macho-findliteral still work — they read bytes, not names.');
+        L.push('No symbols in any slice (stripped, or a dyld-cache stub). findcall and findliteral still work — they read bytes, not names.');
       }
       // Abnormalities lead the block when present, because the most likely reason
       // an agent is reading `describe` on an unfamiliar file is that something
@@ -392,7 +393,7 @@ function lines(tool, env) {
       }
       break;
 
-    case 'macho-sym':
+    case 'sym':
       L.push(
         `${d.mode === 'regex' ? `regex /${d.pattern}/${d.flags || ''}` : `substring "${d.pattern}"`}: ` +
           `${n(d.count)} match(es), ${n(d.uniqueCount)} unique, in ${d.arch}`,
@@ -403,7 +404,7 @@ function lines(tool, env) {
       if (d.count === 0) L.push('  no match. A stripped binary has no names to match; findcall and findliteral read bytes instead and are unaffected.');
       break;
 
-    case 'macho-symlookup':
+    case 'symlookup':
       for (const q of d.queries) {
         L.push(
           q.function
@@ -416,7 +417,7 @@ function lines(tool, env) {
       }
       break;
 
-    case 'macho-findcall':
+    case 'findcall':
       if (d.listing) {
         L.push(`${n(d.total)} distinct direct call target(s) from ${n(d.scanned)} bytes of code in ${d.slices.map((s) => s.arch).join(', ')} (${d.slices[0]?.encoding || 'unknown encoding'})`);
         for (const t of d.targets.slice(0, 20)) L.push(`  ${hex(t.dest)}  ${n(t.sites)} site(s)`);
@@ -430,7 +431,7 @@ function lines(tool, env) {
       }
       break;
 
-    case 'macho-findliteral':
+    case 'findliteral':
       if (d.strings) {
         L.push(`${n(d.count)} string(s) of ${d.min}+ bytes in ${d.sections.join(', ')}  [${n(d.scanned)} bytes scanned]`);
         for (const s of d.strings.slice(0, 25)) L.push(`  ${hex(s.vaddr)}  ${s.section.padEnd(28)} ${JSON.stringify(s.text.slice(0, 90))}`);
@@ -443,10 +444,10 @@ function lines(tool, env) {
         L.push(`    …${JSON.stringify(h.context.pre)}|${JSON.stringify(h.context.hit)}…`);
       }
       if (d.hits.length > 20) L.push(`  ...and ${n(d.hits.length - 20)} more, all in structuredContent`);
-      if (d.count === 0) L.push('  no contiguous match. A value assembled at runtime from parts never appears as one literal — try macho-mapliteral with explicit offsets, or macho-findcall on the handler.');
+      if (d.count === 0) L.push('  no contiguous match. A value assembled at runtime from parts never appears as one literal — try mapliteral with explicit offsets, or findcall on the handler.');
       break;
 
-    case 'macho-mapliteral':
+    case 'mapliteral':
       L.push(`slice ${d.arch} at file offset ${hex(d.sliceOffset)}${d.explicit ? ' (offsets given explicitly)' : `, ${d.locations.length} literal location(s) in __TEXT`}`);
       for (const m of d.locations) {
         L.push(`  file ${m.off} → ${hex(m.vaddr)}  ${m.section}`);
@@ -461,7 +462,7 @@ function lines(tool, env) {
       else if (d.locations.every((m) => m.pointerCount === 0)) L.push('  no pointers to any of these addresses: nothing dispatches on this magic by reference, so it is matched inline.');
       break;
 
-    case 'macho-a2o':
+    case 'a2o':
       L.push(`${d.resolved} of ${d.asked} address(es) reached a byte  (${d.zerofill} zero-fill, ${d.unmapped} unmapped)`);
       for (const q of d.queries) {
         if (q.ambiguous) {
@@ -482,7 +483,7 @@ function lines(tool, env) {
       L.push('  offset is slice-relative; absoluteOffset is the position in the file');
       break;
 
-    case 'macho-o2a':
+    case 'o2a':
       L.push(`${d.resolved} of ${d.asked} offset(s) resolved to an address`);
       for (const q of d.queries) {
         if (q.ambiguous) {
@@ -524,7 +525,7 @@ function lines(tool, env) {
  */
 export const TOOLS = [
   {
-    name: 'macho-describe',
+    name: 'describe',
     title: 'Describe a Mach-O binary',
     description:
       'Every slice: architecture, file extent, whether it is thin or universal, symbol counts, where __TEXT starts, ' +
@@ -546,7 +547,7 @@ export const TOOLS = [
     async run(args) {
       const b = binaryOf(args);
       if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
-      return guard('macho-describe', b.binary, async () => {
+      return guard('describe', b.binary, async () => {
         const { describe } = await import('./api.mjs');
         let data = describe(b.binary);
         const notes = [];
@@ -571,7 +572,7 @@ export const TOOLS = [
   },
 
   {
-    name: 'macho-sym',
+    name: 'sym',
     title: 'Search a Mach-O symbol table',
     description:
       'Search defined symbols by substring, or by regular expression with regex:true. Returns names with their addresses.\n\n' +
@@ -595,7 +596,7 @@ export const TOOLS = [
     async run(args) {
       const b = binaryOf(args);
       if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
-      return guard('macho-sym', b.binary, async () => {
+      return guard('sym', b.binary, async () => {
         const { searchSymbols } = await import('./api.mjs');
         const r = searchSymbols(b.binary, args.pattern, {
           mode: args.regex ? 'regex' : 'substring',
@@ -616,7 +617,7 @@ export const TOOLS = [
   },
 
   {
-    name: 'macho-symlookup',
+    name: 'symlookup',
     title: 'Which function contains this address?',
     description:
       'Resolve one or more virtual addresses to the function that contains them, with that function\'s bounds and its ' +
@@ -633,7 +634,7 @@ export const TOOLS = [
     async run(args) {
       const b = binaryOf(args);
       if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
-      return guard('macho-symlookup', b.binary, async () => {
+      return guard('symlookup', b.binary, async () => {
         const { lookupAddress } = await import('./api.mjs');
         const queries = args.addresses.map((a) => lookupAddress(b.binary, parseAddress(a), { arch: args.arch }));
         return { data: { queries } };
@@ -642,7 +643,7 @@ export const TOOLS = [
   },
 
   {
-    name: 'macho-findcall',
+    name: 'findcall',
     title: 'Find direct calls to an address, or list what a binary calls',
     description:
       'Two modes. With `target`: the direct call/jmp sites that target one address — the callers, with their addresses. ' +
@@ -674,7 +675,7 @@ export const TOOLS = [
           { code: 'bad-arguments' },
         );
       }
-      return guard('macho-findcall', b.binary, async () => {
+      return guard('findcall', b.binary, async () => {
         const { findCalls, listCallTargets } = await import('./api.mjs');
         const opts = { arch: args.arch, includeData: args.include_data === true, max: args.max || 0 };
         if (args.list_targets) {
@@ -712,7 +713,7 @@ export const TOOLS = [
   },
 
   {
-    name: 'macho-findliteral',
+    name: 'findliteral',
     title: 'Find a byte literal, or list the strings already in a file',
     description:
       'Two modes. With `literal`: search for a byte sequence anywhere in the binary — inside code, inside data, in any ' +
@@ -759,7 +760,7 @@ export const TOOLS = [
           { code: 'bad-arguments' },
         );
       }
-      return guard('macho-findliteral', b.binary, async () => {
+      return guard('findliteral', b.binary, async () => {
         const { findLiteral, findStrings } = await import('./api.mjs');
         if (args.strings) {
           const r = findStrings(b.binary, {
@@ -803,13 +804,13 @@ export const TOOLS = [
   },
 
   {
-    name: 'macho-mapliteral',
+    name: 'mapliteral',
     title: 'Map a literal to addresses, then find what points at it',
     description:
       'The tool that answers "where is this format magic, which addresses does it map to, and what code handles it". ' +
       'Finds each occurrence of the literal, maps it to the virtual address it loads at, then finds the pointers in the ' +
       'binary that reference those addresses — which is the set of sites worth disassembling.\n\n' +
-      'Pass `offsets` to skip the first pass and map specific file offsets, as reported by macho-findliteral.\n\n' +
+      'Pass `offsets` to skip the first pass and map specific file offsets, as reported by findliteral.\n\n' +
       'An empty pointer list means nothing references that literal by address, which usually means it is matched inline ' +
       'or built at runtime rather than through a table.',
     inputSchema: obj(
@@ -826,7 +827,7 @@ export const TOOLS = [
     async run(args) {
       const b = binaryOf(args);
       if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
-      return guard('macho-mapliteral', b.binary, async () => {
+      return guard('mapliteral', b.binary, async () => {
         const { mapLiteral } = await import('./api.mjs');
         const r = mapLiteral(b.binary, args.literal, {
           arch: args.arch,
@@ -851,7 +852,7 @@ export const TOOLS = [
   },
 
   {
-    name: 'macho-a2o',
+    name: 'a2o',
     title: 'Map a virtual address to a file offset',
     description:
       'Which byte of the file does this virtual address correspond to. Reports both the slice-relative offset ' +
@@ -879,7 +880,7 @@ export const TOOLS = [
     async run(args) {
       const b = binaryOf(args);
       if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
-      return guard('macho-a2o', b.binary, async () => {
+      return guard('a2o', b.binary, async () => {
         const { addressToOffset } = await import('./api.mjs');
         const queries = args.addresses.map((a) => addressToOffset(b.binary, parseAddress(a), { arch: args.arch }));
         return {
@@ -904,10 +905,10 @@ export const TOOLS = [
   },
 
   {
-    name: 'macho-o2a',
+    name: 'o2a',
     title: 'Map a file offset to a virtual address',
     description:
-      'Which virtual address does this byte of the file have. The inverse of macho-a2o.\n\n' +
+      'Which virtual address does this byte of the file have. The inverse of a2o.\n\n' +
       'Offsets are absolute positions in the file. Every slice is examined, because the same offset is a different ' +
       'address in each — the section table records offsets relative to the slice, so in /bin/ls the x86_64 slice at ' +
       '0x4000 and the arm64 slice at 0x10000 give different answers for the same relative offset.\n\n' +
@@ -920,7 +921,7 @@ export const TOOLS = [
           type: 'array',
           items: OFFSET,
           minItems: 1,
-          description: 'Absolute file offsets, as reported by macho-findliteral or macho-a2o.',
+          description: 'Absolute file offsets, as reported by findliteral or a2o.',
         },
         arch: ARCH,
       },
@@ -930,7 +931,7 @@ export const TOOLS = [
     async run(args) {
       const b = binaryOf(args);
       if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
-      return guard('macho-o2a', b.binary, async () => {
+      return guard('o2a', b.binary, async () => {
         const { offsetToAddress } = await import('./api.mjs');
         const r = offsetToAddress(b.binary, args.offsets.map((o) => BigInt(o)), { arch: args.arch });
         return {
@@ -1003,7 +1004,7 @@ function failed(name, args, message, code) {
   const env = {
     tool: name,
     ok: false,
-    binary: (args && args.binary) || process.env.MACHO_BINARY || process.env.MACHO_APP || null,
+    binary: (args && args.binary) || process.env.MACHO_EXPLORER_BINARY || process.env.MACHO_EXPLORER_APP || null,
     errors: [code],
     messages: [message],
     data: null,
@@ -1022,12 +1023,12 @@ function failed(name, args, message, code) {
 export const INSTRUCTIONS = [
   'Mach-O introspection: fat headers, symbol tables, sections, and __TEXT. Facts about the file format and the bytes only — this server knows nothing about any application.',
   '',
-  'The usual loop: macho-describe to see the slices and whether symbols exist, macho-sym to find a name, macho-symlookup to turn an address into a function, macho-findcall for its callers, and macho-findliteral / macho-mapliteral to work out which code handles a file format.',
+  'The usual loop: describe to see the slices and whether symbols exist, sym to find a name, symlookup to turn an address into a function, findcall for its callers, and findliteral / mapliteral to work out which code handles a file format.',
   '',
   'Three things that will otherwise waste your time:',
   '• Addresses are hex STRINGS ("0x100085c30"), never JSON numbers — a 64-bit address does not survive a number.',
   '• An empty result is an answer, not a failure. ok:true with an empty list means the question was answered. Do not retry it.',
-  '• macho-findcall sees DIRECT calls only. Indirect, register and PLT calls do not encode their target and will not appear, so an empty result does not mean nothing calls the target.',
+  '• findcall sees DIRECT calls only. Indirect, register and PLT calls do not encode their target and will not appear, so an empty result does not mean nothing calls the target.',
   '',
   'No disassembly, no load-command dump, no code signature, no Objective-C or Swift metadata, no dSYM/DWARF, and not ELF or PE. When you need to know what the code DOES rather than where it is, hand the addresses to a disassembler — the output here is a shortlist of sites worth opening, not a decoded answer.',
 ].join('\n');

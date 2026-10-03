@@ -2040,7 +2040,7 @@ console.log('\napi.mjs (importable, no subprocess):');
 for (const b of binaries) {
   const label = (b.generated ? b.stem : b.path.split('/').pop());
   console.log(`\n${label}  (${b.kind}${b.generated ? ', fixture' : ''}, ${count(b.facts.defined)} defined syms):`);
-  const env = { MACHO_BINARY: b.path };
+  const env = { MACHO_EXPLORER_BINARY: b.path };
 
   // 1. The negative path the import bug lived on: a low address must not be
   //    attributed to a function, and above all not to one at 0x0.
@@ -2125,7 +2125,7 @@ for (const b of binaries) {
       const enc = ((list.stderr + list.stdout).match(/\[(x86 rel32|arm64 BL)\]/) || [])[1];
       // Cross-check: the symbol reader must agree this is a real function, and
       // asking for its callers must return the count --list reported.
-      const sym = run('symlookup.mjs', ['0x' + top], { env: { MACHO_BINARY: b.path } });
+      const sym = run('symlookup.mjs', ['0x' + top], { env: { MACHO_EXPLORER_BINARY: b.path } });
       const fn = (sym.stdout.match(/function\s*:\s*(\S+)/) || [])[1];
       const back = run('findcall.mjs', ['0x' + top, b.path], { timeout: 180000 });
       const backN = Number((back.stdout.match(/^(\d+) direct call/m) || [])[1] || 0);
@@ -2526,7 +2526,7 @@ for (const b of binaries) {
   // pass, which is why the check prints the file count it scanned.
   const TEXT_EXT = new Set(['.mjs', '.js', '.ts', '.mts', '.cts', '.json', '.md', '.yml', '.1', '.bash', '.sh']);
 
-  // Extensionless files count as text: the zsh completions are named `_macho-*`
+  // Extensionless files count as text: the zsh completions are named `_<command>`
   // with no extension at all, and they are real and shipped.
   const isTextFile = (p) => {
     const ext = path.extname(p);

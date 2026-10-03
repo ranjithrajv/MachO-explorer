@@ -31,7 +31,7 @@
 #          mattering.
 #
 # The last two exist because `npm publish --dry-run` cannot do their job. It
-# packed this package, printed `+ MachO-explorer@0.1.0` and exited 0 on a name npm
+# packed this package, printed `+ MachO-Tools@0.1.0` and exited 0 on a name npm
 # refuses, because a dry run does not ask the registry whether a name is
 # acceptable — so the command that looks like the check reported success on the
 # one thing that was broken.

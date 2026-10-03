@@ -118,20 +118,24 @@ for (const name of SKILLS) {
 
   /* ---- 2. every command it names must exist ----------------------- */
 
-  // Scoped to the skill directory and readme, so this also covers the docs.
+  // Commands are bare verbs now. A leftover `macho-<verb>` is the failure worth
+  // catching, because it names the old prefixed form that no longer exists.
   const referenced = new Set();
+  const stale = new Set();
   for (const rel of ['SKILL.md', 'README.md']) {
     const p = path.join(SKILL_DIR, name, rel);
     if (!fs.existsSync(p)) continue;
     const body = fs.readFileSync(p, 'utf8');
     for (const m of body.matchAll(/\bmacho-[a-z0-9]+/g)) {
-      if (!/macho-explorer/.test(m[0])) referenced.add(m[0]);
+      if (m[0] !== 'macho-explorer') stale.add(m[0]);
+    }
+    for (const b of BINS) {
+      if (new RegExp(`(^|[^-\\w])${b}([^-\\w]|$)`).test(body)) referenced.add(b);
     }
   }
-  const unknown = [...referenced].filter((c) => !BINS.includes(c));
-  check(unknown.length === 0, `${short}: every command it names is a real binary`, unknown.join(', '));
+  check(stale.size === 0, `${short}: it names no stale macho-* commands`, [...stale].join(', '));
 
-  const unmentioned = BINS.filter((b) => !referenced.has(b) && b !== 'macho-mcp');
+  const unmentioned = BINS.filter((b) => !referenced.has(b) && b !== 'mcp');
   check(
     unmentioned.length === 0,
     `${short}: every binary in package.json is documented in the skill`,
@@ -228,7 +232,7 @@ for (const name of SKILLS) {
   // "An empty result is an answer, not a failure" — the other claim that, if
   // wrong, makes an agent loop. Checked by running it.
   const { callTool } = await import('../src/mcp-tools.mjs');
-  const noMatch = await callTool('macho-sym', {
+  const noMatch = await callTool('sym', {
     binary: path.join(FIXTURES, 'populated.macho'),
     pattern: 'zzz-definitely-not-a-symbol-zzz',
   });
@@ -240,7 +244,7 @@ for (const name of SKILLS) {
 
   // "Direct calls only" — checked by confirming the reader says so rather than
   // claiming a capability it does not have.
-  const noCallers = await callTool('macho-findcall', {
+  const noCallers = await callTool('findcall', {
     binary: path.join(FIXTURES, 'populated.macho'),
     target: '0x100000000',
   });
@@ -310,8 +314,8 @@ check(
   JSON.stringify(pkg.files),
 );
 check(
-  !!pkg.bin?.['macho-mcp'],
-  'macho-mcp is a published binary, so the server is installable',
+  !!pkg.bin?.['mcp'],
+  'mcp is a published binary, so the server is installable',
   JSON.stringify(Object.keys(pkg.bin || {})),
 );
 check(

@@ -73,7 +73,7 @@ rejectUnknownFlags(
 
 // `--strings` is a mode rather than a tool of its own: same file, same slice
 // logic, same envelope, and the two share the code that maps an offset to a
-// section. A separate `macho-strings` binary would have been a seventh
+// section. A separate `strings` binary would have been a seventh
 // executable for a question this one already opens the file to answer.
 const listStrings = flags.has('strings');
 

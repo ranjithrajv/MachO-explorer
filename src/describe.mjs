@@ -38,7 +38,7 @@ const HELP = [
   '                          [--sections] [--segments] [--loads] [-b <binary>]',
   '',
   '  what is in this binary: every slice, its architecture, extent, symbol',
-  '  counts and where __TEXT starts. Defaults to $MACHO_BINARY, then $MACHO_APP,',
+  '  counts and where __TEXT starts. Defaults to $MACHO_EXPLORER_BINARY, then $MACHO_EXPLORER_APP,',
   `  then ${FALLBACK_TARGET}`,
   '',
   'options:',

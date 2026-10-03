@@ -1,19 +1,17 @@
 # bash completion for MachO-explorer.                           -*- shell-script -*-
 #
-# Installs completion for all nine binaries from this one file:
+# Registers completion for all ten commands from this one file:
 #
-#     . /path/to/completions/macho.bash          # from your .bashrc
+#     . /path/to/completions/macho-explorer.bash  # from your .bashrc
 #
-# A package-manager install should instead drop this at
-# $PREFIX/share/bash-completion/completions/macho, which bash loads
-# automatically; the `macho` name is chosen so the file is found by that
-# convention rather than needing to know all eight command names.
+# There is no common prefix to name a per-command file after — the commands
+# are bare verbs (`describe`, `sym`, ...) — so this file registers completion
+# for each of them at source time rather than being discovered by name.
 #
 # Every tool here is dependency-free and runs on Linux and Windows as well as
 # macOS, so completion never assumes `otool` or `lipo` exist.
 
-# Per-tool option sets, keyed by the command name *without* the `macho-` prefix,
-# which is what `_macho_complete` strips before looking one up.
+# Per-tool option sets, keyed by the command name exactly as typed.
 _macho_opts_for() {
     case "$1" in
         describe)     echo "--json -h --help -b --binary" ;;
@@ -47,16 +45,16 @@ _macho_arches='x86_64 arm64'
 
 _macho_complete() {
     local cmd="${COMP_WORDS[0]##*/}"
-    local name="${cmd#macho-}"
+    local name="$cmd"
     local cur prev opts
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    # Keyed by the name with `macho-` removed: `_macho_opts_for` lists every
-    # command name, and passing the prefixed form matches no case and silently
-    # completes nothing — a completion that always returns empty looks identical
-    # to one that has no candidates, which is why this is worth a test.
+    # `_macho_opts_for` lists every command name; passing one it does not know
+    # matches no case and silently completes nothing — a completion that always
+    # returns empty looks identical to one that has no candidates, which is why
+    # this is worth a test.
     opts="$(_macho_opts_for "$name")"
 
     # A value-taking flag is followed by its value, not by another option.
@@ -92,14 +90,14 @@ _macho_complete() {
     _macho_targets
 }
 
-for _macho_cmd in macho-describe macho-sym macho-symlookup macho-findcall \
-                  macho-findliteral macho-mapliteral macho-a2o macho-o2a \
-                  macho-disasm; do
+for _macho_cmd in describe sym symlookup findcall \
+                  findliteral mapliteral a2o o2a \
+                  disasm; do
     complete -F _macho_complete "$_macho_cmd"
 done
 unset _macho_cmd
 
-# macho-mcp gets its own function rather than the shared one: it takes no
+# mcp gets its own function rather than the shared one: it takes no
 # arguments, and reusing `_macho_complete` would offer it a Mach-O path to
 # read, which is not a thing it can do. What is useful is saying so, since the
 # usual reason to type it by hand is a client failing to launch it.
@@ -112,7 +110,7 @@ _macho_mcp_complete() {
     fi
     return 0
 }
-complete -F _macho_mcp_complete macho-mcp
+complete -F _macho_mcp_complete mcp
 
 # Sourced rather than executed: `complete` and `compgen` only exist inside an
 # interactive bash, and running this file as a script would exit on the first of

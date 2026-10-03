@@ -1,4 +1,4 @@
-# Competitive landscape — `MachO-Tools`
+# Competitive landscape — `MachO-explorer`
 
 Researched 2026-10-03. Every number is from the GitHub REST API or the npm
 registry on that date; every behavioural claim was run against this tree, not
@@ -19,21 +19,21 @@ exist.
 |---|---|
 | GitHub repo created | 2026-10-02 (yesterday) |
 | Stars / forks / watchers | 0 / 0 / 0 |
-| Published on npm | **No.** `npm view macho-tools` → `E404` |
+| Published on npm | **No.** `npm view macho-explorer` → `E404` |
 | `api.npmjs.org/downloads` | 404, package not found |
 | Publishable? | **Yes, since 2026-10-03.** It was not: the name was `MachO-Tools`, and npm refuses a capital letter in a name published for the first time. `npm publish --dry-run` hid this by printing `+ MachO-Tools@0.1.0` and exiting 0. |
 
 The README's first install instruction is:
 
 ```sh
-npm install -g MachO-Tools          # macho-describe, macho-sym, ...
+npm install -g macho-explorer          # describe, sym, ...
 ```
 
 That command fails today. `TOWS.md` §Strengths lists "Publishable as
 configured — nothing blocking an `npm publish`" and treats distribution as
 solved, because the manifest *is* complete. Complete metadata is not
 publication. Every distribution advantage the project claims — `npm i -g`, man
-pages after install, shell completions, `$MACHO_BINARY` defaults — is currently
+pages after install, shell completions, `$MACHO_EXPLORER_BINARY` defaults — is currently
 unreachable by anyone but the author.
 
 So this is a **positioning study, not a market-share study.** Nobody has
@@ -135,7 +135,7 @@ buttons, cross-platform packaging, and an agent skill.
 | [`macho-unsign`](https://www.npmjs.com/package/macho-unsign) | — | 19,395 | 2024-08 | MIT |
 | [`libjsmacho`](https://github.com/ArmorixTeam/libjsmacho) | 2 | — | 2026-01 | — |
 | [`@ebowwa/mcp-nm`](https://www.npmjs.com/package/@ebowwa/mcp-nm) | — | 58 | 2026-02 | — |
-| **`MachO-Tools`** | **0** | **0** | **never** | LGPL-3.0 |
+| **`MachO-explorer`** | **0** | **0** | **never** | LGPL-3.0 |
 
 Two things to read here.
 
@@ -147,7 +147,7 @@ an opportunity: **the audience does not arrive looking, it has to be met.**
 
 **The JS field is genuinely abandoned.** `indutny/macho` is 12 years old and
 last published in 2023 with no licence. `fatmacho` is a fat-header-only parser
-from 2019. `macho-ts` has 710 monthly downloads and one star. `MachO-Tools` is
+from 2019. `macho-ts` has 710 monthly downloads and one star. `MachO-explorer` is
 the most capable *and* the most recently maintained Mach-O reader in
 JavaScript — and it is also the only one with a test suite, an importable API,
 man pages, and a mutation gate. On the merits of the artefact, it wins its own
@@ -194,7 +194,7 @@ to take a native dependency rather than write the parser.
 **2. Auditable in one file, by reading it.**
 This is the real moat and it is not about features. `ipsw` is 6,173 commits of
 Go you will not read. Ghidra is a research institution. LIEF is a C++ library
-with bindings. MachO-Tools is one file a security reviewer can verify end to
+with bindings. MachO-explorer is one file a security reviewer can verify end to
 end, in an afternoon, with no build. For the buyer who wants to *vendor* a
 parser into a product they are legally responsible for — the actual buyer for a
 game studio, given the provenance in `README.md` §Provenance — that is worth
@@ -210,7 +210,7 @@ per-command; Ghidra's output formats are per-script; `rz-bin` has its own.
 
 **4. It is not an iOS-research tool.**
 `ipsw`'s centre of gravity is firmware, dyld caches, kernelcaches and devices.
-Ghidra's is general reverse engineering. MachO-Tools is generic Mach-O
+Ghidra's is general reverse engineering. MachO-explorer is generic Mach-O
 introspection with no domain. For a team that wants to look at *their own*
 shipping binaries and has no interest in firmware research, that neutrality is
 the feature.
@@ -228,7 +228,7 @@ attention as the first.
 ## 4. Structural losses
 
 **`ipsw` is a strict superset with 3.8k stars and an MIT licence.** There is no
-feature row where MachO-Tools wins and `ipsw` loses. The fight over features is
+feature row where MachO-explorer wins and `ipsw` loses. The fight over features is
 already over. The only fight available is on the axes in §3 — footprint,
 auditability, contract honesty, neutrality — and those are not in the README.
 
@@ -251,7 +251,7 @@ ls: /usr/lib/libSystem.B.dylib: No such file or directory
 
 Since Big Sur the real dylibs live inside
 `/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/` — on this box,
-`aot_shared_cache.0` alone is 880 MB. So `macho-findliteral /usr/lib/libSystem.B.dylib`
+`aot_shared_cache.0` alone is 880 MB. So `findliteral /usr/lib/libSystem.B.dylib`
 cannot work, and neither can `nm` or `otool`. `ipsw dyld` is an entire product
 surface built for exactly this, and the README's Limits section does not
 mention it. This is a **new** competitive dimension that did not exist when the
@@ -295,7 +295,7 @@ bytes are not Mach-O", and conflating them is the human-facing version of 5.1.
 ## 6. What to do, in order
 
 1. **Publish to npm.** Nothing else on this list matters until someone can
-   `npm install -g macho-tools`. The blocker was the name, not the manifest: npm
+   `npm install -g macho-explorer`. The blocker was the name, not the manifest: npm
    refuses a capital letter in a name published for the first time, so
    `MachO-Tools` could never have shipped — and `npm publish --dry-run` reported
    success on it anyway. Fixed to `macho-tools` on 2026-10-03, with
@@ -362,8 +362,8 @@ gh api repos/rizinorg/rizin          --jq .stargazers_count
 gh api repos/mandiant/capa           --jq .stargazers_count
 
 # the project itself
-gh api repos/ranjithrajv/MachO-Tools --jq '{stars:.stargazers_count,created:.created_at}'
-npm view macho-tools version          # E404 as of 2026-10-03 — valid name, not yet published
+gh api repos/ranjithrajv/MachO-explorer --jq '{stars:.stargazers_count,created:.created_at}'
+npm view macho-explorer version       # E404 as of 2026-10-03 — valid name, not yet published
 
 # npm demand in the niche
 npm view macho      # 31,061 downloads/mo

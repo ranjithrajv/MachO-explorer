@@ -109,8 +109,8 @@ eight until `disasm.mjs` added the boundary decoder.
 ### Installing
 
 ```sh
-npm install -g macho-explorer          # macho-describe, macho-sym, ...
-man macho-sym
+npm install -g macho-explorer          # describe, sym, ...
+man sym
 ```
 
 Or vendor `src/`. Or copy **`src/macho.mjs` alone** — it imports nothing but
@@ -121,14 +121,14 @@ no lockfile and no install step. Man pages ship in `man/man1/`, completions in
 ### Pointing it at a binary
 
 1. an explicit argument, where the tool accepts one
-2. `$MACHO_BINARY` — a path to an executable
-3. `$MACHO_APP` — a `.app` bundle; the executable is found inside it
+2. `$MACHO_EXPLORER_BINARY` — a path to an executable
+3. `$MACHO_EXPLORER_APP` — a `.app` bundle; the executable is found inside it
 4. a documented fallback system binary, so a bare invocation is not a dead end
    (`null` on Windows, where a bare invocation says what to pass instead)
 
 ```sh
 node src/sym.mjs 'someSymbol' /path/to/binary
-MACHO_APP="/Applications/Some App.app" node src/sym.mjs 'someSymbol'
+MACHO_EXPLORER_APP="/Applications/Some App.app" node src/sym.mjs 'someSymbol'
 ```
 
 `symlookup` takes only addresses as positionals, so its binary comes from `-b`
@@ -606,12 +606,12 @@ claude mcp add macho -- node /absolute/path/to/src/mcp.mjs
 { "mcpServers": { "macho": {
     "command": "node",
     "args": ["/absolute/path/to/src/mcp.mjs"],
-    "env": { "MACHO_BINARY": "/path/to/a/binary" } } } }
+    "env": { "MACHO_EXPLORER_BINARY": "/path/to/a/binary" } } } }
 ```
 
-Eight tools — `macho-describe`, `macho-sym`, `macho-symlookup`,
-`macho-findcall`, `macho-findliteral`, `macho-mapliteral`, `macho-a2o`,
-`macho-o2a` — each returning the **same envelope** the CLIs emit under `--json`,
+Eight tools — `describe`, `sym`, `symlookup`,
+`findcall`, `findliteral`, `mapliteral`, `a2o`,
+`o2a` — each returning the **same envelope** the CLIs emit under `--json`,
 plus a short text block. Nothing new to learn depending on how you arrived.
 
 It speaks both protocol eras, because clients in the wild still use both: the
@@ -649,7 +649,7 @@ package names are case-sensitive when Node resolves them.
 
 The name is lowercase because npm will not accept a capital letter in a name
 published for the first time. That was not a style choice: this package shipped
-as `MachO-explorer`, and `npm publish --dry-run` reported `+ MachO-explorer@0.1.0` and
+as `MachO-Tools`, and `npm publish --dry-run` reported `+ MachO-Tools@0.1.0` and
 exited 0 on it, because a dry run never asks the registry whether a name is
 acceptable. `npm view` returned E404 with the reason spelled out — *"name can no
 longer contain capital letters"* — and npm's own validator reported
@@ -704,13 +704,13 @@ likely to grow than `api.mjs`.
 
 `config.json` holds the two things that are facts about the world rather than
 about the format: the bundle convention (`.app`, `Contents/MacOS`) and the scan
-chunking. Both are overridable with `$MACHO_CONFIG`, and a malformed override
+chunking. Both are overridable with `$MACHO_EXPLORER_CONFIG`, and a malformed override
 falls back to the shipped values rather than failing — a typo should not stop a
 tool you handed an explicit binary.
 
 ```sh
 echo '{"bundle":{"ext":".bundle","macosDir":["bin","exec"]}}' > /tmp/alt.json
-MACHO_CONFIG=/tmp/alt.json node src/sym.mjs 'someSymbol'
+MACHO_EXPLORER_CONFIG=/tmp/alt.json node src/sym.mjs 'someSymbol'
 ```
 
 ## Verify it yourself, in about five seconds

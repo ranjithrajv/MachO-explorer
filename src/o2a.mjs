@@ -42,7 +42,7 @@ const HELP = [
   'usage: node src/o2a.mjs <offset> [<offset> ...] [--json] [--arch=<name>] [-b <binary>]',
   '',
   '  offsets are 0x-prefixed hex or decimal; every positional is an offset,',
-  '  so the binary comes from -b/--binary, $MACHO_BINARY or $MACHO_APP.',
+  '  so the binary comes from -b/--binary, $MACHO_EXPLORER_BINARY or $MACHO_EXPLORER_APP.',
   '',
   'options:',
   '  --arch=<name>      read one architecture (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',

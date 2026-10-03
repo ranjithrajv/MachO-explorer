@@ -1,10 +1,10 @@
-# Feature parity — `MachO-Tools` vs `blacktop/ipsw`
+# Feature parity — `MachO-explorer` vs `blacktop/ipsw`
 
 Researched 2026-10-03, re-verified after the MCP/skill work. The `ipsw` column
 is taken from the source tree, not its README: `cmd/ipsw/cmd/macho/` (17 files)
 and `cmd/ipsw/cmd/dyld/` (44 files), enumerated via the GitHub API, with each
 command's cobra flag registrations extracted directly from source. The
-`MachO-Tools` column is taken from the code and from running every tool, not
+`MachO-explorer` column is taken from the code and from running every tool, not
 from `README.md`.
 
 **Re-verification result: `ipsw` has not moved.** Same 17 files in `macho/`,
@@ -13,7 +13,7 @@ below is a like-for-like diff of one side changing and the other not.
 
 **Verdict up front, after the MCP, `a2o`/`o2a` and describe work:** `ipsw` is
 still a strict superset on format coverage and still wins every capability
-contest that involves *decoding* something. MachO-Tools now wins **eleven**
+contest that involves *decoding* something. MachO-explorer now wins **eleven**
 rows, up from five, and **four of the new ones are capabilities rather than
 properties** — the load-command listing, the section enumeration, the UUID and
 `__cstring` with addresses. The feature race over format coverage is over; the
@@ -47,7 +47,7 @@ ipsw dyld             34 commands: xref (WIP) search symaddr str objc swift
                       stubs tbd webkit mg prewarm softlinks uniq split-slide
 ```
 
-`ipsw macho info` alone has **19 feature flags**. MachO-Tools' entire tool
+`ipsw macho info` alone has **19 feature flags**. MachO-explorer's entire tool
 count is 8 — and `describe` alone now answers three of `info`'s flags
 (`--loads`, `--section`, `--uuid`) plus most of a fourth.
 
@@ -55,11 +55,11 @@ count is 8 — and `describe` alone now answers three of `info`'s flags
 
 ## 2. Parity matrix
 
-`ipsw` only · **both** · `MachO-Tools` only
+`ipsw` only · **both** · `MachO-explorer` only
 
 ### 2.1 Container and format
 
-| Capability | `ipsw` | MachO-Tools |
+| Capability | `ipsw` | MachO-explorer |
 |---|:--:|:--:|
 | Fat header, per-slice listing | ✅ | ✅ `describe` |
 | Mach header dump | ✅ `--header` | ⚠️ the fields it reports, not a byte dump |
@@ -77,7 +77,7 @@ count is 8 — and `describe` alone now answers three of `info`'s flags
 
 ### 2.2 Symbols
 
-| Capability | `ipsw` | MachO-Tools |
+| Capability | `ipsw` | MachO-explorer |
 |---|:--:|:--:|
 | Substring symbol search | ✅ `--sym` regex | ✅ `sym` |
 | Regex symbol search | ✅ | ✅ `--regex` |
@@ -131,7 +131,7 @@ flag — verified by reading both files, which are 117 lines each and register o
 two that cannot be scripted, and a caller has to scrape the human-formatted
 table.
 
-| Capability | `ipsw` | MachO-Tools |
+| Capability | `ipsw` | MachO-explorer |
 |---|:--:|:--:|
 | vaddr → containing function | ✅ `a2s` | ✅ `symlookup` |
 | vaddr → file offset | ✅ `a2o` | ✅ **`a2o`** |
@@ -154,12 +154,12 @@ Mach-O, and its own help string is:
 Short: "🚧 [WIP] Find all cross references to an address"
 ```
 
-It is marked work-in-progress by its author. MachO-Tools' `findcall` works on a
+It is marked work-in-progress by its author. MachO-explorer's `findcall` works on a
 standalone file, handles both arm64 `BL` and x86_64 `rel32`, and is explicitly
 typed by section. **`findcall` has no competitor in `ipsw` at all.**
 
 Note the converse: `ipsw macho disass` is documented "Disassemble **ARM64**
-MachO". On x86_64, MachO-Tools' `findcall` and `disasm` cover ground `ipsw`'s
+MachO". On x86_64, MachO-explorer's `findcall` and `disasm` cover ground `ipsw`'s
 disassembler does not — `disasm` decodes `x86_64` instruction lengths and direct
 branch edges, which `ipsw` does not attempt at all.
 
@@ -173,7 +173,7 @@ Neither is a superset of the other.
 
 ### 2.4 Bytes and literals
 
-| Capability | `ipsw` | MachO-Tools |
+| Capability | `ipsw` | MachO-explorer |
 |---|:--:|:--:|
 | Hex/bytes dump at a vaddr | ✅ `macho dump --bytes --section` | ⚠️ context bytes only |
 | Dump a whole segment/section | ✅ `macho dump --segment/--section` | ❌ |
@@ -184,7 +184,7 @@ Neither is a superset of the other.
 | Decoy rejection (data vs code) | n/a | ✅ `decoy.macho` fixture |
 
 `ipsw macho info --strings` prints `__cstring` — NUL-terminated strings from a
-named section. MachO-Tools' `findliteral` scans **any byte sequence anywhere in
+named section. MachO-explorer's `findliteral` scans **any byte sequence anywhere in
 the file**, including inside code, and `mapliteral` then resolves each
 occurrence to a vaddr and finds the pointers that reference it. Nothing in
 `ipsw` does this. It is the single most distinctive thing in the package, and
@@ -201,7 +201,7 @@ length-prefixed in `__gopclntab` and have no terminator to scan for (§4.6).
 
 ### 2.5 Corpus scale
 
-| Capability | `ipsw` | MachO-Tools |
+| Capability | `ipsw` | MachO-explorer |
 |---|:--:|:--:|
 | One binary at a time | ✅ | ✅ |
 | Search a **directory** of binaries | ✅ `macho search <FOLDER>` | ❌ |
@@ -212,12 +212,12 @@ length-prefixed in `__gopclntab` and have no terminator to scan for (§4.6).
 | Firmware download | ✅ | ❌ |
 
 `ipsw macho search --import 'CCCrypt' /path/to/binaries` answering "which of
-these 4,000 binaries import this" is a genuinely different product. MachO-Tools
+these 4,000 binaries import this" is a genuinely different product. MachO-explorer
 processes one file per invocation.
 
 ### 2.6 Mutation
 
-| Capability | `ipsw` | MachO-Tools |
+| Capability | `ipsw` | MachO-explorer |
 |---|:--:|:--:|
 | Patch bytes / add / remove | ✅ `patch add/mod/rm` | ❌ |
 | Code signing | ✅ `macho sign` | ❌ |
@@ -226,15 +226,15 @@ processes one file per invocation.
 | Code signature read | ✅ `--sig` | ❌ |
 | ObjC / Swift metadata read | ✅ | ❌ |
 
-All six are on MachO-Tools' own "What it will not do" list, and the project's
+All six are on MachO-explorer's own "What it will not do" list, and the project's
 own test for that list — *would closing this gap make the package worse at the
 thing it is for?* — is the right test. **But the honest reading of that list is
-that it is a list of everything `ipsw` does and MachO-Tools does not.** It is a
+that it is a list of everything `ipsw` does and MachO-explorer does not.** It is a
 scope statement, not a competitive strength.
 
 ### 2.7 Output contract — the strongest row, and it widened
 
-| Property | `ipsw` | MachO-Tools |
+| Property | `ipsw` | MachO-explorer |
 |---|---|---|
 | `--json` | ⚠️ `info`, `search`, `disass` — **verified absent** from `a2o`, `o2a`, `dump` | ✅ **all 9 CLIs + the MCP server** |
 | One envelope shape across tools | ❌ per-command | ✅ `{tool, ok, binary, errors, messages, notes, data}` |
@@ -268,7 +268,7 @@ not the other is not a contract.
 
 ### 2.8 Distribution and adoption
 
-| | `ipsw` | MachO-Tools |
+| | `ipsw` | MachO-explorer |
 |---|---|---|
 | Stars | **3,769** | 0 |
 | Licence | **MIT** | LGPL-3.0 |
@@ -276,7 +276,7 @@ not the other is not a contract.
 | Language runtime | Go 1.26 static binary | Node ≥ 22.15 |
 | Runtime dependencies | none, but ~40 MB binary | none, and **zero** |
 | Docs site | ✅ + Discord + DeepWiki | README only |
-| **MCP server** | ❌ **none** — 0 matches for `modelcontextprotocol` in the tree | ✅ **dual-era stdio, `macho-mcp`** |
+| **MCP server** | ❌ **none** — 0 matches for `modelcontextprotocol` in the tree | ✅ **dual-era stdio, `mcp`** |
 | Agent skill | ✅ `ipsw-skill` (90★, Claude Code / Codex / Gemini) | ✅ `skill/` |
 | Programmatic surface | REST daemon (`ipswd`) | ✅ `src/api.mjs` + CLI + **MCP** |
 | Shell completion | ✅ | ✅ |
@@ -296,7 +296,7 @@ means the tools are reachable, not that they are better.
 
 ## 3. Score
 
-| | `ipsw` | MachO-Tools |
+| | `ipsw` | MachO-explorer |
 |---|:--:|:--:|
 | Capability rows won | ~46 | **9** (was 5) |
 | MachO format coverage | complete | partial |
@@ -323,7 +323,7 @@ coverage.
 
 Two things this does **not** change. `ipsw` is still a strict superset on format
 coverage — load commands, code signing, ObjC/Swift, disassembly, dyld caches and
-firmware are all still theirs alone. And MachO-Tools is still **not published**.
+firmware are all still theirs alone. And MachO-explorer is still **not published**.
 
 That second one has changed *why*, which is worth recording because the reason
 was invisible. `npm view MachO-Tools` returned E404, and the obvious reading was
@@ -400,7 +400,7 @@ its next step on the answer.
 
 The README's flag table presented `--arch` as a general option. It existed on
 `sym`, `symlookup` and `findcall` only, and `describe --arch=arm64` exited 2 —
-correct, but it meant **`ipsw macho info --arch` was a capability MachO-Tools did
+correct, but it meant **`ipsw macho info --arch` was a capability MachO-explorer did
 not have on its own primary describe tool.** Given that fat binaries are the
 stated reason the project exists, `describe` being unable to scope to a slice was
 the wrong gap to have.
@@ -447,7 +447,7 @@ runs the CLIs and asserts the codes rather than trusting the prose.
 **Fixed.** `parseThin` had always built `segments[]` and `sections[]` — 5 and 15
 respectively for a stock Go binary — and `describe` reported only
 `codeSections: 2`, a count. So the reader knew the whole map and the tool
-discarded it, and **`ipsw macho info --section` was a capability MachO-Tools
+discarded it, and **`ipsw macho info --section` was a capability MachO-explorer
 lacked on the tool whose entire job is answering "what is in this file".**
 
 `describe` now carries all three lists, and adds three flags to print them in
@@ -514,7 +514,7 @@ overflowed truncates rather than quietly staying large.
 
 ### 4.6 `--strings` over `__cstring`
 
-`ipsw macho info --strings` prints C strings. MachO-Tools had nothing, and the gap
+`ipsw macho info --strings` prints C strings. MachO-explorer had nothing, and the gap
 was worth closing because a string you cannot address is a string you cannot hand
 to `symlookup` or `mapliteral` — every entry carries its file offset, virtual
 address and owning section.
@@ -575,17 +575,17 @@ plausible identifier. Verified:
 ## 5. The one-paragraph honest summary
 
 If a user needs to know what is in a Mach-O and has Node and nothing else,
-MachO-Tools is a better choice than `ipsw`: nothing to install, one file to
+MachO-explorer is a better choice than `ipsw`: nothing to install, one file to
 read, and a machine contract `ipsw` does not have — the same contract whether
 the caller arrived by pipe or by MCP. If a user needs to know anything *else* —
 code signing, entitlements, chained fixups, export tries, Objective-C or Swift
 metadata, mnemonics and operands, a firmware image, a directory of binaries, or
-the literal's callers in a shared cache — `ipsw` answers it and MachO-Tools does
+the literal's callers in a shared cache — `ipsw` answers it and MachO-explorer does
 not. The load-command *listing* is now closed; the load-command *interpretation*
 is not, and is not planned to be. Nor is mnemonic decoding: `disasm` closes the
 boundary question, and the line past that one is Hopper's.
 
-Three things MachO-Tools is now alone on, and all three are the same idea
+Three things MachO-explorer is now alone on, and all three are the same idea
 applied at different depths: **direct call xrefs in a standalone file**, with no
 `ipsw` equivalent at all; **byte-literal → vaddr → pointers**, which no `ipsw`
 command does; and **vaddr ⇄ file offset that admits "mapped but there is no byte

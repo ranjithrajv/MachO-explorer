@@ -61,7 +61,7 @@ const HELP = [
   'usage: node src/sym.mjs <pattern> [binary|bundle] [max] [options]',
   '',
   '  <pattern>          substring to match, or a regex with --regex',
-  '  [binary|bundle]    defaults to $MACHO_BINARY, then $MACHO_APP,',
+  '  [binary|bundle]    defaults to $MACHO_EXPLORER_BINARY, then $MACHO_EXPLORER_APP,',
   `                     then ${FALLBACK_TARGET}`,
   '  [max]              cap on rows when deduplicating (default 4000)',
   '',

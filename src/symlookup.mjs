@@ -14,8 +14,8 @@
  * Every positional argument here is an address to resolve, so a path cannot be
  * told apart from a vaddr by position — it would have to be guessed from whether
  * it starts with `0x`, which is exactly the kind of inference that turns a typo
- * into a wrong answer. The binary comes from `-b`/`--binary`, `$MACHO_BINARY` or
- * `$MACHO_APP` instead, and the tool says which it used.
+ * into a wrong answer. The binary comes from `-b`/`--binary`, `$MACHO_EXPLORER_BINARY` or
+ * `$MACHO_EXPLORER_APP` instead, and the tool says which it used.
  *
  * ## The bug this no longer has
  *
@@ -42,7 +42,7 @@ const HELP = [
   'usage: node src/symlookup.mjs <hex-vaddr> [<hex-vaddr> ...] [--json] [--arch=<name>] [-b <binary>]',
   '',
   '  every positional argument is an address, so the binary comes from',
-  '  -b/--binary, $MACHO_BINARY or $MACHO_APP.',
+  '  -b/--binary, $MACHO_EXPLORER_BINARY or $MACHO_EXPLORER_APP.',
   '',
   'options:',
   '  --arch=<name>      read one architecture (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',

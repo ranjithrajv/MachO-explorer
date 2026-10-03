@@ -132,7 +132,7 @@ export function guardStdout() {
       return ok;
     }
     strayWrites++;
-    process.stderr.write(`[macho-mcp] diverted a non-protocol write to stdout: ${text.slice(0, 200)}\n`);
+    process.stderr.write(`[mcp] diverted a non-protocol write to stdout: ${text.slice(0, 200)}\n`);
     if (cb) cb(false);
     return false;
   };
@@ -344,7 +344,7 @@ export function serve({ input = process.stdin, output = process.stdout } = {}) {
     const reply = handle(msg, state);
     Promise.resolve(reply).catch((e) => {
       if (msg.id !== undefined && msg.id !== null) fail(msg.id, ERR.internal, `Internal error: ${e.message}`);
-      else process.stderr.write(`[macho-mcp] ${e.stack || e.message}\n`);
+      else process.stderr.write(`[mcp] ${e.stack || e.message}\n`);
     });
   };
 
@@ -361,7 +361,7 @@ export function serve({ input = process.stdin, output = process.stdout } = {}) {
     // client that writes a huge blob with no newline grows the buffer without
     // bound; with one, the process says so instead of dying quietly.
     if (buffer.length > 64 * 1024 * 1024) {
-      process.stderr.write('[macho-mcp] a single line exceeded 64 MiB without a newline; dropping the buffer\n');
+      process.stderr.write('[mcp] a single line exceeded 64 MiB without a newline; dropping the buffer\n');
       buffer = '';
     }
   });
@@ -400,7 +400,7 @@ function usage() {
     '',
     '  { "mcpServers": { "macho": { "command": "node",',
     '      "args": ["/absolute/path/to/src/mcp.mjs"],',
-    '      "env": { "MACHO_BINARY": "/path/to/a/binary" } } } }',
+    '      "env": { "MACHO_EXPLORER_BINARY": "/path/to/a/binary" } } } }',
     '',
     'This help goes to stderr on purpose: stdout carries the protocol and nothing else.',
   ].join('\n');

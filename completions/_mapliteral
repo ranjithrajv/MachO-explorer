@@ -1,6 +1,6 @@
-#compdef macho-mapliteral
+#compdef mapliteral
 #
-# zsh completion for macho-mapliteral. Install as _macho-mapliteral in a
+# zsh completion for mapliteral. Install as _mapliteral in a
 # directory on your $fpath.
 #
 # MachO-explorer 0.1.0.

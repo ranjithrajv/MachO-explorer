@@ -1,7 +1,7 @@
-#compdef macho-sym
+#compdef sym
 #
-# zsh completion for macho-sym. Install as _macho-sym in a directory on your
-# $fpath, or copy to ${fpath[1]}/_macho-sym.
+# zsh completion for sym. Install as _sym in a directory on your
+# $fpath, or copy to ${fpath[1]}/_sym.
 #
 # MachO-explorer 0.1.0.
 

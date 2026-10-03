@@ -1,5 +1,5 @@
 {
-  "name": "macho-tools",
+  "name": "macho-explorer",
   "version": "0.1.0",
   "type": "module",
   "description": "Mach-O binary introspection for Apple binaries: fat headers, symbol search, vaddr lookup, address-to-offset mapping, direct-call xrefs and byte-literal search. Zero dependencies, no build step — and it reads Mac binaries from Linux or Windows.",
@@ -16,10 +16,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ranjithrajv/MachO-Tools.git"
+    "url": "git+https://github.com/ranjithrajv/MachO-explorer.git"
   },
   "bugs": {
-    "url": "https://github.com/ranjithrajv/MachO-Tools/issues"
+    "url": "https://github.com/ranjithrajv/MachO-explorer/issues"
   },
   "homepage": "https://github.com/ranjithrajv/MachO-explorer#readme",
   "author": "ranjithrajv",
@@ -46,28 +46,28 @@
     "CONTRIBUTING.md"
   ],
   "man": [
-    "man/man1/macho-describe.1",
-    "man/man1/macho-sym.1",
-    "man/man1/macho-symlookup.1",
-    "man/man1/macho-findcall.1",
-    "man/man1/macho-findliteral.1",
-    "man/man1/macho-mapliteral.1",
-    "man/man1/macho-a2o.1",
-    "man/man1/macho-o2a.1",
-    "man/man1/macho-disasm.1",
-    "man/man1/macho-mcp.1"
+    "man/man1/describe.1",
+    "man/man1/sym.1",
+    "man/man1/symlookup.1",
+    "man/man1/findcall.1",
+    "man/man1/findliteral.1",
+    "man/man1/mapliteral.1",
+    "man/man1/a2o.1",
+    "man/man1/o2a.1",
+    "man/man1/disasm.1",
+    "man/man1/mcp.1"
   ],
   "bin": {
-    "macho-describe": "src/describe.mjs",
-    "macho-sym": "src/sym.mjs",
-    "macho-symlookup": "src/symlookup.mjs",
-    "macho-findcall": "src/findcall.mjs",
-    "macho-findliteral": "src/findliteral.mjs",
-    "macho-mapliteral": "src/mapliteral.mjs",
-    "macho-a2o": "src/a2o.mjs",
-    "macho-o2a": "src/o2a.mjs",
-    "macho-disasm": "src/disasm.mjs",
-    "macho-mcp": "src/mcp.mjs"
+    "describe": "src/describe.mjs",
+    "sym": "src/sym.mjs",
+    "symlookup": "src/symlookup.mjs",
+    "findcall": "src/findcall.mjs",
+    "findliteral": "src/findliteral.mjs",
+    "mapliteral": "src/mapliteral.mjs",
+    "a2o": "src/a2o.mjs",
+    "o2a": "src/o2a.mjs",
+    "disasm": "src/disasm.mjs",
+    "mcp": "src/mcp.mjs"
   },
   "scripts": {
     "test": "node test/smoke.mjs",

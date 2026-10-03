@@ -154,7 +154,7 @@ console.log('\nmcp: the protocol\n');
   const { out, err, code } = await session([
     { jsonrpc: '2.0', id: 1, method: 'server/discover', params: { _meta: meta() } },
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: { _meta: meta() } },
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: path.join(FIXTURES, 'universal.macho') }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'describe', arguments: { binary: path.join(FIXTURES, 'universal.macho') }, _meta: meta() } },
   ], { expectLines: 3 });
 
   const { msgs, bad } = parseStream(out);
@@ -194,7 +194,7 @@ console.log('\nmcp: the protocol\n');
   check(c?.isError === false, 'a good call is not an error');
   check(!!c?.structuredContent, 'a call returns structuredContent');
   check(c?.structuredContent?.ok === true, 'structuredContent is the same envelope the CLIs emit');
-  check(c?.structuredContent?.tool === 'macho-describe', 'the envelope names its tool');
+  check(c?.structuredContent?.tool === 'describe', 'the envelope names its tool');
   check(
     Array.isArray(c?.content) && c.content[0]?.type === 'text' && typeof c.content[0].text === 'string',
     'a call also returns a text block, as the spec asks for alongside structured content',
@@ -212,7 +212,7 @@ console.log('\nmcp: the protocol\n');
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } },
     { jsonrpc: '2.0', method: 'notifications/initialized' },
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-sym', arguments: { binary: path.join(FIXTURES, 'populated.macho'), pattern: 'main' } } },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'sym', arguments: { binary: path.join(FIXTURES, 'populated.macho'), pattern: 'main' } } },
   ], { expectLines: 4 });
 
   const { msgs, bad } = parseStream(out);
@@ -270,16 +270,16 @@ console.log('\nmcp: the protocol\n');
   const fixture = path.join(FIXTURES, 'populated.macho');
   const { out } = await session([
     // exit 3, io: no such file
-    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: '/nonexistent/nope' }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'describe', arguments: { binary: '/nonexistent/nope' }, _meta: meta() } },
     // exit 3, unknown-encoding: readable, not a Mach-O
-    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: path.join(HERE, 'mcp.mjs') }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'describe', arguments: { binary: path.join(HERE, 'mcp.mjs') }, _meta: meta() } },
     // exit 2, bad-arguments: neither target nor list_targets
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-findcall', arguments: { binary: fixture }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'findcall', arguments: { binary: fixture }, _meta: meta() } },
     // exit 2, bad-arguments: a mistyped key, which must NOT be ignored
-    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'macho-describe', arguments: { binry: fixture }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'describe', arguments: { binry: fixture }, _meta: meta() } },
     // exit 1: ran, found nothing — and this is NOT an error
-    { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'macho-sym', arguments: { binary: fixture, pattern: 'zzz-no-such-symbol-zzz' }, _meta: meta() } },
-    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'macho-findliteral', arguments: { binary: fixture, literal: 'zzz-no-such-literal-zzz' }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'sym', arguments: { binary: fixture, pattern: 'zzz-no-such-symbol-zzz' }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'findliteral', arguments: { binary: fixture, literal: 'zzz-no-such-literal-zzz' }, _meta: meta() } },
   ], { expectLines: 6 });
 
   const { msgs, bad } = parseStream(out);
@@ -308,7 +308,7 @@ console.log('\nmcp: the protocol\n');
   );
 
   // The one that matters most for an agent.
-  for (const [id, tool] of [[5, 'macho-sym'], [6, 'macho-findliteral']]) {
+  for (const [id, tool] of [[5, 'sym'], [6, 'findliteral']]) {
     const r = byId(msgs, id)?.result;
     check(
       r?.isError === false && r?.structuredContent?.ok === true,
@@ -334,15 +334,15 @@ console.log('\nmcp: the protocol\n');
   const fixture = path.join(FIXTURES, 'populated.macho');
   const { out } = await session([
     // A JSON number, which is exactly how a 64-bit address dies silently.
-    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-symlookup', arguments: { binary: fixture, addresses: [1091523120] }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'symlookup', arguments: { binary: fixture, addresses: [1091523120] }, _meta: meta() } },
     // Not hex at all.
-    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'macho-symlookup', arguments: { binary: fixture, addresses: ['100085c30'] }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'symlookup', arguments: { binary: fixture, addresses: ['100085c30'] }, _meta: meta() } },
     // A real one, and past 2^53 so any Number conversion would be visible.
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-symlookup', arguments: { binary: fixture, addresses: ['0x100085c30'] }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'symlookup', arguments: { binary: fixture, addresses: ['0x100085c30'] }, _meta: meta() } },
     // Past 2^53, to prove nothing is clamped or truncated on the way through.
-    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'macho-symlookup', arguments: { binary: fixture, addresses: ['0xfffffffffffffff0'] }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'symlookup', arguments: { binary: fixture, addresses: ['0xfffffffffffffff0'] }, _meta: meta() } },
     // And a batch, which is the reason `addresses` is a list.
-    { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'macho-symlookup', arguments: { binary: fixture, addresses: ['0x100000000', '0x100000120', '0x100000300'] }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'symlookup', arguments: { binary: fixture, addresses: ['0x100000000', '0x100000120', '0x100000300'] }, _meta: meta() } },
   ], { expectLines: 5 });
 
   const { msgs } = parseStream(out);
@@ -396,7 +396,7 @@ console.log('\nmcp: the protocol\n');
 
 {
   const { out } = await session([
-    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-nope', arguments: {}, _meta: meta() } },
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'nope', arguments: {}, _meta: meta() } },
     { jsonrpc: '2.0', id: 2, method: 'no/such/method', params: { _meta: meta() } },
     { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { _meta: meta() } },
     { jsonrpc: '2.0', id: 4, method: 'resources/list', params: { _meta: meta() } },
@@ -527,11 +527,13 @@ console.log('\nmcp: the protocol\n');
     'every tool is marked read-only, which is true: this package only reads',
   );
 
-  // Prefixed names: the spec warns that `describe` and `search` collide when a
-  // client aggregates servers.
+  // Bare names, matching the CLI verbs one-for-one. This is a deliberate trade
+  // against the MCP guidance to prefix: a client that aggregates servers can
+  // collide on `describe`, but one vocabulary across the shell and an agent
+  // session was the stronger property here.
   check(
-    defs.every((d) => d.name.startsWith('macho-')),
-    'tool names are prefixed, so they do not collide in a client aggregating servers',
+    defs.every((d) => d.name === d.name.replace(/^macho-/, '')),
+    'tool names are unprefixed, matching the CLI verbs',
   );
 
   // The validator must actually reject things, or it is decoration.
@@ -584,9 +586,9 @@ console.log('\nmcp: the protocol\n');
     // tool permanently skipped, which is a check that never ran and looked like
     // one that had.
     for (const lit of ['runtime.main', 'Go build ID', 'go:buildid', 'main', 'GCC', 'darwin']) {
-      const a = await probe('macho-findliteral', { binary: REAL, literal: lit });
+      const a = await probe('findliteral', { binary: REAL, literal: lit });
       if (a?.envelope?.data?.count > 0 && !realLiteral) realLiteral = lit;
-      const b = await probe('macho-mapliteral', { binary: REAL, literal: lit });
+      const b = await probe('mapliteral', { binary: REAL, literal: lit });
       if (b?.envelope?.data?.locations?.length > 0 && !realMapLiteral) realMapLiteral = lit;
       if (realLiteral && realMapLiteral) break;
     }
@@ -632,30 +634,30 @@ console.log('\nmcp: the protocol\n');
   // mode that exists only until someone calls it, and `--strings` and
   // `list_targets` both arrived without one.
   const probes = {
-    'macho-describe': [
+    'describe': [
       { binary: universal },
       { binary: universal, arch: 'arm64' },
     ],
-    'macho-sym': [{ binary: populated, pattern: 'pop' }],
-    'macho-symlookup': [{ binary: populated, addresses: ['0x100000120'] }],
-    'macho-findcall': [
+    'sym': [{ binary: populated, pattern: 'pop' }],
+    'symlookup': [{ binary: populated, addresses: ['0x100000120'] }],
+    'findcall': [
       { binary: populated, target: '0x100000220' },
       { binary: populated, list_targets: true },
     ],
-    'macho-findliteral': [
+    'findliteral': [
       ...(realLiteral ? [{ binary: REAL, literal: realLiteral }] : []),
       ...(stringsBin ? [{ binary: stringsBin, strings: true }] : []),
     ],
-    'macho-mapliteral': realMapLiteral ? [{ binary: REAL, literal: realMapLiteral }] : [],
-    'macho-a2o': realAddr ? [{ binary: REAL, addresses: [realAddr] }] : [],
-    'macho-o2a': realOffset !== null ? [{ binary: REAL, offsets: [realOffset] }] : [],
+    'mapliteral': realMapLiteral ? [{ binary: REAL, literal: realMapLiteral }] : [],
+    'a2o': realAddr ? [{ binary: REAL, addresses: [realAddr] }] : [],
+    'o2a': realOffset !== null ? [{ binary: REAL, offsets: [realOffset] }] : [],
   };
 
   const SKIP_WHY = {
-    'macho-o2a': 'no Mach-O with a mappable address was available',
-    'macho-a2o': 'no Mach-O with a mappable address was available',
-    'macho-mapliteral': 'no Mach-O with a known literal was available (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
-    'macho-findliteral': 'no Mach-O with a known literal, and no strings fixture (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
+    'o2a': 'no Mach-O with a mappable address was available',
+    'a2o': 'no Mach-O with a mappable address was available',
+    'mapliteral': 'no Mach-O with a known literal was available (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
+    'findliteral': 'no Mach-O with a known literal, and no strings fixture (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
   };
 
   for (const d of defs) {
@@ -710,19 +712,19 @@ console.log('\nmcp: the protocol\n');
   // interesting checks are that it found the fixture's four strings and that its
   // addresses are real, not merely that it did not crash.
   if (stringsBin) {
-    const out = await callTool('macho-findliteral', { binary: stringsBin, strings: true });
+    const out = await callTool('findliteral', { binary: stringsBin, strings: true });
     check(
       out?.envelope?.data?.count === 4,
-      'macho-findliteral --strings: reads the four fixture strings',
+      'findliteral --strings: reads the four fixture strings',
       JSON.stringify(out?.envelope?.data?.count),
     );
     check(
       out?.envelope?.data?.strings?.every((s) => s.section === '__TEXT,__cstring'),
-      'macho-findliteral --strings: names the section each string came from',
+      'findliteral --strings: names the section each string came from',
     );
     check(
       out?.text?.includes('__cstring'),
-      'macho-findliteral --strings: says which sections it searched, in the text block',
+      'findliteral --strings: says which sections it searched, in the text block',
     );
   }
 
@@ -740,9 +742,9 @@ console.log('\nmcp: the protocol\n');
     skip('the 32-bit binary over MCP', 'the bits32 fixture is missing — run npm run test:fixtures');
   } else {
     const { out } = await session([
-      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: bits32 }, _meta: meta() } },
-      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'macho-symlookup', arguments: { binary: bits32, addresses: ['0x80481f4'] }, _meta: meta() } },
-      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-findcall', arguments: { binary: bits32, target: '0x80481f4' }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'describe', arguments: { binary: bits32 }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'symlookup', arguments: { binary: bits32, addresses: ['0x80481f4'] }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'findcall', arguments: { binary: bits32, target: '0x80481f4' }, _meta: meta() } },
     ], { expectLines: 3 });
     const { msgs } = parseStream(out);
     const d32 = byId(msgs, 1)?.result?.structuredContent?.data;
@@ -797,7 +799,7 @@ console.log('\nmcp: the protocol\n');
   } else {
     const WANT = 'a1b2c3d4-e5f6-4708-9a0b-1c2d3e4f5061';
     const { out } = await session([
-      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: stripped }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'describe', arguments: { binary: stripped }, _meta: meta() } },
     ], { expectLines: 1 });
     const { msgs } = parseStream(out);
     const r1 = byId(msgs, 1)?.result;
@@ -828,10 +830,10 @@ console.log('\nmcp: the protocol\n');
   const { callTool } = await import('../src/mcp-tools.mjs');
   const corpus = path.join(FIXTURES, 'populated.macho');
   for (const [tool, args] of [
-    ['macho-findliteral', { binary: corpus, literal: 'no-such-literal-anywhere' }],
-    ['macho-mapliteral', { binary: corpus, literal: 'no-such-literal-anywhere' }],
-    ['macho-sym', { binary: corpus, pattern: 'no-such-symbol-anywhere' }],
-    ['macho-findcall', { binary: corpus, target: '0x7fffffff0000' }],
+    ['findliteral', { binary: corpus, literal: 'no-such-literal-anywhere' }],
+    ['mapliteral', { binary: corpus, literal: 'no-such-literal-anywhere' }],
+    ['sym', { binary: corpus, pattern: 'no-such-symbol-anywhere' }],
+    ['findcall', { binary: corpus, target: '0x7fffffff0000' }],
   ]) {
     const out = await callTool(tool, args);
     check(
@@ -849,9 +851,9 @@ console.log('\nmcp: the protocol\n');
 
   // And the same over the wire, where `isError` is what a client actually reads.
   const { out } = await session([
-    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-findliteral', arguments: { binary: corpus, literal: 'no-such-literal-anywhere' }, _meta: meta() } },
-    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'macho-findliteral', arguments: { binary: corpus, strings: true }, _meta: meta() } },
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-findliteral', arguments: { binary: '/nonexistent/nope', literal: 'x' }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'findliteral', arguments: { binary: corpus, literal: 'no-such-literal-anywhere' }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'findliteral', arguments: { binary: corpus, strings: true }, _meta: meta() } },
+    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'findliteral', arguments: { binary: '/nonexistent/nope', literal: 'x' }, _meta: meta() } },
   ], { expectLines: 3 });
   const { msgs } = parseStream(out);
 
@@ -883,9 +885,9 @@ console.log('\nmcp: the protocol\n');
   const stringsBin = fs.existsSync(path.join(FIXTURES, 'strings.macho')) ? path.join(FIXTURES, 'strings.macho') : null;
   if (stringsBin) {
     const r = await session([
-      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-findliteral', arguments: { binary: stringsBin, strings: true }, _meta: meta() } },
-      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: stringsBin }, _meta: meta() } },
-      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-findliteral', arguments: { binary: stringsBin }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'findliteral', arguments: { binary: stringsBin, strings: true }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'describe', arguments: { binary: stringsBin }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'findliteral', arguments: { binary: stringsBin }, _meta: meta() } },
     ], { expectLines: 3 });
     const s = parseStream(r.out);
     const stringsOut = byId(s.msgs, 1)?.result;
@@ -934,8 +936,8 @@ console.log('\nmcp: the protocol\n');
     skip({ name: 'header fields over MCP', why: 'the meta/damaged fixtures are missing — run npm run test:fixtures' });
   } else {
     const r = await session([
-      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: metaBin }, _meta: meta() } },
-      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: dmgBin }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'describe', arguments: { binary: metaBin }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'describe', arguments: { binary: dmgBin }, _meta: meta() } },
     ], { expectLines: 2 });
     const s = parseStream(r.out);
     const good = byId(s.msgs, 1)?.result;

@@ -1,4 +1,4 @@
-# TOWS analysis — `macho-tools`
+# TOWS analysis — `MachO-explorer`
 
 A strategic view of the project, derived from what the code and test suite
 actually do today rather than from an aspirational description. Every claim
@@ -21,12 +21,12 @@ confident than it was correct.
 | Stale claim | Reality on `a87991e` |
 |---|---|
 | **"Publishable as configured"** — "complete manifest metadata; nothing blocking an `npm publish`" | **Unpublishable under its current name.** npm's own validator returns `validForNewPackages: false` with the warning *"name can no longer contain capital letters"*, and the registry repeats it verbatim in the E404. The metadata is complete; the *name* is invalid. |
-| **"Installable, not just vendorable"** — "`man macho-sym` works after `npm i -g`" | Never was, and cannot be. `README.md`:49 still instructs `npm install -g MachO-Tools`, which cannot succeed. `macho-tools` is also E404, so the name is unclaimed and free. |
+| **"Installable, not just vendorable"** — "`man sym` works after `npm i -g`" | Never was, and cannot be. `README.md`:49 still instructs `npm install -g MachO-Tools`, which cannot succeed. `macho-tools` is also E404, so the name is unclaimed and free. |
 | `W1` **"LANDED, both halves"** — `.githooks/pre-commit` "verified to *block* on a hand-edited fixture and on a failing suite" | **There was no `.githooks/` in this repository.** It lived at the workspace root; `core.hooksPath` was unset here and nothing was tracked. `CONTRIBUTING.md` was *correct* — it said "in the parent workspace" — so the code review caught what the strategic document did not. The local gate had not travelled with the package when it became its own repo. **Now closed:** both hooks are versioned here and blocking-verified. |
 | "202 checks" | **310** in `smoke.mjs`, plus **183** in `mcp.mjs` and **36** in `skill.mjs` — **529 checks**, and 11 mutations. |
 | "7 mutations, 7 caught" | **11 mutations, 11 caught** (9 by the generator's self-check, 2 by `smoke.mjs`). The latest commit message says *9*, so that claim is stale too, in the commit that introduced the two extra mutations. |
 | "7 generated fixtures (39,568 bytes)" | **10 fixtures, 42,060 bytes** — `bits32.macho` and `strings.mjs`'s `strings.macho` joined, and an `LC_UUID` was added to `stripped.macho`. |
-| "Six man pages", "six flat binaries" | **Nine man pages, nine `bin` entries** — eight CLI tools plus `macho-mcp`. |
+| "Six man pages", "six flat binaries" | **Nine man pages, nine `bin` entries** — eight CLI tools plus `mcp`. |
 | "CI is three jobs" | **Four** (`fixtures`, `test`, `protocol`, `mutation`), and only `test` is an OS matrix. `README.md` and `CONTRIBUTING.md` *both said three* until this pass corrected them. |
 
 ### Corrections, third pass
@@ -155,7 +155,7 @@ by reading the tree against the previous version of this document.
 |---|---|
 | **The obvious name is unclaimed** | `macho-tools` returns E404 and is free. So is the decision — nothing about the tooling changes, only the string in `package.json`. |
 | **An agent-integration surface no Mach-O tool has** | The parity comparison puts `ipsw` at *skill only*. A tested MCP server plus a tested skill is a category of its own, and the fixture corpus means it can be exercised with no binary and no network. |
-| **The fixture corpus is independently useful** | A deterministic Mach-O corpus with known answers — 32-bit, fat, symbol-less, populated, zero-fill, string-bearing — exported as `MachO-Tools/fixtures` and consumable by another project's parser tests. This is the artefact a different project borrows. |
+| **The fixture corpus is independently useful** | A deterministic Mach-O corpus with known answers — 32-bit, fat, symbol-less, populated, zero-fill, string-bearing — exported as `macho-explorer/fixtures` and consumable by another project's parser tests. This is the artefact a different project borrows. |
 | **Stable format, thin tooling** | Mach-O has barely changed in 30 years. `otool`/`nm` ship in the box but need `lipo` first, emit no JSON, and answer one question per invocation. |
 | **Linux/Windows against Mac binaries** | `nm` and `otool` do not run off macOS at all. Server-side triage and CI are unserved by the in-box tools. |
 | **Large universal binaries** | `nm` on a 476 MB universal binary takes minutes; this reads the symbol table directly. |

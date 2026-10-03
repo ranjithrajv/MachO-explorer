@@ -1,8 +1,8 @@
-.TH MACHO\-O2A 1 "October 3, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH O2A 1 "October 3, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-o2a \- map a file offset to a virtual address
+o2a \- map a file offset to a virtual address
 .SH SYNOPSIS
-.B macho\-o2a
+.B o2a
 .I offset
 .RI [ offset ...]
 .RB [ \-\-json ]
@@ -13,7 +13,7 @@ macho\-o2a \- map a file offset to a virtual address
 .SH DESCRIPTION
 Reports which virtual address each given file offset corresponds to, together with
 the section it falls in and the slice it belongs to. The inverse of
-.BR macho\-a2o (1).
+.BR a2o (1).
 .PP
 Offsets are absolute positions in the file, accepted as decimal or as hex with a
 .B 0x
@@ -71,14 +71,14 @@ strings: a 64\-bit virtual address does not survive a JSON number.
 Print usage and exit 0.
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 The binary to read when none is given.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle to read, tried after
-.BR MACHO_BINARY .
+.BR MACHO_EXPLORER_BINARY .
 .TP
-.B MACHO_CONFIG
+.B MACHO_EXPLORER_CONFIG
 Path to a replacement
 .IR config.json .
 .SH EXIT STATUS
@@ -99,30 +99,30 @@ The file could not be read or parsed.
 .PP
 .RS
 .nf
-macho\-o2a 0x1000 \-b /usr/local/go/bin/go
-macho\-o2a \-\-json 0x1000 \-b /usr/local/go/bin/go | jq '.data.queries[0].vaddr'
+o2a 0x1000 \-b /usr/local/go/bin/go
+o2a \-\-json 0x1000 \-b /usr/local/go/bin/go | jq '.data.queries[0].vaddr'
 .fi
 .RE
 .PP
 Follow a literal's file offset from
-.BR macho\-findliteral (1)
+.BR findliteral (1)
 to the address a symbol lookup needs:
 .PP
 .RS
 .nf
-macho\-o2a \-\-json 0x59d140 \-b /usr/local/go/bin/go | jq -r '.data.queries[0].vaddr'
+o2a \-\-json 0x59d140 \-b /usr/local/go/bin/go | jq -r '.data.queries[0].vaddr'
 .fi
 .RE
 .SH NOTES
 Every positional argument is an offset, so the binary comes from
 .B \-b
 rather than from the last positional, for the same reason
-.BR macho\-symlookup (1)
+.BR symlookup (1)
 does it that way.
 .SH SEE ALSO
-.BR macho\-a2o (1),
-.BR macho\-findliteral (1),
-.BR macho\-mapliteral (1),
-.BR macho\-describe (1),
+.BR a2o (1),
+.BR findliteral (1),
+.BR mapliteral (1),
+.BR describe (1),
 .BR otool (1),
 .BR nm (1)

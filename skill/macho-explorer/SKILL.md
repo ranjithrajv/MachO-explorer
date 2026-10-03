@@ -1,6 +1,6 @@
 ---
 name: macho-explorer
-description: Reads Apple Mach-O binaries without otool, nm or a disassembler. Answers what is in a binary, which function contains an address, what directly calls a given address, where a byte literal or file-format magic lives in the file, and which code points at it. Works on macOS, Linux and Windows, including universal binaries and stripped ones. Use when inspecting a Mach-O, a .app bundle, an iOS binary, a dylib, a Go/Rust/Swift/ObjC executable, or when handed a crash-log address, a "what is this binary" question, or a magic number to trace back to its handler — even when MachO-explorer/MachO-explorer is not named.
+description: Reads Apple Mach-O binaries without otool, nm or a disassembler. Answers what is in a binary, which function contains an address, what directly calls a given address, where a byte literal or file-format magic lives in the file, and which code points at it. Works on macOS, Linux and Windows, including universal binaries and stripped ones. Use when inspecting a Mach-O, a .app bundle, an iOS binary, a dylib, a Go/Rust/Swift/ObjC executable, or when handed a crash-log address, a "what is this binary" question, or a magic number to trace back to its handler — even when MachO-explorer is not named.
 license: LGPL-3.0-or-later
 metadata:
   version: "1.0.0"
@@ -18,20 +18,20 @@ try to make it decode code.
 
 ## Reading the file's structure
 
-`macho-describe` is also the only tool here that shows you the map: every
+`describe` is also the only tool here that shows you the map: every
 segment, every section with its address and size, every load command by name,
 the build's UUID — the one field that says *which* build this is rather than
 what is in it — and the platform and filetype, which say whether you are holding
 an iOS binary, a framework or a command-line tool.
 
 ```sh
-macho-describe --sections /path/to/binary   # segment,section  addr..end  size  code|data
-macho-describe --segments /path/to/binary   # name  vm range  file range
-macho-describe --loads    /path/to/binary   # LC_SEGMENT_64, LC_LOAD_DYLIB, LC_UUID, ...
-macho-describe --arch=arm64 /path/to/binary # one slice of a universal binary
+describe --sections /path/to/binary   # segment,section  addr..end  size  code|data
+describe --segments /path/to/binary   # name  vm range  file range
+describe --loads    /path/to/binary   # LC_SEGMENT_64, LC_LOAD_DYLIB, LC_UUID, ...
+describe --arch=arm64 /path/to/binary # one slice of a universal binary
 ```
 
-The `code`/`data` marking is the same signal `macho-findcall` types its scan by,
+The `code`/`data` marking is the same signal `findcall` types its scan by,
 so the two can be checked against each other.
 
 Load commands are **named, not interpreted**. Knowing a binary declares
@@ -82,17 +82,17 @@ An **unknown load command is not an abnormality** — those are named by number 
 To see its strings without knowing one in advance:
 
 ```sh
-macho-findliteral --strings /path/to/binary
-macho-findliteral --strings --min=8 --filter=error /path/to/binary
+findliteral --strings /path/to/binary
+findliteral --strings --min=8 --filter=error /path/to/binary
 ```
 
 Each string carries its address and its section, so it can be handed straight to
-`macho-symlookup`. This reads `__cstring`, `__objc_methname`, `__swift5_reflstr`
+`symlookup`. This reads `__cstring`, `__objc_methname`, `__swift5_reflstr`
 and `__objc_classname`.
 
 **It finds nothing in a Go binary.** Go keeps its strings length-prefixed inside
 `__gopclntab`, not NUL-terminated, so there is no terminator to scan for and zero
-is the correct answer. Use `macho-sym` on a Go symbol, or `macho-findliteral`
+is the correct answer. Use `sym` on a Go symbol, or `findliteral`
 with a substring you already know, instead.
 
 ## Three ways in, in order of preference
@@ -101,22 +101,22 @@ with a substring you already know, instead.
 return structured answers:
 
 ```
-macho-describe  macho-sym  macho-symlookup  macho-findcall
-macho-findliteral  macho-mapliteral  macho-a2o  macho-o2a
+describe  sym  symlookup  findcall
+findliteral  mapliteral  a2o  o2a
 ```
 
 **2. The CLI**, which needs nothing configured:
 
 ```sh
-macho-describe    /path/to/binary
-macho-sym         'runtime.main' /path/to/binary
-macho-symlookup   0x100085c30 -b /path/to/binary
-macho-findcall    0x100085c30 /path/to/binary
-macho-findliteral LZ4 "/path/to/Some App.app"
-macho-mapliteral  LZ4 /path/to/binary
-macho-a2o         0x100085c30 -b /path/to/binary     # address  → file offset
-macho-o2a         0x85c30 -b /path/to/binary          # file offset → address
-macho-disasm      0x100085c30 /path/to/binary         # where instructions start, and where they branch
+describe    /path/to/binary
+sym         'runtime.main' /path/to/binary
+symlookup   0x100085c30 -b /path/to/binary
+findcall    0x100085c30 /path/to/binary
+findliteral LZ4 "/path/to/Some App.app"
+mapliteral  LZ4 /path/to/binary
+a2o         0x100085c30 -b /path/to/binary     # address  → file offset
+o2a         0x85c30 -b /path/to/binary          # file offset → address
+disasm      0x100085c30 /path/to/binary         # where instructions start, and where they branch
 ```
 
 **3. The library**, when you are writing code:
@@ -140,20 +140,20 @@ is accepted, a bundle is too.
 Reverse-engineering a binary is a loop, and skipping the first step is how you
 end up reading addresses that were never in that slice.
 
-1. **`macho-describe`** first, always. It tells you how many slices there are,
+1. **`describe`** first, always. It tells you how many slices there are,
    which architecture each is, whether there is a symbol table to search at all,
    where `__TEXT` starts, and the build's UUID. On a universal binary everything
    after this needs `--arch` or it silently reads one arbitrary slice.
-2. **`macho-sym`** to turn a name into an address.
-3. **`macho-symlookup`** to turn an address back into a function — the way to
+2. **`sym`** to turn a name into an address.
+3. **`symlookup`** to turn an address back into a function — the way to
    make sense of an address from a crash log.
-4. **`macho-findcall`** for who calls it.
-5. **`macho-findliteral`** for where a format magic sits, then
-   **`macho-mapliteral`** for which code points at it. This pair is the one with
+4. **`findcall`** for who calls it.
+5. **`findliteral`** for where a format magic sits, then
+   **`mapliteral`** for which code points at it. This pair is the one with
    no equivalent in `ipsw`, Ghidra or `otool`.
 
 To go the other way — from an address to the file position to read bytes —
-`macho-a2o` then `macho-o2a`.
+`a2o` then `o2a`.
 
 ## Five things that will otherwise waste your time
 
@@ -170,7 +170,7 @@ error, 3 means the file could not be read. `ok:false` with
 it is there and is not a Mach-O. Those are different problems and the codes tell
 them apart.
 
-**`macho-findcall` sees direct calls only.** A call through a register, or
+**`findcall` sees direct calls only.** A call through a register, or
 through a PLT stub, does not encode its target in the instruction, so it does not
 appear. Every hit is a site *worth* opening in a disassembler, not a proven
 call-graph edge, and **an empty result does not mean nothing calls the target.**
@@ -178,9 +178,9 @@ On x86_64 the scan is typed by section rather than by instruction, so it can als
 match a byte inside the middle of a multi-byte instruction. On arm64 it steps 4
 bytes and sees only aligned `BL`s.
 
-**A stripped binary has no symbols.** `macho-sym` and `macho-symlookup` return
+**A stripped binary has no symbols.** `sym` and `symlookup` return
 nothing at all rather than guessing — which means a missing `.dSYM` makes those
-two useless, while `macho-findcall` and `macho-findliteral` keep working, because
+two useless, while `findcall` and `findliteral` keep working, because
 they read bytes rather than names. When symbols are missing, go straight to
 `findliteral`/`mapliteral` or to the byte-oriented tools.
 
@@ -199,7 +199,7 @@ but does not interpret them. Not ELF, not PE. **Little-endian only** — big-end
 Mach-O (NeXTSTEP on m68k/SPARC, classic Mac OS on PowerPC) is refused as
 `unknown-encoding`; a `ppc` slice is named and reported `readable: false`.
 
-`macho-disasm` does decode instruction lengths and resolve **direct** branches
+`disasm` does decode instruction lengths and resolve **direct** branches
 (`x86_64` for `x86_64`, and `BL`/`B`/`B.cond`/`CBZ`/`CBNZ`/`TBZ`/`TBNZ`/`ADR`/`ADRP`
 for `arm64`/`arm64e`) — that is what it is for, and it is not a disassembler:
 instructions come back as bytes, not as text. Read it as a linear sweep from a
@@ -222,14 +222,14 @@ Apple has no separate platform constant for it, and `armv7k` reports as `arm`,
 so the platform command is what identifies a watch build rather than the
 architecture name.
 
-`macho-describe` reports the platform (`ios`, `macos`, `tvos`, `watchos`, the
+`describe` reports the platform (`ios`, `macos`, `tvos`, `watchos`, the
 simulators), the filetype, and whether an App Store binary's `__TEXT` is
 encrypted — which is the one thing that makes a zero result from
-`macho-findcall` mean "could not look" rather than "nothing calls this".
+`findcall` mean "could not look" rather than "nothing calls this".
 
 When you need to know what the code *does* rather than where it is, use Ghidra
 (free, no licence server) or Hopper. That is the intended division: this produces
-the shortlist of addresses worth opening, and hands them over — `macho-disasm`
+the shortlist of addresses worth opening, and hands them over — `disasm`
 narrows that shortlist to instruction boundaries and direct branch edges, which is
 the last step before a real disassembler takes over.
 
@@ -239,8 +239,8 @@ the last step before a real disassembler takes over.
   messages?, notes?, data}`, with stdout carrying only JSON and all prose on
   stderr.
 - Addresses come back as `"0x…"` strings, deliberately — see above.
-- The binary comes from an explicit argument, then `$MACHO_BINARY`, then
-  `$MACHO_APP`. `macho-symlookup`, `macho-a2o` and `macho-o2a` take only queries
+- The binary comes from an explicit argument, then `$MACHO_EXPLORER_BINARY`, then
+  `$MACHO_EXPLORER_APP`. `symlookup`, `a2o` and `o2a` take only queries
   as positionals, so their binary must come from `-b` or the environment.
 - `--arch=<x86_64|arm64>` is a preference, not a requirement: if that slice is
   absent, another is read and a note says which. Check the note rather than
@@ -272,10 +272,10 @@ or in `.mcp.json`:
 { "mcpServers": { "macho": {
     "command": "node",
     "args": ["/absolute/path/to/src/mcp.mjs"],
-    "env": { "MACHO_BINARY": "/path/to/a/binary" } } } }
+    "env": { "MACHO_EXPLORER_BINARY": "/path/to/a/binary" } } } }
 ```
 
-`MACHO_BINARY` saves passing a path on every call. It speaks both the modern
+`MACHO_EXPLORER_BINARY` saves passing a path on every call. It speaks both the modern
 `2026-07-28` protocol (per-request `_meta`, no handshake) and the legacy
 `initialize` handshake, because clients in the wild still use both.
 

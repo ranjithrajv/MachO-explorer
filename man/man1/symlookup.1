@@ -1,8 +1,8 @@
-.TH MACHO\-SYMLOOKUP 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH SYMLOOKUP 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-symlookup \- find which function contains a virtual address
+symlookup \- find which function contains a virtual address
 .SH SYNOPSIS
-.B macho\-symlookup
+.B symlookup
 .I hex-vaddr
 .RI [ hex-vaddr ...]
 .RB [ \-\-json ]
@@ -79,14 +79,14 @@ Addresses are rendered as
 strings rather than numbers.
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 The binary to read when none is given.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle to read, tried after
-.BR MACHO_BINARY .
+.BR MACHO_EXPLORER_BINARY .
 .TP
-.B MACHO_CONFIG
+.B MACHO_EXPLORER_CONFIG
 Path to a replacement
 .IR config.json .
 .SH EXIT STATUS
@@ -107,8 +107,8 @@ The file could not be read, or the chosen slice has no symbol table.
 .SH EXAMPLES
 .RS
 .nf
-macho\-symlookup 0x100085c30 \-b /usr/local/go/bin/go
-macho\-symlookup \-\-json 0x100085c30 \-b /usr/local/go/bin/go | jq '.data.function'
+symlookup 0x100085c30 \-b /usr/local/go/bin/go
+symlookup \-\-json 0x100085c30 \-b /usr/local/go/bin/go | jq '.data.function'
 .fi
 .RE
 .PP
@@ -118,8 +118,8 @@ prefix. The prefix is required, because a bare hexadecimal number is
 ambiguous with a decimal one and a tool that guesses which was meant answers
 about the wrong address.
 .SH SEE ALSO
-.BR macho\-sym (1),
-.BR macho\-describe (1),
-.BR macho\-findcall (1),
+.BR sym (1),
+.BR describe (1),
+.BR findcall (1),
 .BR nm (1),
 .BR otool (1)

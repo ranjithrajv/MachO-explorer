@@ -1,8 +1,8 @@
-.TH MACHO\-DISASM 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH DISASM 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-disasm \- decode instruction lengths and direct branch targets
+disasm \- decode instruction lengths and direct branch targets
 .SH SYNOPSIS
-.B macho\-disasm
+.B disasm
 .RI [ hex-addr ]
 .RI [ binary | bundle ]
 .RI [ count ]
@@ -21,9 +21,9 @@ it reports only the branches, as resolved
 edges.
 .PP
 This is what
-.BR macho\-findcall (1)
+.BR findcall (1)
 cannot do on its own.
-.B macho\-findcall
+.B findcall
 finds the five bytes
 .B e8 xx xx xx xx
 and reports them as call sites, but the same five bytes occur inside longer
@@ -38,8 +38,8 @@ prefer a symbol address when one is available:
 .PP
 .RS
 .nf
-macho\-symlookup 0x100085c30 \-b /usr/local/go/bin/go
-macho\-disasm 0x100085c30 /usr/local/go/bin/go
+symlookup 0x100085c30 \-b /usr/local/go/bin/go
+disasm 0x100085c30 /usr/local/go/bin/go
 .fi
 .RE
 .SH WHAT THIS IS NOT
@@ -66,7 +66,7 @@ are deliberately
 reported as branches: the displacement addresses a pointer, not code, and
 treating it as a branch displacement fabricates a target roughly 2<sup>32</sup>
 bytes away. Locating those is
-.BR macho\-mapliteral (1)'s
+.BR mapliteral (1)'s
 job.
 .PP
 .BR arm64 / arm64e
@@ -178,14 +178,14 @@ instructions are not decoded here" and "there is nothing at that address" are
 different answers and a caller needs to be able to tell them apart.
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 The binary to read when none is given.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle to read, tried after
-.BR MACHO_BINARY .
+.BR MACHO_EXPLORER_BINARY .
 .TP
-.B MACHO_CONFIG
+.B MACHO_EXPLORER_CONFIG
 Path to a replacement
 .IR config.json .
 .SH EXIT STATUS
@@ -208,7 +208,7 @@ Where do instructions start at this address, and where do they go?
 .PP
 .RS
 .nf
-macho\-disasm 0x100085c30 /usr/local/go/bin/go
+disasm 0x100085c30 /usr/local/go/bin/go
 .fi
 .RE
 .PP
@@ -216,17 +216,17 @@ Every direct branch in the next 4 KiB, as edges:
 .PP
 .RS
 .nf
-macho\-disasm \-\-branches \-\-bytes=4096 \-\-count=0 \-b /usr/local/go/bin/go
+disasm \-\-branches \-\-bytes=4096 \-\-count=0 \-b /usr/local/go/bin/go
 .fi
 .RE
 .PP
 What
-.B macho\-findcall
+.B findcall
 found, resolved to real instruction boundaries:
 .PP
 .RS
 .nf
-macho\-disasm \-\-json 0x100085c30 64 /usr/local/go/bin/go \
+disasm \-\-json 0x100085c30 64 /usr/local/go/bin/go \
   | jq -r '.data.instructions[] | select(.kind) | "\(.addr) \(.kind) \(.target)"'
 .fi
 .RE
@@ -235,7 +235,7 @@ macho\-disasm \-\-json 0x100085c30 64 /usr/local/go/bin/go \
 .PP
 .RS
 .nf
-macho\-disasm \-\-arch=arm64 \-\-count=16 /usr/local/go/bin/go
+disasm \-\-arch=arm64 \-\-count=16 /usr/local/go/bin/go
 .fi
 .RE
 .SH NOTES
@@ -252,10 +252,10 @@ A decoded instruction that runs past the end of the requested range is reported
 with its full length and clipped, rather than silently dropped \- so the record
 count still adds up to what was asked for.
 .SH SEE ALSO
-.BR macho\-findcall (1),
-.BR macho\-mapliteral (1),
-.BR macho\-symlookup (1),
-.BR macho\-describe (1),
+.BR findcall (1),
+.BR mapliteral (1),
+.BR symlookup (1),
+.BR describe (1),
 .BR otool (1),
 .BR objdump (1),
 .BR nm (1)

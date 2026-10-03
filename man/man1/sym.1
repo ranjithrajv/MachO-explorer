@@ -1,8 +1,8 @@
-.TH MACHO\-SYM 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH SYM 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-macho\-sym \- search a Mach\-O symbol table
+sym \- search a Mach\-O symbol table
 .SH SYNOPSIS
-.B macho\-sym
+.B sym
 .I pattern
 .RI [ binary | bundle ]
 .RI [ max ]
@@ -80,14 +80,14 @@ Print one row per symbol table entry rather than one per distinct name.
 Cap on the number of rows, when deduplicating. The default is 4000.
 .SH ENVIRONMENT
 .TP
-.B MACHO_BINARY
+.B MACHO_EXPLORER_BINARY
 The binary to read when none is given on the command line.
 .TP
-.B MACHO_APP
+.B MACHO_EXPLORER_APP
 An application bundle to read, tried after
-.BR MACHO_BINARY .
+.BR MACHO_EXPLORER_BINARY .
 .TP
-.B MACHO_CONFIG
+.B MACHO_EXPLORER_CONFIG
 Path to a replacement
 .IR config.json .
 .SH EXIT STATUS
@@ -109,7 +109,7 @@ Find a symbol by substring:
 .PP
 .RS
 .nf
-macho\-sym runtime.main /usr/local/go/bin/go
+sym runtime.main /usr/local/go/bin/go
 .fi
 .RE
 .PP
@@ -117,7 +117,7 @@ Search with a regular expression:
 .PP
 .RS
 .nf
-macho\-sym \-\-regex 'runtime\..*main' /usr/local/go/bin/go
+sym \-\-regex 'runtime\..*main' /usr/local/go/bin/go
 .fi
 .RE
 .PP
@@ -125,7 +125,7 @@ Count matches without reading the human\-readable report:
 .PP
 .RS
 .nf
-macho\-sym \-\-json compress /usr/bin/ssh | jq '.count'
+sym \-\-json compress /usr/bin/ssh | jq '.count'
 .fi
 .RE
 .PP
@@ -133,34 +133,34 @@ Include imported names, one row per entry:
 .PP
 .RS
 .nf
-macho\-sym \-\-all\-imp \-\-no\-dedupe memcpy /usr/bin/ssh
+sym \-\-all\-imp \-\-no\-dedupe memcpy /usr/bin/ssh
 .fi
 .RE
 .SH NOTES
 This tool was previously two, called
-.B macho\-symgrep
+.B symgrep
 (regex, defined symbols only, one row per entry) and
-.B macho\-symfind
+.B symfind
 (substring, imports included, deduplicated). Both were removed in 0.1.0 rather
 than kept as aliases. The equivalent invocations are
-.B macho\-sym \-\-regex
+.B sym \-\-regex
 and
-.BR "macho\-sym \-\-all\-imp" .
+.BR "sym \-\-all\-imp" .
 .PP
 A stripped binary has no symbol names to search. This tool then reports no
 matches rather than guessing;
-.BR macho\-symlookup (1)
+.BR symlookup (1)
 and
-.BR macho\-findcall (1)
+.BR findcall (1)
 read addresses and bytes instead and still work.
 .SH SEE ALSO
-.BR macho\-describe (1),
-.BR macho\-symlookup (1),
-.BR macho\-findcall (1),
-.BR macho\-findliteral (1),
-.BR macho\-mapliteral (1),
-.BR macho\-a2o (1),
-.BR macho\-o2a (1),
+.BR describe (1),
+.BR symlookup (1),
+.BR findcall (1),
+.BR findliteral (1),
+.BR mapliteral (1),
+.BR a2o (1),
+.BR o2a (1),
 .BR otool (1),
 .BR nm (1),
 .BR lipo (1)

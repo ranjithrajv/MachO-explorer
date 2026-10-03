@@ -17,7 +17,7 @@
  *
  * ## Overriding
  *
- * `config.json` beside the source holds the shipped convention; `MACHO_CONFIG`
+ * `config.json` beside the source holds the shipped convention; `MACHO_EXPLORER_CONFIG`
  * names a file to use instead. Only the `bundle` key is read here.
  *
  * `macosDir` is an array of *segments*, not a joined string, precisely because
@@ -31,7 +31,7 @@ import fs from 'node:fs';
 const DEFAULT_LAYOUT = { ext: '.app', macosDir: ['Contents', 'MacOS'] };
 
 /** Environment variable naming an override file. */
-export const CONFIG_ENV = 'MACHO_CONFIG';
+export const CONFIG_ENV = 'MACHO_EXPLORER_CONFIG';
 
 /** Absolute path to the shipped defaults, resolved relative to this file. */
 const DEFAULT_CONFIG = new URL('../config.json', import.meta.url);
@@ -41,7 +41,7 @@ let _layout = null;
 /**
  * Read the config, or `null` if no source can be read or parsed.
  *
- * An explicit `MACHO_CONFIG` that is broken falls through to the shipped
+ * An explicit `MACHO_EXPLORER_CONFIG` that is broken falls through to the shipped
  * defaults rather than throwing: the tools are CLIs run by hand, and refusing to
  * start because an optional convenience override is malformed is a worse answer
  * than ignoring it.

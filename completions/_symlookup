@@ -1,6 +1,6 @@
-#compdef macho-symlookup
+#compdef symlookup
 #
-# zsh completion for macho-symlookup. Install as _macho-symlookup in a directory
+# zsh completion for symlookup. Install as _symlookup in a directory
 # on your $fpath.
 #
 # MachO-explorer 0.1.0.
