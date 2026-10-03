@@ -78,8 +78,12 @@ const LC_SEGMENT_64 = 0x19;
 const LC_SYMTAB = 0x2;
 const LC_UUID = 0x1b;
 const LC_RPATH = 0x1c;
-const LC_MAIN = 0x29;
-const LC_SOURCE_VERSION = 0x2b;
+// `LC_MAIN` is defined by `<mach-o/loader.h>` as `(0x28 | LC_REQ_DYLD)`, and the
+// bare `0x29` is `LC_DATA_IN_CODE` — a different command with a different payload.
+// Written out rather than imported, because the builder must be an independent
+// witness; a fixture that borrowed the reader's constant would encode its typo.
+const LC_MAIN = 0x80000028;
+const LC_SOURCE_VERSION = 0x2a;
 
 /**
  * Header `flags` bits, for the fixture that exercises flag decoding.
@@ -552,45 +556,18 @@ function arm64Ret() {
 /* ---- load-command encoders --------------------------------------- */
 
 /**
- * `LC_MAIN` in the **16-byte** form — the one that actually ships.
+ * `LC_MAIN` — `struct entry_point_command`, `cmdsize` 24.
  *
- * `<mach-o/loader.h>` documents `struct entry_point_command` as `cmdsize` 24,
- * with `entryoff` and `stacksize` both `uint64_t`. Every LC_MAIN measured on the
- * machine that generated this corpus — 672 slices across /bin, /usr/bin and the
- * system frameworks — declares `cmdsize` **16**: `entryoff` with no `stacksize`
- * after it.
+ * `cmd` is `0x80000028` (the `LC_REQ_DYLD` form, which is how the header defines
+ * it), `entryoff` and `stacksize` are both `uint64_t`. Those are the values a real
+ * linker writes, and the command the reader must match; the earlier fixtures used
+ * the bare `0x29`, which is `LC_DATA_IN_CODE` and made the whole corpus agree with
+ * a misreading.
  *
- * So this encoder writes the 16-byte form and, crucially, puts **uninitialised
- * bytes in the upper half** of `entryoff` — 0x18 here, matching what the x86_64
- * slices of /bin/ls, /bin/cat and /bin/cp actually contain. That is the whole
- * reason the fixture exists: a reader that reads a fixed 24 bytes gets the *next*
- * load command's header as `stacksize`, and one that reads 8 bytes at offset 8
- * without consulting `cmdsize` reports `entryoff` as 0x18000000 + the real
- * offset. Both results are plausible numbers and both are wrong.
- *
- * `garbageHigh` is a parameter so the test can also assert the *clean* case, where
- * the upper half happens to be zero and a 64-bit read would accidentally be right
- * — which is the condition that hides the bug on arm64.
+ * `entryoff` is given a value above 2^32 by the caller that needs one, so a reader
+ * that narrowed the field to its low 32 bits would be caught rather than passing.
  */
-function lcMain16(entryoff, garbageHigh = 0x18) {
-  const b = Buffer.alloc(16);
-  b.writeUInt32LE(LC_MAIN, 0);
-  b.writeUInt32LE(16, 4);
-  b.writeUInt32LE(entryoff >>> 0, 8);
-  b.writeUInt32LE(garbageHigh >>> 0, 12);
-  return b;
-}
-
-/**
- * `LC_MAIN` in the documented **24-byte** form, with a real 64-bit `entryoff`
- * and a `stacksize`.
- *
- * Never observed on this machine, so it cannot come from a system binary — which
- * is precisely why it is built here. A reader that took `cmdsize` as always 16
- * would pass every real binary in the corpus and fail this one, and this is the
- * only fixture that can tell it.
- */
-function lcMain24(entryoff, stacksize) {
+function lcMain(entryoff, stacksize) {
   const b = Buffer.alloc(24);
   b.writeUInt32LE(LC_MAIN, 0);
   b.writeUInt32LE(24, 4);
@@ -1288,7 +1265,8 @@ function populatedFixture() {
  *     told apart. These are disjoint fields — type is the low 8 bits, attributes
  *     the top 24 — and a reader that masked the wrong half would report `0x2` as
  *     an unknown *attribute* on every C-string section in every binary;
- *   - `LC_MAIN` in its 16-byte form, with uninitialised upper bits planted;
+ *   - `LC_MAIN` in its 24-byte form, with a 64-bit `stacksize` whose high half is
+ *     set, so a reader that narrowed the field to 32 bits is caught;
  *   - `LC_RPATH`, whose payload is an offset rather than an inline string;
  *   - `LC_SOURCE_VERSION`, packed `a24.b10.c10.d10.e10`.
  *
@@ -1303,11 +1281,15 @@ function populatedFixture() {
 function metaFixture() {
   const RPATH = '@executable_path/../Frameworks';
   const ENTRYOFF = 0x40;
-  const GARBAGE_HIGH = 0x18;
+  // A `stacksize` with its high 32 bits set. No real binary asks for a 4 GiB
+  // stack, but the field is a `uint64_t` and this is the only way a fixture can
+  // tell a 64-bit read from a 32-bit one — a small value would let the wrong read
+  // pass by accident.
+  const STACKSIZE = 0x100000000;
   const VERSION = { a: 0x1234, b: 12, c: 4, d: 5, e: 6 };
 
   const extra = [
-    lcMain16(ENTRYOFF, GARBAGE_HIGH),
+    lcMain(ENTRYOFF, STACKSIZE),
     lcRpath(RPATH),
     lcSourceVersion(VERSION.a, VERSION.b, VERSION.c, VERSION.d, VERSION.e),
   ];
@@ -1330,7 +1312,7 @@ function metaFixture() {
     buf,
     rpath: RPATH,
     entryoff: ENTRYOFF,
-    entryoffHighGarbage: GARBAGE_HIGH,
+    stacksize: STACKSIZE,
     sourceVersion: { ...VERSION, text: `${VERSION.a}.${VERSION.b}.${VERSION.c}.${VERSION.d}.${VERSION.e}` },
     dataFlags: S_CSTRING_LITERALS | S_ATTR_DEBUG,
     extraLoadcmds,
@@ -1851,18 +1833,19 @@ async function verify(files) {
       s.rpaths.length === 1 && s.rpaths[0] === exp.rpath,
       `meta: reads the LC_RPATH path through its lc_str offset (got ${JSON.stringify(s.rpaths)})`,
     );
-    // LC_MAIN, 16-byte form. `entryoff` must be the low 32 bits and the planted
-    // garbage in the upper half must not leak into the reported value.
+    // LC_MAIN, 24-byte form. Both fields are `uint64_t`; the high half of
+    // `stacksize` must survive, which is what proves the read is 64 bits wide
+    // rather than 32.
     expect(
       s.entryPoint !== null && Number(s.entryPoint.entryoff) === exp.entryoff,
-      `meta: LC_MAIN.entryoff is the 32-bit value (got ${s.entryPoint?.entryoff})`,
+      `meta: LC_MAIN.entryoff round-trips (got ${s.entryPoint?.entryoff})`,
     );
     expect(
-      s.entryPoint?.stacksize === null,
-      'meta: the 16-byte LC_MAIN reports no stacksize rather than reading the next command',
+      s.entryPoint?.stacksize === BigInt(exp.stacksize),
+      `meta: LC_MAIN.stacksize is read as 64 bits (got ${s.entryPoint?.stacksize})`,
     );
     expect(
-      s.entryPoint?.cmdsize === 16,
+      s.entryPoint?.cmdsize === 24,
       `meta: LC_MAIN's declared cmdsize is reported (got ${s.entryPoint?.cmdsize})`,
     );
     // LC_SOURCE_VERSION, a24.b10.c10.d10.e10.
@@ -2389,7 +2372,7 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
       dataSectionAttributes: ['S_ATTR_DEBUG'],
       rpath: meta.rpath,
       entryoff: meta.entryoff,
-      entryoffHighGarbage: meta.entryoffHighGarbage,
+      stacksize: meta.stacksize,
       sourceVersion: meta.sourceVersion.text,
       loadCommands: ['LC_SEGMENT_64', 'LC_SYMTAB', 'LC_MAIN', 'LC_RPATH', 'LC_SOURCE_VERSION'],
     },

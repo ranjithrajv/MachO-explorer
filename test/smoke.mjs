@@ -1126,7 +1126,7 @@ console.log('\na2o / o2a: address and file offset');
     dataSectionAttributes: ['S_ATTR_DEBUG'],
     rpath: '@executable_path/../Frameworks',
     entryoff: 0x40,
-    entryoffHighGarbage: 0x18,
+    stacksize: 0x100000000,
     sourceVersion: '4660.12.4.5.6',
   };
 
@@ -1228,35 +1228,32 @@ console.log('\na2o / o2a: address and file offset');
         `got ${JSON.stringify(s.rpaths)}`,
       );
 
-      // ---- LC_MAIN, 16-byte form
+      // ---- LC_MAIN, 24-byte form
       //
-      // The fixture plants 0x18 in the upper half of `entryoff`, exactly as the
-      // x86_64 slices of the system's own binaries do. Reading a fixed 24 bytes
-      // instead of the command's declared 16 would report an entry offset of
-      // 0x180000040 — a number that looks like an offset and is not one.
+      // `cmd` is `0x80000028` — `0x28 | LC_REQ_DYLD`, the form `<mach-o/loader.h>`
+      // defines. The bare `0x29` a reader might match instead is `LC_DATA_IN_CODE`,
+      // whose `dataoff` is a file offset into `__LINKEDIT`: it looks exactly like an
+      // entry offset while belonging to a different command. The fixture's
+      // `stacksize` has its high 32 bits set, so a read narrowed to 32 bits is
+      // caught rather than accidentally right.
       check(
         s.entryPoint !== null && Number(s.entryPoint.entryoff) === want.entryoff,
-        'describe: LC_MAIN.entryoff is the 32-bit value, not the next command glued on',
+        'describe: LC_MAIN.entryoff comes from the command that actually carries it',
         `got ${s.entryPoint?.entryoff}`,
       );
       check(
-        s.entryPoint?.rawHigh32 === want.entryoffHighGarbage,
-        'describe: the uninitialised upper half is disclosed rather than hidden',
-        `got 0x${s.entryPoint?.rawHigh32.toString(16)}`,
-      );
-      check(
-        s.entryPoint?.stacksize === null,
-        'describe: the 16-byte LC_MAIN reports no stacksize',
+        s.entryPoint?.stacksize === BigInt(want.stacksize),
+        'describe: LC_MAIN.stacksize is read as the uint64 the header declares',
         `got ${s.entryPoint?.stacksize}`,
       );
       check(
-        s.entryPoint?.cmdsize === 16,
+        s.entryPoint?.cmdsize === 24,
         "describe: LC_MAIN's declared cmdsize is reported, so the reading is explicable",
         `got ${s.entryPoint?.cmdsize}`,
       );
       // The refusal, which is a feature rather than a gap. See resolveEntryPoint:
-      // __TEXT.vmaddr + entryoff lands in __LINKEDIT on a real 113 MB binary, so
-      // publishing that sum would be publishing a wrong address.
+      // the vaddr is one `a2o` call away, and deriving it here would publish a
+      // second, independently-computed answer for the same fact.
       check(
         s.entryPoint?.vaddr === null && /no address is derived/.test(s.entryPoint?.note || ''),
         'describe: no virtual address is invented from an LC_MAIN offset',

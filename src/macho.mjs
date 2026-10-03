@@ -55,8 +55,41 @@ export const LC_SYMTAB = 0x2;
 export const LC_SEGMENT_64 = 0x19;
 export const LC_UUID_CMD = 0x1b;
 export const LC_RPATH_CMD = 0x1c;
-export const LC_MAIN_CMD = 0x29;
-export const LC_SOURCE_VERSION_CMD = 0x2b;
+
+/**
+ * `LC_REQ_DYLD`, the bit that marks a command the loader must understand.
+ *
+ * Several commands are *defined* with this bit set — `LC_MAIN` is `0x28 |
+ * LC_REQ_DYLD`, not `0x28` — and the bit is part of the command's identity rather
+ * than a decoration on it. A reader that matches the bare `0x28` misses the only
+ * form a real binary emits. See {@link LC_MAIN_CMD}.
+ */
+export const LC_REQ_DYLD = 0x80000000;
+
+/**
+ * The entry point, in the form a compiled binary actually declares.
+ *
+ * `<mach-o/loader.h>` defines `LC_MAIN` as `(0x28 | LC_REQ_DYLD)`. This constant
+ * is that value, and it is the value the comparison in `parseThin` must use: the
+ * bare `0x28` names nothing, and the command that *does* sit at bare `0x29` is
+ * `LC_DATA_IN_CODE`, a `linkedit_data_command` whose `dataoff` is a file offset
+ * into `__LINKEDIT`. Reading that as an entry point yields an `entryoff` that
+ * looks like an offset and is not one.
+ */
+export const LC_MAIN = 0x28;
+// `>>> 0` because `|` is a signed 32-bit operation in JavaScript: `0x28 | 0x80000000`
+// is the negative number -2147483608, while `readUInt32LE` hands back the unsigned
+// 2147483688. Comparing the two would never match.
+export const LC_MAIN_CMD = (LC_MAIN | LC_REQ_DYLD) >>> 0;
+
+/** `LC_SOURCE_VERSION`: the source revision, packed `a24.b10.c10.d10.e10`. */
+export const LC_SOURCE_VERSION_CMD = 0x2a;
+
+/** `LC_FUNCTION_STARTS`: ULEB128 deltas of function start addresses. */
+export const LC_FUNCTION_STARTS_CMD = 0x26;
+
+/** `LC_DATA_IN_CODE`: file ranges that are data rather than instructions. */
+export const LC_DATA_IN_CODE_CMD = 0x29;
 
 /**
  * Load-command names, for `describe --loads`.
@@ -108,21 +141,21 @@ export const LOAD_COMMANDS = {
   0x20: 'LC_LAZY_LOAD_DYLIB',
   0x21: 'LC_ENCRYPTION_INFO',
   0x22: 'LC_DYLD_INFO',
-  0x23: 'LC_DYLD_INFO_ONLY',
-  0x24: 'LC_LOAD_UPWARD_DYLIB',
-  0x25: 'LC_VERSION_MIN_MACOSX',
-  0x26: 'LC_VERSION_MIN_IPHONEOS',
-  0x27: 'LC_FUNCTION_STARTS',
-  0x28: 'LC_DYLD_ENVIRONMENT',
-  0x29: 'LC_MAIN',
-  0x2a: 'LC_DATA_IN_CODE',
-  0x2b: 'LC_SOURCE_VERSION',
-  0x2c: 'LC_DYLIB_CODE_SIGN_DRS',
-  0x2d: 'LC_ENCRYPTION_INFO_64',
-  0x2e: 'LC_LINKER_OPTION',
-  0x2f: 'LC_LINKER_OPTIMIZATION_HINT',
-  0x30: 'LC_VERSION_MIN_TVOS',
-  0x31: 'LC_VERSION_MIN_WATCHOS',
+  0x23: 'LC_LOAD_UPWARD_DYLIB',
+  0x24: 'LC_VERSION_MIN_MACOSX',
+  0x25: 'LC_VERSION_MIN_IPHONEOS',
+  0x26: 'LC_FUNCTION_STARTS',
+  0x27: 'LC_DYLD_ENVIRONMENT',
+  0x28: 'LC_MAIN',
+  0x29: 'LC_DATA_IN_CODE',
+  0x2a: 'LC_SOURCE_VERSION',
+  0x2b: 'LC_DYLIB_CODE_SIGN_DRS',
+  0x2c: 'LC_ENCRYPTION_INFO_64',
+  0x2d: 'LC_LINKER_OPTION',
+  0x2e: 'LC_LINKER_OPTIMIZATION_HINT',
+  0x2f: 'LC_VERSION_MIN_TVOS',
+  0x30: 'LC_VERSION_MIN_WATCHOS',
+  0x31: 'LC_NOTE',
   0x32: 'LC_BUILD_VERSION',
   0x33: 'LC_DYLD_EXPORTS_TRIE',
   0x34: 'LC_DYLD_CHAINED_FIXUPS',
@@ -133,11 +166,33 @@ export const LOAD_COMMANDS = {
   0x39: 'LC_TARGET_TRIPLE',
 };
 
-/** Name a load command, or report its number when this table has no entry. */
+/**
+ * Commands whose `LC_REQ_DYLD` form has a *different* name from the bare value.
+ *
+ * Stripping the `0x80000000` bit is right for `LC_RPATH` (`0x1c` and
+ * `0x8000001c` are the same command), but wrong for these: `LC_MAIN` is *defined*
+ * as `0x28 | LC_REQ_DYLD`, and the bare `0x28` names nothing. Without this map,
+ * `0x80000028` strips to `0x28` and the reader either prints a number or — if the
+ * table also carried a `0x28` entry — would name it by the wrong command.
+ */
+const REQ_DYLD_NAMES = {
+  0x80000018: 'LC_LOAD_WEAK_DYLIB',
+  0x8000001f: 'LC_REEXPORT_DYLIB',
+  0x80000022: 'LC_DYLD_INFO_ONLY',
+  0x80000023: 'LC_LOAD_UPWARD_DYLIB',
+  0x80000028: 'LC_MAIN',
+  0x80000033: 'LC_DYLD_EXPORTS_TRIE',
+  0x80000034: 'LC_DYLD_CHAINED_FIXUPS',
+  0x80000035: 'LC_FILESET_ENTRY',
+};
+
+/** Name a load command, or report its number when no table has an entry. */
 export function loadCommandName(cmd) {
-  // LC_REQ_DYLD is 0x80000000 and is *added* to a base command, so stripping it
-  // finds LC_RPATH for 0x8000001c. It is never a command on its own.
-  return LOAD_COMMANDS[cmd & 0x7fffffff] || `0x${(cmd >>> 0).toString(16)}`;
+  // The exact `LC_REQ_DYLD` form is checked first, because for the commands in
+  // REQ_DYLD_NAMES the bit is part of the name rather than decoration on it. Only
+  // then is the bit stripped, which is the right rule for everything else and for
+  // `LC_RPATH` in particular (`0x8000001c` is LC_RPATH, not a distinct command).
+  return REQ_DYLD_NAMES[cmd] || LOAD_COMMANDS[cmd & 0x7fffffff] || `0x${(cmd >>> 0).toString(16)}`;
 }
 
 /** nlist_64 type field: N_STAB and N_TYPE masks. */
@@ -614,58 +669,37 @@ export function parseThin(f, base = 0) {
           strsize: s.readUInt32LE(20),
         };
       }
-    } else if (cmd === LC_MAIN_CMD) {
-      // `struct entry_point_command`. The header documents `cmdsize` 24, with
-      // `entryoff` and `stacksize` as `uint64_t` — and that is the case the
-      // header describes, but it is not the case that ships.
+    } else if (cmd === LC_MAIN_CMD || cmd === LC_MAIN) {
+      // `struct entry_point_command`: `cmdsize` 24, with `entryoff` and
+      // `stacksize` both `uint64_t`. That is the form a real binary emits, and it
+      // is matched on the `LC_REQ_DYLD` value (`0x80000028`) because that — not a
+      // bare `0x28` — is how `<mach-o/loader.h>` defines `LC_MAIN`.
       //
-      // Every LC_MAIN measured on this machine's own binaries — 672 slices across
-      // /bin, /usr/bin and system frameworks — declares `cmdsize` **16**, i.e.
-      // `entryoff` with no `stacksize` after it. Reading a fixed 24 bytes here
-      // does not merely read one field too many: it reads 8 bytes *past the end of
-      // this command*, which is the next load command's header. The result is a
-      // plausible-looking `stacksize`, and on an `x86_64` slice an `entryoff`
-      // whose high half is the following command's `cmdsize` — the kind of value
-      // that reads as a real offset and is not one.
-      //
-      // So the command's own `cmdsize` bounds the read, and `stacksize` is taken
-      // only when there are bytes for it. `entryoff` stays a BigInt either way:
-      // narrowing a genuine 64-bit offset to a Number would lose precision above
-      // 2^53, and a caller has no way to tell a truncated one from a small one.
+      // This reader previously matched the bare `0x29` and concluded that every
+      // binary shipped a 16-byte command. `0x29` is `LC_DATA_IN_CODE`, a
+      // `linkedit_data_command` carrying `dataoff`/`datasize`; its `dataoff` is a
+      // file offset into `__LINKEDIT`, which is why `describe` used to report an
+      // entry offset that landed outside `__TEXT`. The `cmdsize` bound below is
+      // kept as defence against a malformed file, not because a shorter form is
+      // expected. `entryoff` stays a BigInt: narrowing a genuine 64-bit offset to
+      // a Number would lose precision above 2^53.
       const want = Math.min(cmdsize, 24);
       const s = f.read(off, want);
       if (s.length >= 16) {
-        // The eight bytes the header calls a `uint64_t`. Taken whole, because the
-        // two forms of this command are not the same width in practice — see
-        // `rawHigh32` and `value` below.
         const raw = s.readBigUInt64LE(8);
-        const high32 = Number((raw >> 32n) & 0xffffffffn);
-        // In the 16-byte form the upper half of this field is **uninitialised**,
-        // not data. Measured across 672 LC_MAINs on this machine: the upper 32
-        // bits are zero on every arm64/arm64e slice and non-zero on the x86_64
-        // shared-cache stubs (0x8, 0x10, 0x18 — values with no relationship to
-        // anything else in the file). Reading those eight bytes as a uint64
-        // therefore reports 103,079,241,432 as `/bin/ls`'s entry offset, which is
-        // not an offset and looks entirely like one.
-        //
-        // So the width is chosen from `cmdsize`: the documented 24-byte command
-        // carries a real uint64, and the 16-byte command that actually ships
-        // carries a 32-bit value in the low half. `rawHigh32` is reported
-        // regardless, so the raw bytes stay visible and nothing is hidden.
         const wide = cmdsize >= 24;
         entryPoint = {
           entryoff: wide ? raw : (raw & 0xffffffffn),
-          rawHigh32: high32,
-          // Absent in the 16-byte form. `null`, not 0: "this command declared no
-          // stack size" and "this command declared a stack size of zero" are
-          // different claims, and only one of them is true here.
+          rawHigh32: Number((raw >> 32n) & 0xffffffffn),
+          // `null`, not 0, when the command is too short to carry it: "this
+          // command declared no stack size" and "this command declared a stack
+          // size of zero" are different claims, and only one is true.
           stacksize: wide ? s.readBigUInt64LE(16) : null,
           cmdsize,
           valueBasis: wide
-            ? 'LC_MAIN.entryoff read as uint64 — this command declares the documented 24-byte layout'
+            ? 'LC_MAIN.entryoff read as uint64 — the documented 24-byte layout'
             : `LC_MAIN.entryoff read as its low 32 bits — this command declares cmdsize ${cmdsize}, ` +
-              'the 16-byte form that actually ships; the upper 32 bits are uninitialised' +
-              (high32 !== 0 ? ` and are non-zero here (0x${high32.toString(16)})` : ''),
+              'shorter than the documented 24 bytes',
         };
       }
     } else if (cmd === LC_RPATH_CMD) {
@@ -1019,36 +1053,30 @@ export function isBackedByFile(thin, sec) {
 }
 
 /**
- * An `LC_MAIN` entry point, resolved only as far as the bytes actually support.
+ * An `LC_MAIN` entry point, reported as the file offset the header declares.
  *
- * ## Why there is no address here
+ * ## Why there is still no address here
  *
- * `<mach-o/loader.h>` calls `entryoff` the "file (__TEXT) offset of main()", and
- * the obvious implementation is `__TEXT.vmaddr + entryoff`. Measured against real
- * binaries, that arithmetic does not produce the entry point:
+ * `<mach-o/loader.h>` calls `entryoff` the "file (__TEXT) offset of main()".
+ * Now that `parseThin` matches the command that actually carries it
+ * (`0x80000028`), that offset is a genuine file offset — the earlier note about it
+ * "landing in `__LINKEDIT`" was an artefact of reading `LC_DATA_IN_CODE` instead.
  *
- *   - On a 113 MB, fully-symbolled arm64 `node`, `entryoff` is 88,241,840 while
- *     `__TEXT` spans file bytes 0..85,082,112. The offset is *past the end of
- *     `__TEXT`*, and as a slice-relative file offset it resolves into
- *     `__LINKEDIT` — the link-edit region holding the symbol table. It matches no
- *     defined symbol under any of the three plausible bases.
- *   - On dyld shared-cache stubs (`/bin/ls`, `/bin/cat`, and most of /bin), the
- *     same is true and expected: the stub has no code of its own, so the offset
- *     refers to something the file does not contain.
+ * `vaddr` is nevertheless `null`, and deliberately: the value this function
+ * returns is the *raw* field, and an address is one derivation away from it, via
+ * `a2o`. Deriving it here would put a second, independently-computed answer for
+ * the same fact next to `a2o`'s, and two answers that can disagree is the failure
+ * mode this package exists to avoid. A caller that wants the address passes
+ * `entryoff` to `a2o`; a caller that wants the symbol passes it to `symlookup`.
  *
- * So `vaddr` is `null` and stays null. Emitting `__TEXT.vmaddr + entryoff` would
- * produce an address of exactly the shape a caller then feeds to `symlookup` and
- * `findcall` — and it would be wrong on essentially every binary, in a way that
- * looks like a measurement. A missing answer is recoverable; a fabricated address
- * is not, which is the rule `lookupAddress` and `toFileOffset` already follow.
- *
- * What *is* reported is the raw value, the declared `cmdsize` that determines how
- * it should be read, and the derived address only when it can be checked — see
- * `entryoffLandsIn`.
+ * `entryoffLandsInText` is reported because it is checkable and it is a useful
+ * integrity signal — a valid entry offset lies inside `__TEXT` — without being an
+ * abnormality, since a dyld shared-cache stub legitimately has no `__TEXT` bytes
+ * of its own.
  *
  * @param {object} thin a `parseThin()` result
  * @returns {null|{entryoff: bigint, stacksize: bigint|null, cmdsize: number,
- *   vaddr: null, note: string}}
+ *   vaddr: null, entryoffLandsInText: boolean|null, note: string}}
  */
 export function resolveEntryPoint(thin) {
   if (!thin.entryPoint) return null;
@@ -1064,12 +1092,9 @@ export function resolveEntryPoint(thin) {
     rawHigh32,
     valueBasis,
     vaddr: null,
-    // Disclosed rather than acted on. `false` here is the normal case for a
-    // shared-cache stub and is also true of a fully-symbolled `node`, so it is
-    // not by itself evidence of damage — which is why it is not an abnormality.
     entryoffLandsInText: inText,
-    note: 'raw file offset; no address is derived from it, because the header\'s ' +
-      '"__TEXT offset" description does not hold on the binaries measured'
+    note: 'raw file (__TEXT) offset; no address is derived from it — pass entryoff ' +
+      'to a2o for the vaddr, or to symlookup for the symbol'
       + (inText === false ? ', and this one falls outside __TEXT' : ''),
   };
 }

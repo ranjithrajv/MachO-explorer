@@ -191,21 +191,26 @@ export interface SourceVersion {
 }
 
 /**
- * An `LC_MAIN` entry point, resolved only as far as the bytes support.
+ * An `LC_MAIN` entry point, reported as the file offset the header declares.
  *
- * `vaddr` is always `null`. The header calls `entryoff` a `__TEXT` offset, and
- * measurement does not bear that out — on a fully-symbolled 113 MB binary it
- * resolves into `__LINKEDIT` — so no address is derived rather than a plausible
- * wrong one. See {@link resolveEntryPoint}.
+ * `vaddr` is always `null`, and deliberately. `entryoff` is the raw field; its
+ * address is one `a2o` call away. Deriving it here would publish a second,
+ * independently-computed answer for the same fact — and two answers that can
+ * disagree is the failure this package exists to refuse. See
+ * {@link resolveEntryPoint}.
  */
 export interface EntryPoint {
-  /** The 32-bit value in the 16-byte form, the full uint64 in the 24-byte one. */
+  /**
+   * The `entryoff` field, as a `uint64`. On the documented 24-byte command — the
+   * only form `<mach-o/loader.h>` defines, and the form `0x80000028` carries —
+   * this is the file (`__TEXT`) offset of `main`.
+   */
   entryoff: bigint;
-  /** `null` in the 16-byte form, which declares no stack size. */
+  /** The `stacksize` field. `null` only if a malformed command omits it. */
   stacksize: bigint | null;
-  /** The command's declared size. 16 is what actually ships; 24 is documented. */
+  /** The command's declared size. 24 is the documented (and emitted) form. */
   cmdsize: number;
-  /** Upper 32 bits as they sit in the file. Uninitialised in the 16-byte form. */
+  /** The upper 32 bits of `entryoff`, disclosed so the raw bytes stay visible. */
   rawHigh32: number;
   /** Which reading was used, and why. */
   valueBasis: string;
@@ -499,8 +504,9 @@ export declare function decodeSourceVersion(v: bigint): SourceVersion;
 /**
  * An `LC_MAIN` entry point, with no address derived from it.
  *
- * `vaddr` is always `null`: the header's "`__TEXT` offset" description does not
- * hold on real binaries, and a derived address would be plausible and wrong.
+ * `entryoff` is the raw file (`__TEXT`) offset the command declares. `vaddr` is
+ * always `null`: an address is one `a2o` call away, and computing it here as well
+ * would give the same fact two answers that could disagree.
  */
 export declare function resolveEntryPoint(thin: Thin): EntryPoint | null;
 

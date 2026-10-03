@@ -218,33 +218,35 @@ const MUTATIONS = [
     expect: /not mistaken for an unknown attribute|no section reports unknown attribute/,
   },
 
-  // LC_MAIN: trusting the full 64-bit width when the command is the 16-byte form
-  // that actually ships.
+  // LC_MAIN is identified by its `LC_REQ_DYLD` value, not by the bare `0x29`.
   //
-  // A real bug in this reader, and one no system binary could have caught by
-  // accident. The header documents a 24-byte `struct entry_point_command` with
-  // `entryoff` and `stacksize` as `uint64_t`, but all 672 LC_MAINs measured on
-  // this machine declare `cmdsize` **16**: `entryoff` alone. In that form the
-  // upper 32 bits are uninitialised — zero on every arm64 slice, and on the x86_64
-  // shared-cache stubs whatever followed in the buffer, which is how `/bin/ls`
-  // reported its entry offset as 103,079,241,432.
-  //
-  // There is deliberately **one** mutation here, not two, and the reason is worth
-  // recording. The over-read (reading a fixed 24 bytes instead of the command's own
-  // `cmdsize`) and the width trust mask each other completely: over-reading puts
-  // the next load command's header in the upper half, and then choosing the width
-  // from `cmdsize` masks exactly those bytes back off again. A mutation that
-  // reintroduces only the over-read is therefore *undetectable* — it was tried, and
-  // the mutated tree passed. That is not a gap in the suite so much as a statement
-  // about the defect: only the width choice is independently observable, and it is
-  // the one that has to be guarded. Adding a second mutation for the over-read
-  // would mean adding one this suite cannot fail, which is worse than not having it.
+  // This was a real bug in this reader. `<mach-o/loader.h>` defines `LC_MAIN` as
+  // `(0x28 | LC_REQ_DYLD)`; the bare `0x29` is `LC_DATA_IN_CODE`, a
+  // `linkedit_data_command` whose `dataoff` is a file offset into `__LINKEDIT`.
+  // Matching `0x29` read that `dataoff` as an entry offset — which is why `describe`
+  // reported an entry point landing outside `__TEXT`, and why `LC_MAIN` appeared to
+  // be a 16-byte command. It was `LC_DATA_IN_CODE`'s shape. Nothing in the corpus
+  // could catch it, because the corpus and the reader shared the misreading.
   {
-    name: 'the 16-byte LC_MAIN entryoff is read as 32 bits, not 64',
+    name: 'LC_MAIN is matched on 0x80000028, not the bare 0x29',
     file: 'src/macho.mjs',
-    find: `          entryoff: wide ? raw : (raw & 0xffffffffn),`,
-    replace: `          entryoff: raw, // MUTATED: always the full 64 bits`,
-    expect: /32-bit value, not the next command glued on|uninitialised upper half/,
+    find: `    } else if (cmd === LC_MAIN_CMD || cmd === LC_MAIN) {`,
+    replace: `    } else if (cmd === 0x29) { // MUTATED: LC_DATA_IN_CODE, the old mistake`,
+    expect: /LC_MAIN.entryoff comes from the command that actually carries it/,
+  },
+
+  // `stacksize` is read as a `uint64_t`, not narrowed to its low 32 bits.
+  //
+  // The `meta` fixture sets the high half, so a 32-bit read is observable. This is
+  // the field that has to carry the check: a real `entryoff` is a small file offset
+  // and would survive a 32-bit read by accident, which is exactly why the width of
+  // the *other* field is what the fixture makes visible.
+  {
+    name: 'LC_MAIN.stacksize is read as 64 bits, not 32',
+    file: 'src/macho.mjs',
+    find: `          stacksize: wide ? s.readBigUInt64LE(16) : null,`,
+    replace: `          stacksize: wide ? BigInt(s.readUInt32LE(16)) : null, // MUTATED: 32-bit read`,
+    expect: /stacksize is read as the uint64/,
   },
 
   // The gate follows the boolean, not the three-valued label.
