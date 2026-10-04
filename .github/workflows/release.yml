@@ -1,0 +1,54 @@
+# Publish to npm when a version tag is pushed.
+#
+# `npm publish` is not run by hand anywhere in this project's docs, because the
+# hand-run version is the one that skips the suite: `npm publish --dry-run`
+# reports success on a name the registry refuses, and a maintainer in a hurry
+# believes it. This workflow is the only publish path, and it re-runs the gate
+# first — a tag that does not pass does not ship.
+#
+# The tag is the version. `v0.1.0` must match `package.json`'s `version`, or the
+# publish ships a tarball whose name disagrees with the tag it was cut from.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance (SLSA attestation) needs this
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: The tag matches the manifest version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag v$tag does not match package.json version $pkg" >&2
+            exit 1
+          fi
+
+      # The gate, in the order a maintainer would run it. Nothing is published
+      # until all of it is green.
+      - run: node test/fixtures.mjs --check
+      - run: node test/smoke.mjs
+      - run: node test/disasm.mjs
+      - run: node test/browser.mjs
+      - run: node test/conformance.mjs
+      - run: node test/mcp.mjs
+      - run: node test/skill.mjs
+      - run: node test/publish.mjs
+
+      - name: Publish with provenance
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

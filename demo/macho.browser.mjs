@@ -3695,7 +3695,7 @@ function describe(path) {
           entryPoint: null, rpaths: [], dylibs: [], installName: null,
           sourceVersion: null, buildVersion: null, encryption: null,
           filetype: null, filetypeName: null, platform: null, platformName: null,
-          minos: null, sdk: null, cpusubtype: null, encrypted: null,
+          minos: null, sdk: null, cpusubtype: null, cryptid: null, encrypted: null,
           abnormalities: [],
           note: 'no Mach-O header at this offset',
         });
@@ -3791,6 +3791,19 @@ function describe(path) {
         // unrecognised one is null rather than a guess, because "an executable"
         // and "a file whose second word is 2" are not the same claim.
         filetype: thin.filetype,
+        // Flat mirrors of the nested `buildVersion`/`filetype`/`encryption`
+        // objects, because the iOS tests and `describe --json` consumers read
+        // `platformName`/`minos`/`encrypted` directly rather than reaching into
+        // the command object. The nested forms are kept for callers that want
+        // the whole command; these are the one-fact-at-a-time view.
+        filetypeName: thin.filetypeName,
+        platform: thin.buildVersion ? thin.buildVersion.platformRaw : null,
+        platformName: thin.buildVersion ? thin.buildVersion.platform : null,
+        minos: thin.buildVersion && thin.buildVersion.minos ? thin.buildVersion.minos.text : null,
+        sdk: thin.buildVersion && thin.buildVersion.sdk ? thin.buildVersion.sdk.text : null,
+        cpusubtype: thin.cpusubtype,
+        cryptid: thin.encryption ? thin.encryption.cryptid : null,
+        encrypted: thin.encryption ? thin.encryption.encrypted : null,
         // Structural problems, reported alongside the parse rather than instead
         // of it. Empty on a healthy binary, which is the common case.
         abnormalities: detectAbnormalities(f, thin, { sliceOffset: s.offset, sliceSize: s.size }),

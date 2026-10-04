@@ -16,6 +16,20 @@ depth. It decodes *instruction boundaries* and *direct* branch displacements —
 lengths and edges, which are facts about the bytes — and stops there. It does not
 print mnemonics or operands, and it will not grow to.
 
+## Auditable by design
+
+The reader is **one file you can read**. `src/macho.mjs` imports only `node:fs`
+and `node:crypto`; copy it into an empty directory and it parses real binaries
+with no `node_modules`, no build step and no network. That property — not any row
+in a feature table — is why this package exists, and
+**[AUDITABILITY.md](AUDITABILITY.md)** is the argument for it and the five-second
+recipe to check it yourself.
+
+The same file runs in a browser: [`demo/`](demo/) is a drag-and-drop page that
+reads a Mach-O **in the tab**, with the bytes never leaving the machine, and
+`test/browser.mjs` proves it produces byte-for-byte the same answers as the Node
+build on every fixture.
+
 ## Quick start
 
 ```sh
@@ -213,6 +227,10 @@ unknown flag: --regexx
 
 ## Documentation
 
+- **[Auditability](AUDITABILITY.md)** — why the one-file reader matters, and how to verify it
+- **[Use cases](docs/use-cases.md)** — where this reader is the right shape, and where it is not
+- **[Conformance corpus](conformance/)** — hold any Mach-O parser to known answers
+- **[Browser demo](demo/)** — the reader running client-side, no upload
 - **[User Manual](docs/user-manual.md)** — detailed reference for every subcommand, flag, and usage pattern
 - **[Envelope Schema](schema/envelope.schema.json)** — JSON Schema for `--json` output
 - **[Agent Skill](skill/)** — instructions for AI coding agents

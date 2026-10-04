@@ -1,0 +1,1021 @@
+{
+  "arm64-only.macho": {
+    "size": 799,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "arm64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "arm64e.macho": {
+    "size": 33567,
+    "fat": true,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      },
+      {
+        "arch": "arm64e",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "bent.macho": {
+    "size": 17759,
+    "fat": true,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 0
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      },
+      {
+        "arch": "arm64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "bits32.macho": {
+    "size": 695,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 32,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x80480f4",
+          "size": 320
+        },
+        "symbols": {
+          "total": 5,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x80480f4",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x8048234",
+            "size": 14
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "bulk.macho": {
+    "size": 50299,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 1106,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "damaged.macho": {
+    "size": 799,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB",
+          "0x90909090"
+        ]
+      }
+    ]
+  },
+  "decoy.macho": {
+    "size": 724,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 2,
+          "defined": 2
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 64
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "dylibs.macho": {
+    "size": 1127,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000268",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000268",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x1000003a8",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB",
+          "LC_LOAD_DYLIB",
+          "LC_LOAD_WEAK_DYLIB",
+          "LC_REEXPORT_DYLIB",
+          "LC_LAZY_LOAD_DYLIB",
+          "LC_LOAD_UPWARD_DYLIB",
+          "LC_ID_DYLIB"
+        ]
+      }
+    ]
+  },
+  "functions.macho": {
+    "size": 821,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000130",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000130",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000270",
+            "size": 38
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB",
+          "LC_FUNCTION_STARTS"
+        ]
+      }
+    ]
+  },
+  "ios.macho": {
+    "size": 873,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "arm64e",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000150",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000150",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__cstring",
+            "addr": "0x100000290",
+            "size": 58
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB",
+          "LC_BUILD_VERSION",
+          "LC_ENCRYPTION_INFO_64"
+        ]
+      }
+    ]
+  },
+  "meta.macho": {
+    "size": 911,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000190",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000190",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x1000002d0",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB",
+          "LC_MAIN",
+          "LC_RPATH",
+          "LC_SOURCE_VERSION",
+          "LC_BUILD_VERSION"
+        ]
+      }
+    ]
+  },
+  "newer.macho": {
+    "size": 799,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "populated.macho": {
+    "size": 2239,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 66,
+          "defined": 64
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "rebuilt.macho": {
+    "size": 823,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+        "text": {
+          "addr": "0x200000138",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x200000138",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x200000278",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB",
+          "LC_UUID"
+        ]
+      }
+    ]
+  },
+  "rebuilt2.macho": {
+    "size": 823,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": "aabbccdd-eeff-4011-8223-445566778899",
+        "text": {
+          "addr": "0x200000138",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x200000138",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x200000278",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB",
+          "LC_UUID"
+        ]
+      }
+    ]
+  },
+  "strings.macho": {
+    "size": 894,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__cstring",
+            "addr": "0x100000260",
+            "size": 127
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "strings2.macho": {
+    "size": 921,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__cstring",
+            "addr": "0x100000260",
+            "size": 154
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "stripped.macho": {
+    "size": 665,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": "a1b2c3d4-e5f6-4708-9a0b-1c2d3e4f5061",
+        "text": {
+          "addr": "0x100000138",
+          "size": 320
+        },
+        "symbols": {
+          "total": 0,
+          "defined": 0
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000138",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000278",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB",
+          "LC_UUID"
+        ]
+      }
+    ]
+  },
+  "thin-arm64.macho": {
+    "size": 799,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "arm64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "thin-arm64e.macho": {
+    "size": 799,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "arm64e",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "thin-x86_64.macho": {
+    "size": 799,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "universal.macho": {
+    "size": 33567,
+    "fat": true,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      },
+      {
+        "arch": "arm64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000120",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000120",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x100000260",
+            "size": 32
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  },
+  "zerofill.macho": {
+    "size": 879,
+    "fat": false,
+    "slices": [
+      {
+        "arch": "x86_64",
+        "bits": 64,
+        "readable": true,
+        "filetype": "MH_EXECUTE",
+        "uuid": null,
+        "text": {
+          "addr": "0x100000170",
+          "size": 320
+        },
+        "symbols": {
+          "total": 6,
+          "defined": 4
+        },
+        "sections": [
+          {
+            "segname": "__TEXT",
+            "sectname": "__text",
+            "addr": "0x100000170",
+            "size": 320
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__data",
+            "addr": "0x1000002b0",
+            "size": 32
+          },
+          {
+            "segname": "__TEXT",
+            "sectname": "__bss",
+            "addr": "0x1000002d0",
+            "size": 4096
+          }
+        ],
+        "loadCommands": [
+          "LC_SEGMENT_64",
+          "LC_SYMTAB"
+        ]
+      }
+    ]
+  }
+}

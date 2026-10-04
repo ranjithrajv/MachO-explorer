@@ -146,7 +146,7 @@ export function describe(path) {
           entryPoint: null, rpaths: [], dylibs: [], installName: null,
           sourceVersion: null, buildVersion: null, encryption: null,
           filetype: null, filetypeName: null, platform: null, platformName: null,
-          minos: null, sdk: null, cpusubtype: null, encrypted: null,
+          minos: null, sdk: null, cpusubtype: null, cryptid: null, encrypted: null,
           abnormalities: [],
           note: 'no Mach-O header at this offset',
         });

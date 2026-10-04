@@ -109,6 +109,15 @@ jobs:
           node-version: '22'
       - name: Build the fixture corpus
         run: node test/fixtures.mjs
+      # The browser bundle is generated and committed, so it can go stale. This
+      # is the same drift discipline `fixtures --check` applies to the binary
+      # corpus, applied to the one other generated artefact.
+      - name: The browser bundle matches its sources
+        run: node demo/link.mjs --check
+      - name: The browser bundle is the reader, and answers the same
+        run: node test/browser.mjs
+      - name: The conformance corpus is a working oracle
+        run: node test/conformance.mjs
       - name: The MCP server over a real pipe
         run: node test/mcp.mjs
       - name: The agent skill matches the tools

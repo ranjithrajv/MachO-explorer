@@ -806,10 +806,12 @@ console.log('\nmcp: the protocol\n');
     skip('iOS binaries over MCP', 'the ios fixture is missing — run npm run test:fixtures');
   } else {
     const { out } = await session([
-      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: ios }, _meta: meta() } },
-      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'macho-findcall', arguments: { binary: ios, target: '0x100000250' }, _meta: meta() } },
-      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-findliteral', arguments: { binary: ios, literal: 'ios-fixture-alpha' }, _meta: meta() } },
-      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'macho-symlookup', arguments: { binary: ios, addresses: ['0x100000250'] }, _meta: meta() } },
+      // Unprefixed, matching `TOOLS`' own names — the registry matches exactly,
+      // so a `macho-` prefix here is an unknown tool rather than a near miss.
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'describe', arguments: { binary: ios }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'findcall', arguments: { binary: ios, target: '0x100000250' }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'findliteral', arguments: { binary: ios, literal: 'ios-fixture-alpha' }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'symlookup', arguments: { binary: ios, addresses: ['0x100000250'] }, _meta: meta() } },
     ], { expectLines: 4 });
     const { msgs } = parseStream(out);
     const d = byId(msgs, 1)?.result;

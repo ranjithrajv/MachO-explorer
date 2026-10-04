@@ -2,7 +2,7 @@
   "name": "macho-explorer",
   "version": "0.1.0",
   "type": "module",
-  "description": "Mach-O binary introspection for Apple binaries: fat headers, symbol search, vaddr lookup, address-to-offset mapping, direct-call xrefs and byte-literal search. Zero dependencies, no build step — and it reads Mac binaries from Linux or Windows.",
+  "description": "Mach-O introspection for Apple binaries — fat headers, symbols, address↔offset mapping, direct-call xrefs, byte-literal search, a CI-gate audit and a rebuild-invariant diff. One auditable, dependency-free reader: no install, no build, no network, and it reads Mac binaries from Linux or Windows. The same file runs in a browser with no upload.",
   "keywords": [
     "mach-o",
     "macho",
@@ -12,7 +12,10 @@
     "arm64",
     "x86-64",
     "fat-binary",
-    "symbol-table"
+    "symbol-table",
+    "auditable",
+    "zero-dependency",
+    "mcp"
   ],
   "repository": {
     "type": "git",
@@ -34,6 +37,9 @@
   "types": "src/api.d.ts",
   "files": [
     "src",
+    "conformance",
+    "demo",
+    "docs",
     "test/fixtures.mjs",
     "test/fixtures",
     "schema",
@@ -44,6 +50,7 @@
     "COPYING",
     "LICENSE",
     "README.md",
+    "AUDITABILITY.md",
     "CONTRIBUTING.md"
   ],
   "man": [
@@ -93,7 +100,11 @@
     "test:types": "node test/types.mjs",
     "test:disasm": "node test/disasm.mjs",
     "test:publish": "node test/publish.mjs",
-    "test:all": "npm run test:fixtures && npm test && npm run test:disasm && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:mutation"
+    "test:browser": "node test/browser.mjs",
+    "test:conformance": "node test/conformance.mjs",
+    "demo": "node demo/serve.mjs",
+    "demo:link": "node demo/link.mjs",
+    "test:all": "npm run test:fixtures && npm test && npm run test:disasm && npm run test:browser && npm run test:conformance && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:mutation"
   },
   "engines": {
     "node": ">=22.15"
