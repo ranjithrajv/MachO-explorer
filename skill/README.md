@@ -39,7 +39,7 @@ workflow and the fallbacks, for clients that do not.
 
 ## Both, not either
 
-The skill works with no MCP server configured — it documents the CLI, which
+The skill works with no MCP server configured — it documents the unified `macho-explorer` CLI, which
 needs nothing installed but Node. An agent that has only the CLI still gets the
 address-type rule, the exit-code table and the direct-calls-only caveat, which
 are the three things that produce confidently wrong answers.

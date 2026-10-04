@@ -2,8 +2,8 @@
 /**
  * audit.mjs — is this file internally consistent?
  *
- *   node src/audit.mjs [binary|bundle] [--json] [--strict] [--arch=<name>]
- *   node src/audit.mjs --strict build/Contents/MacOS/app
+ *   macho-explorer audit [binary|bundle] [--json] [--strict] [--arch=<name>]
+ *   macho-explorer audit --strict build/Contents/MacOS/app
  *
  * Every structural check this reader knows about, in one call, with an exit status
  * a build can gate on. `describe` already reports abnormalities per slice; this
@@ -55,12 +55,12 @@
  */
 import { requireBinary } from './target.mjs';
 import { audit } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/audit.mjs [binary|bundle] [--json] [--strict] [--arch=<name>] [-b <binary>]',
+  'usage: macho-explorer audit [binary|bundle] [--json] [--strict] [--arch=<name>] [-b <binary>]',
   '',
   '  checks every structural claim a Mach-O makes about itself, and exits',
   '  non-zero when the file does not hold together. 0 = sound, 1 = unsound',
@@ -72,6 +72,10 @@ const HELP = [
   '                     findings are still reported, since they are about the file',
   '  --json             one JSON object on stdout; prose to stderr',
   '  -b, --binary <p>   the binary to audit',
+  '  -q, --quiet        suppress non-essential output',
+  '  --color            force color output',
+  '  --no-color         disable color output',
+  '  -v, --verbose      diagnostic output',
   '  -h, --help         this message',
 ];
 

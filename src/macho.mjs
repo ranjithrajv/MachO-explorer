@@ -57,6 +57,31 @@ export const LC_UUID_CMD = 0x1b;
 export const LC_RPATH_CMD = 0x1c;
 
 /**
+ * The commands that record which platform a binary was built for.
+ *
+ * `LC_BUILD_VERSION` is the current form and the only one a modern linker emits; the
+ * four `LC_VERSION_MIN_*` commands are its predecessor, still emitted by older
+ * toolchains for the platforms that predate it. All five are decoded, because a
+ * `LC_VERSION_MIN_IPHONEOS` in the wild means the binary's platform is knowable and a
+ * reader that only understood `LC_BUILD_VERSION` would report nothing for it — the
+ * "recognised but silent" failure this project treats as worse than a refusal.
+ *
+ * The `LC_VERSION_MIN_*` commands name their platform in the *command* rather than in
+ * a field, which is why they need a map instead of a comparison against one value.
+ */
+export const LC_BUILD_VERSION_CMD = 0x32;
+/** The pair that records FairPlay encryption state. Same 20-byte struct in both. */
+export const LC_ENCRYPTION_INFO_CMD = 0x21;
+export const LC_ENCRYPTION_INFO_64_CMD = 0x2c;
+export const VERSION_MIN_COMMANDS = new Map([
+  [0x24, 'macos'],
+  [0x25, 'ios'],
+  [0x2f, 'tvos'],
+  [0x30, 'watchos'],
+]);
+
+
+/**
  * `LC_REQ_DYLD`, the bit that marks a command the loader must understand.
  *
  * Several commands are *defined* with this bit set — `LC_MAIN` is `0x28 |
@@ -65,6 +90,64 @@ export const LC_RPATH_CMD = 0x1c;
  * form a real binary emits. See {@link LC_MAIN_CMD}.
  */
 export const LC_REQ_DYLD = 0x80000000;
+
+/**
+ * The commands whose payload is a `struct dylib_command`.
+ *
+ * All six share one layout, so they are one entry in the decoder rather than six:
+ *
+ *     struct dylib_command {
+ *         uint32_t cmd;                 // one of the six below
+ *         uint32_t cmdsize;
+ *         union lc_str dylib;           // lc_str = a uint32 *offset* from cmd
+ *         uint32_t timestamp;
+ *         uint32_t current_version;
+ *         uint32_t compatibility_version;
+ *     };
+ *
+ * The last four differ only in what the loader does with the name, and that
+ * difference is the reason they cannot be collapsed into one value: a
+ * `LC_LOAD_WEAK_DYLIB` that is absent is fine, a missing `LC_LOAD_DYLIB` is a
+ * broken install, and `LC_REEXPORT_DYLIB` also re-exports the named image's
+ * symbols into the client. Reporting all three as "linked against" would be the
+ * kind of flattening this reader exists to avoid, so the linkage is carried
+ * through as its own value.
+ *
+ * `LC_ID_DYLIB` is in {@link DYLIB_ID_CMD}, not here: it names *this* image
+ * rather than a dependency, so it is the install name rather than a link.
+ *
+ * The `LC_REQ_DYLD` forms are the ones a real binary emits for the four marked
+ * commands, and the bare values name different commands entirely — `0x18` is
+ * `LC_LOAD_WEAK_DYLIB` in `<mach-o/loader.h>`'s *enumeration*, but only the
+ * `0x80000018` form is a dylib command on disk. Both are listed in
+ * {@link loadCommandName}; only the `0x80000000` ones are decoded here, because
+ * accepting the bare value would decode a command the linker never emits.
+ *
+ * `>>> 0` on the three `LC_REQ_DYLD` keys is load-bearing and not decoration. `|`
+ * is a *signed* 32-bit operation in JavaScript, so `0x18 | 0x80000000` evaluates
+ * to `-2147483624`, not `2147483640` — and `cmd` arrives from `readUInt32LE` as an
+ * unsigned value, so the lookup would miss every weak and re-export dylib in the
+ * file while appearing to work for `LC_LOAD_DYLIB` itself, which needs no mask.
+ * The same idiom is already used for {@link LC_MAIN_CMD}.
+ */
+export const DYLIB_COMMANDS = new Map([
+  [0x0c, { linkage: 'load' }],
+  [(0x18 | LC_REQ_DYLD) >>> 0, { linkage: 'weak' }],
+  [(0x1f | LC_REQ_DYLD) >>> 0, { linkage: 'reexport' }],
+  [0x20, { linkage: 'lazy' }],
+  [(0x23 | LC_REQ_DYLD) >>> 0, { linkage: 'upward' }],
+]);
+
+/**
+ * `LC_ID_DYLIB`, which names this image's own install name.
+ *
+ * Separate from {@link DYLIB_COMMANDS} because it answers a different question.
+ * A dependency is "what must be present for this to load"; an install name is
+ * "what this file calls itself", which is what a dylib's own `LC_ID_DYLIB`
+ * records so that clients linking against it record the right name. It is the
+ * same struct and therefore the same decoder, and it is what `otool -D` prints.
+ */
+export const DYLIB_ID_CMD = 0x0d;
 
 /**
  * The entry point, in the form a compiled binary actually declares.
@@ -438,6 +521,156 @@ export function decodeSourceVersion(v) {
 }
 
 /**
+ * `platform`, as `LC_BUILD_VERSION` records it.
+ *
+ * Transcribed from `<mach-o/loader.h>` in the installed SDK — read, not recalled.
+ * That matters more here than for most of these tables, because **the numbering has
+ * changed**. `PLATFORM_MACOS` was `6` before 2017 and is `1` now; `PLATFORM_IOS` was
+ * `7` and is `2`. The first table written here used the old numbering, and it was
+ * caught by running it rather than by reading it back: every macOS binary on the
+ * machine reports `1`, and the table confidently called that `v1`. A table recalled
+ * from memory is worse than no table, because a missing name at least announces
+ * itself.
+ *
+ * The modern numbering is contiguous from 1 to 12, so the early values are a plain
+ * list — but they are still a table, because 13 onward are not contiguous: `PLATFORM_FIRMWARE`
+ * is 13, `PLATFORM_SEPOS` is 14, and then sixteen `EXCLAVECORE`/`EXCLAVEKIT` pairs
+ * run to 24. The pairs are generated rather than written out, and the generation is
+ * visible so that a reader can see what it is derived from.
+ *
+ * `PLATFORM_ANY` (0xFFFFFFFF) is a wildcard a *client* records rather than a platform
+ * a binary is built for. It is named, and `decodePlatform` marks it unrecognised as a
+ * platform even though it has a name — see below.
+ */
+export const PLATFORMS = {
+  0: 'unknown',
+  1: 'macos',
+  2: 'ios',
+  3: 'tvos',
+  4: 'watchos',
+  5: 'bridgeos',
+  6: 'maccatalyst',
+  7: 'ios-simulator',
+  8: 'tvos-simulator',
+  9: 'watchos-simulator',
+  10: 'driverkit',
+  11: 'visionos',
+  12: 'visionos-simulator',
+  13: 'firmware',
+  14: 'sepos',
+  ...Object.fromEntries(
+    Array.from({ length: 5 }, (_, i) => i * 2 + 15).flatMap((n, i) => [
+      [n, ['macos', 'ios', 'tvos', 'watchos', 'visionos'][i] + '-exclavecore'],
+      [n + 1, ['macos', 'ios', 'tvos', 'watchos', 'visionos'][i] + '-exclavekit'],
+    ]),
+  ),
+  0xffffffff: 'any',
+};
+
+/**
+ * `filetype`, from `<mach-o/loader.h>`.
+ *
+ * Transcribed from the installed SDK, and *fourteen* values rather than the twelve
+ * this project's README used to claim. The two it was missing are `MH_GPU_EXECUTE`
+ * and `MH_GPU_DYLIB` at 13 and 14, which is the interesting failure: they are the
+ * *last* two, so a reader that covered 1..12 looked complete. A count in prose is a
+ * claim about a table, and it drifts the moment the table is not read from the header.
+ */
+export const MH_TYPES = {
+  0x1: 'MH_OBJECT',
+  0x2: 'MH_EXECUTE',
+  0x3: 'MH_FVMLIB',
+  0x4: 'MH_CORE',
+  0x5: 'MH_PRELOAD',
+  0x6: 'MH_DYLIB',
+  0x7: 'MH_DYLINKER',
+  0x8: 'MH_BUNDLE',
+  0x9: 'MH_DYLIB_STUB',
+  0xa: 'MH_DSYM',
+  0xb: 'MH_KEXT_BUNDLE',
+  0xc: 'MH_FILESET',
+  0xd: 'MH_GPU_EXECUTE',
+  0xe: 'MH_GPU_DYLIB',
+};
+
+/**
+ * Name a `filetype`, or report it as an unnamed number.
+ *
+ * An unrecognised value comes back `null` rather than a guess, because the
+ * difference between "an executable" and "a file whose second word is 2" is the
+ * difference between an answer and an invention.
+ */
+export function decodeFiletype(raw) {
+  const named = MH_TYPES[raw];
+  return { raw, name: named ?? null, named: named !== undefined };
+}
+
+/**
+ * A stable string for a filetype, whichever form it arrives in.
+ *
+ * Exists because two call sites interpolate a filetype into a comparison, and both
+ * got it wrong the same way when `parseThin` started returning the decoded object
+ * instead of a number:
+ *
+ *   - {@link sliceShape} template-interpolated it, producing
+ *     `filetype:[object Object]` — so every executable and every dylib hashed to the
+ *     same value and the digest could no longer tell them apart, with no test failing
+ *     because a digest that collapses two values into one still returns a digest;
+ *   - the `diff` path compared with `!==`, and two freshly-decoded objects are never
+ *     `===`, so **every** pair of binaries reported `filetype-changed`.
+ *
+ * One helper, two callers, because the second bug was the first bug copied. The name
+ * is preferred and the raw word is the fallback, so an unrecognised filetype still
+ * contributes its number rather than collapsing to the same value as every other
+ * unrecognised one.
+ *
+ * @param {number | {raw: number, name: string | null}} ft
+ * @returns {string}
+ */
+export function filetypeKey(ft) {
+  if (ft === null || ft === undefined) return 'unknown';
+  if (typeof ft === 'object') return ft.name ?? String(ft.raw);
+  return String(ft);
+}
+
+/**
+ * Name a `platform` word, or report it as an unnamed number.
+ *
+ * `PLATFORM_ANY` is the one entry that is named but not a platform: it is what a
+ * *client* records when it will accept anything, and a binary carrying it was built
+ * for something in particular. So it comes back `named: false` with the name
+ * attached, and a caller counting "which platform is this for" does not count it.
+ */
+export function decodePlatform(raw) {
+  const known = PLATFORMS[raw];
+  if (!known) return { name: null, named: false };
+  return { name: known, named: raw !== 0xffffffff && raw !== 0 };
+}
+
+/**
+ * A packed `X.Y.Z` version, the form `minos` and `sdk` take.
+ *
+ * Three fields of unequal width — 16, 8 and 8 bits — and the top one is the one that
+ * identifies a major release. Reading it as three equal bytes is the obvious mistake
+ * and it is silent: `0x000E0000` is 14.0.0, and the three-equal-bytes reading of it
+ * produces components that all look like plausible versions.
+ *
+ * The raw word is kept alongside the components, for the same reason
+ * {@link decodeSourceVersion} keeps its own: the packed form is what the file holds
+ * and what other readers report, so a value compared against another reader matches
+ * without either side converting.
+ *
+ * @param {number} v the packed `uint32` version
+ * @returns {{raw: number, x: number, y: number, z: number, text: string}}
+ */
+export function decodePackedVersion(v) {
+  const x = (v >>> 16) & 0xffff;
+  const y = (v >>> 8) & 0xff;
+  const z = v & 0xff;
+  return { raw: v, x, y, z, text: `${x}.${y}.${z}` };
+}
+
+/**
  * Mach-O and fat-header magics, as raw byte sequences.
  *
  * Compared as bytes rather than as integers, and that is not fussiness. A thin
@@ -633,7 +866,11 @@ export function parseThin(f, base = 0) {
   let uuid = null;
   let entryPoint = null;
   let sourceVersion = null;
+  let buildVersion = null;
+  let encryption = null;
   const rpaths = [];
+  const dylibs = [];
+  let installName = null;
 
   for (let i = 0; i < ncmds; i++) {
     const lc = f.read(off, 8);
@@ -720,6 +957,108 @@ export function parseThin(f, base = 0) {
           if (path) rpaths.push(path);
         }
       }
+    } else if (DYLIB_COMMANDS.has(cmd) || cmd === DYLIB_ID_CMD) {
+      // `struct dylib_command`, the one load command that says *what this binary
+      // needs to run* — the answer to the most-asked question about any
+      // executable, and the one `otool -L` exists to print.
+      //
+      // The `dylib` field is a `union lc_str`, so it is an offset from the start
+      // of this command for the same reason `LC_RPATH`'s is: reading the eight
+      // bytes in as if they were the first characters of the name yields a string
+      // that looks like a path and passes a plausibility check while naming a
+      // library that does not exist. The offset is taken literally.
+      //
+      // `cmdsize >= 24` is the floor rather than a nicety: below it the version
+      // fields are not present, and reading them would take bytes from the
+      // *next* load command. A truncated command is reported by `audit`; here it
+      // yields no name rather than a fabricated one.
+      const s = f.read(off, 24);
+      if (s.length >= 24 && cmdsize >= 24) {
+        const rel = s.readUInt32LE(8);
+        if (rel >= 24 && rel < cmdsize) {
+          const body = f.read(off + rel, cmdsize - rel);
+          const z = body.indexOf(0);
+          const name = body.toString('latin1', 0, z < 0 ? body.length : z);
+          if (name) {
+            const decoded = {
+              name,
+              cmd,
+              cmdName: loadCommandName(cmd),
+              timestamp: s.readUInt32LE(12),
+              currentVersion: s.readUInt32LE(16),
+              compatVersion: s.readUInt32LE(20),
+            };
+            if (cmd === DYLIB_ID_CMD) installName = decoded;
+            else dylibs.push({ ...decoded, linkage: DYLIB_COMMANDS.get(cmd).linkage });
+          }
+        }
+      }
+    } else if (cmd === LC_ENCRYPTION_INFO_CMD || cmd === LC_ENCRYPTION_INFO_64_CMD) {
+      // `struct encryption_info_command`, 20 bytes, identical in both forms —
+      // `LC_ENCRYPTION_INFO_64` differs only in that the encrypted range it names is
+      // a 64-bit one, which is already true because the offsets are 32-bit words into
+      // a 64-bit file's address space. `cryptid` is the one field that matters:
+      //
+      //   0  the binary is not encrypted, or has been decrypted in place
+      //   1  __TEXT is ciphertext — an App Store build, not yet run once
+      //   >1  encrypted with a key whose sub-version this is (FairPlay)
+      //
+      // This is the single fact that decides whether a zero result from `findcall`,
+      // `findliteral` or `--strings` means "not present" or "not readable", and
+      // reporting it is the difference between those two being distinguishable. A
+      // command naming encryption is *not* enough — a decrypted binary keeps the
+      // command with `cryptid` 0, and reading presence rather than value would call
+      // a decrypted App Store binary still encrypted.
+      const s = f.read(off, 20);
+      if (s.length >= 20) {
+        encryption = {
+          command: loadCommandName(cmd),
+          cryptoff: s.readUInt32LE(8),
+          cryptsize: s.readUInt32LE(12),
+          cryptid: s.readUInt32LE(16),
+          /** True only for a positive `cryptid` — see above. */
+          encrypted: s.readUInt32LE(16) > 0,
+        };
+      }
+    } else if (cmd === LC_BUILD_VERSION_CMD) {
+      // `struct build_version_command`: `cmdsize` 24 for a binary with no tool
+      // records, then 8 bytes per tool. The three fields that matter are read and the
+      // tool records are not — they are a list of `{tool, version}` pairs whose tools
+      // are identified by the SDK's own enum, which is a second table to transcribe
+      // and a second thing to get subtly wrong. So the command is decoded for the
+      // platform it names and the tools are left alone rather than reported wrongly.
+      const s = f.read(off, 24);
+      if (s.length >= 24) {
+        const raw = s.readUInt32LE(8);
+        buildVersion = {
+          command: 'LC_BUILD_VERSION',
+          platform: decodePlatform(raw).name,
+          platformRaw: raw,
+          minos: decodePackedVersion(s.readUInt32LE(12)),
+          sdk: decodePackedVersion(s.readUInt32LE(16)),
+          // Reported rather than acted on: a reader that stops at 24 bytes on a
+          // command with `ntools > 0` would silently ignore the rest of it, and a
+          // caller deserves to know that is what happened.
+          ntools: s.readUInt32LE(20),
+        };
+      }
+    } else if (VERSION_MIN_COMMANDS.has(cmd)) {
+      // `struct version_min_command`, `cmdsize` 16: a packed version and the SDK
+      // that built it, with the platform implied by the command. This is the form
+      // `LC_BUILD_VERSION` replaced, and it is why `describe` reports `platform`
+      // from either.
+      const s = f.read(off, 16);
+      if (s.length >= 16) {
+        const platform = VERSION_MIN_COMMANDS.get(cmd);
+        buildVersion = {
+          command: loadCommandName(cmd),
+          platform,
+          platformRaw: null,
+          minos: decodePackedVersion(s.readUInt32LE(8)),
+          sdk: decodePackedVersion(s.readUInt32LE(12)),
+          ntools: 0,
+        };
+      }
     } else if (cmd === LC_SOURCE_VERSION_CMD) {
       // `struct source_version_command`, `cmdsize` 16. The packing is
       // `a24.b10.c10.d10.e10`; see {@link decodeSourceVersion}.
@@ -737,6 +1076,20 @@ export function parseThin(f, base = 0) {
           vmsize: wide ? s.readBigUInt64LE(32) : BigInt(s.readUInt32LE(28)),
           fileoff: wide ? s.readBigUInt64LE(40) : BigInt(s.readUInt32LE(32)),
           filesize: wide ? s.readBigUInt64LE(48) : BigInt(s.readUInt32LE(36)),
+          // The two protection masks and the segment flags, read from the same
+          // transcribed offsets as the sizes above rather than by scaling: `maxprot`
+          // sits at 56 in `segment_command_64` and 40 in `segment_command`, which is
+          // the same 16-byte gap the address fields open and not a multiple of it.
+          //
+          // These answer "may the loader write here, and did the linker say this
+          // segment must be zero-filled and protected until used" — which is what
+          // distinguishes `__PAGEZERO` (maxprot 0, entirely unwritable) from a
+          // segment that merely happens to be mapped read-only. A reader that
+          // reports only vmaddr and vmsize cannot tell those apart, and would call
+          // `__PAGEZERO` a 4 GiB writable mapping.
+          maxprot: s.readUInt32LE(wide ? 56 : 40),
+          initprot: s.readUInt32LE(wide ? 60 : 44),
+          flags: s.readUInt32LE(wide ? 68 : 52),
         });
         // Section entries follow the segment command. Both forms carry them —
         // this used to read only the 64-bit one, which meant a 32-bit slice
@@ -774,6 +1127,24 @@ export function parseThin(f, base = 0) {
             addr: wide ? sc.readBigUInt64LE(32) : BigInt(sc.readUInt32LE(32)),
             size: Number(wide ? sc.readBigUInt64LE(40) : sc.readUInt32LE(36)),
             offset: sc.readUInt32LE(wide ? 48 : 40),
+            // `align`, `reloff` and `nreloc`, from the same two transcribed layouts.
+            // These are the three fields that describe *how* the section is laid out
+            // rather than where it is, and they are what a reader needs to rebuild a
+            // section's byte range by hand:
+            //
+            //   field       section_64   section
+            //   align           52          44
+            //   reloff          56          48
+            //   nreloc          60          52
+            //
+            // `align` is a power of *two*, not a byte count — `2` means 4-byte
+            // alignment, `0` means "no alignment constraint recorded". It is reported
+            // raw rather than expanded, because the raw form is what the file holds
+            // and what every other reader reports, so a value cross-checked against
+            // one of them compares equal without a conversion on either side.
+            align: sc.readUInt32LE(wide ? 52 : 44),
+            reloff: sc.readUInt32LE(wide ? 56 : 48),
+            nreloc: sc.readUInt32LE(wide ? 60 : 52),
             // Section attributes. Read because S_ATTR_*_INSTRUCTIONS is the only
             // in-file signal that separates code from data, and a byte scanner
             // that cannot tell them apart reports data as call sites — see
@@ -793,9 +1164,9 @@ export function parseThin(f, base = 0) {
     off += cmdsize;
   }
   return {
-    is64, cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags,
+    is64, cputype, cpusubtype, filetype: decodeFiletype(filetype), ncmds, sizeofcmds, flags,
     segments, sections, loadCommands, symtab, uuid,
-    entryPoint, sourceVersion, rpaths,
+    entryPoint, sourceVersion, buildVersion, encryption, rpaths, dylibs, installName,
   };
 }
 
@@ -1208,10 +1579,13 @@ const PROVENANCE_COMMANDS = new Set([
  * @returns {{structure: string, symbols: string|null, fingerprint: string, tier: 'full'|'structure-only', nsyms: number}}
  */
 export function sliceShape({ arch, bits, filetype, sections, loadCommands, definedSymbols }) {
+  // Interpolated straight into the digest, so it has to be a stable string — see
+  // {@link filetypeKey} for what went wrong here and in `diff` when it was a number.
+  const ftKey = filetypeKey(filetype);
   const structure = digestOf([
     `arch:${arch}`,
     `bits:${bits}`,
-    `filetype:${filetype}`,
+    `filetype:${ftKey}`,
     ...sections.map((s) => `sect:${s.segname},${s.sectname}`),
     // Names only. A dylib's path and version live inside the command and change on
     // every dependency bump; the fact that the binary loads a dylib does not.

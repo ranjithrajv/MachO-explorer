@@ -67,6 +67,7 @@ import { createRequire } from 'node:module';
 import { realpathSync } from 'node:fs';
 import process from 'node:process';
 import { toolDefinitions, callTool, INSTRUCTIONS, findTool } from './mcp-tools.mjs';
+import { writeAllSync } from './output.mjs';
 
 /* ------------------------------------------------------------------ *
  * versions
@@ -138,9 +139,20 @@ export function guardStdout() {
   };
 }
 
-/** One message, one line, no embedded newlines. `JSON.stringify` guarantees both. */
+/**
+ * One message, one line, no embedded newlines. `JSON.stringify` guarantees both.
+ *
+ * Written with `writeAllSync`, not `realWrite`. An MCP client's transport is
+ * stdio, so fd 1 is *always* a pipe here — there is no "redirect to a file and it
+ * works" fallback to hide behind — and `process.stdout.write` is asynchronous on a
+ * pipe. A response larger than one 64 KiB pipe buffer was cut at exactly 65,536
+ * bytes and the client saw a truncated JSON-RPC message: not an error, just a
+ * short answer, which is the failure mode this project exists to avoid. The same
+ * tool over the same file through the CLI was correct whenever stdout was a file,
+ * so the two doors disagreed about the same answer.
+ */
 function send(msg) {
-  realWrite(JSON.stringify(msg) + '\n');
+  writeAllSync(1, JSON.stringify(msg) + '\n');
 }
 
 const respond = (id, result) => send({ jsonrpc: '2.0', id, result });

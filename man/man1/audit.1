@@ -1,7 +1,8 @@
-.TH AUDIT 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MACHO-EXPLORER 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-audit \- check a Mach-O for internal consistency
+macho-explorer \- Mach\-O binary introspection
 .SH SYNOPSIS
+.B macho-explorer
 .B audit
 .RI [ binary | bundle ]
 .RB [ \-\-json ]
@@ -87,9 +88,9 @@ indistinguishable from a stripped binary.
 .SH EXAMPLES
 .PP
 .nf
-audit build/Contents/MacOS/app
-audit \-\-strict ./dist/*.dylib
-audit \-\-json ./out | jq '.data.verdict, .data.counts'
+macho-explorer audit build/Contents/MacOS/app
+macho-explorer audit \-\-strict ./dist/*.dylib
+macho-explorer audit \-\-json ./out | jq '.data.verdict, .data.counts'
 .fi
 .SH SEE ALSO
 .BR describe (1),

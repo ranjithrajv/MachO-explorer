@@ -63,20 +63,7 @@
     "man/man1/overview.1"
   ],
   "bin": {
-    "describe": "src/describe.mjs",
-    "sym": "src/sym.mjs",
-    "symlookup": "src/symlookup.mjs",
-    "findcall": "src/findcall.mjs",
-    "findliteral": "src/findliteral.mjs",
-    "mapliteral": "src/mapliteral.mjs",
-    "a2o": "src/a2o.mjs",
-    "o2a": "src/o2a.mjs",
-    "disasm": "src/disasm.mjs",
-    "mcp": "src/mcp.mjs",
-    "audit": "src/audit.mjs",
-    "fingerprint": "src/fingerprint.mjs",
-    "diff": "src/diff.mjs",
-    "overview": "src/overview.mjs"
+    "macho-explorer": "src/macho-explorer.mjs"
   },
   "scripts": {
     "test": "node test/smoke.mjs",

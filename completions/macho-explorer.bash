@@ -1,12 +1,11 @@
 # bash completion for MachO-explorer.                           -*- shell-script -*-
 #
-# Registers completion for all thirteen commands from this one file:
+# Registers completion for the unified `macho-explorer` CLI:
 #
 #     . /path/to/completions/macho-explorer.bash  # from your .bashrc
 #
-# There is no common prefix to name a per-command file after — the commands
-# are bare verbs (`describe`, `sym`, ...) — so this file registers completion
-# for each of them at source time rather than being discovered by name.
+# The CLI takes a subcommand (`describe`, `sym`, ...) as its first argument,
+# so this file completes both subcommand names and their options.
 #
 # Every tool here is dependency-free and runs on Linux and Windows as well as
 # macOS, so completion never assumes `otool` or `lipo` exist.
@@ -100,27 +99,15 @@ _macho_complete() {
     _macho_targets
 }
 
-for _macho_cmd in describe sym symlookup findcall \
-                  findliteral mapliteral a2o o2a \
-                  disasm audit fingerprint diff overview; do
-    complete -F _macho_complete "$_macho_cmd"
-done
-unset _macho_cmd
-
-# mcp gets its own function rather than the shared one: it takes no
-# arguments, and reusing `_macho_complete` would offer it a Mach-O path to
-# read, which is not a thing it can do. What is useful is saying so, since the
-# usual reason to type it by hand is a client failing to launch it.
-_macho_mcp_complete() {
+# Complete subcommand names after `macho-explorer`
+_macho_subcommands() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
-    if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W '--help --version' -- "$cur"))
-    else
-        COMPREPLY=($(compgen -f -- "$cur"))
-    fi
+    COMPREPLY=( $(compgen -W "describe sym symlookup findcall findliteral mapliteral a2o o2a disasm audit fingerprint diff overview mcp" -- "$cur") )
     return 0
 }
-complete -F _macho_mcp_complete mcp
+
+# Register the unified CLI
+complete -F _macho_complete macho-explorer
 
 # Sourced rather than executed: `complete` and `compgen` only exist inside an
 # interactive bash, and running this file as a script would exit on the first of

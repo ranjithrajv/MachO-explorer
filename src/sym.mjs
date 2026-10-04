@@ -2,9 +2,9 @@
 /**
  * sym.mjs — search a Mach-O symbol table.
  *
- *   node src/sym.mjs <pattern> [binary|bundle] [max] [--json] [--regex]
- *   node src/sym.mjs --all-imp 'malloc' /path/to/binary
- *   node src/sym.mjs --regex 'runtime\..*main' /usr/local/go/bin/go
+ *   macho-explorer sym <pattern> [binary|bundle] [max] [--json] [--regex]
+ *   macho-explorer sym --all-imp 'malloc' /path/to/binary
+ *   macho-explorer sym --regex 'runtime\..*main' /usr/local/go/bin/go
  *
  * ## This tool used to be two
  *
@@ -39,7 +39,7 @@
  * in this package called them except the tools themselves, the package is at
  * 0.1.0, and two superseded entry points that disagree with the rules above
  * would recreate exactly the ambiguity the merge exists to end. The
- * equivalents are `sym.mjs --regex` and `sym.mjs --all-imp`, which is why the
+ * equivalents are `macho-explorer sym --regex` and `macho-explorer sym --all-imp`, which is why the
  * defaults above are the opposite way round from `symgrep`'s.
  *
  * ## A bug this no longer has
@@ -55,10 +55,10 @@
  */
 import { requireBinary, binaryAt, FALLBACK_TARGET } from './target.mjs';
 import { searchSymbols, searchSymbolsIn } from './api.mjs';
-import { parseArgs, emitJSON, usage, count, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, count, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const HELP = [
-  'usage: node src/sym.mjs <pattern> [binary|bundle] [max] [options]',
+  'usage: macho-explorer sym <pattern> [binary|bundle] [max] [options]',
   '',
   '  <pattern>          substring to match, or a regex with --regex',
   '  [binary|bundle]    defaults to $MACHO_EXPLORER_BINARY, then $MACHO_EXPLORER_APP,',
@@ -72,6 +72,10 @@ const HELP = [
   '  --no-dedupe        one row per table entry rather than per name',
   '  --arch=<name>      prefer an architecture (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',
   '  -b, --binary <p>   the binary, if every positional is part of the query',
+  '  -q, --quiet        suppress non-essential output',
+  '  --color            force color output',
+  '  --no-color         disable color output',
+  '  -v, --verbose      diagnostic output',
   '',
   'corpus mode — search many binaries with the same envelope:',
   '  --in <paths>       search a file or directory instead of one binary. Several',
@@ -124,9 +128,9 @@ if (!explicitBinary && positional.length === 1) {
       `${literal} names a Mach-O, and sym takes a pattern and then a binary.\n\n` +
       `  Read as a pattern it would search ${FALLBACK_TARGET} instead — a different\n` +
       `  file — so this is refused rather than answered.\n\n` +
-      `    search it:          node src/sym.mjs <pattern> ${JSON.stringify(literal)}\n` +
-      `    or name the binary: node src/sym.mjs <pattern> -b ${JSON.stringify(literal)}\n` +
-      `    to match the path as text: node src/sym.mjs ${JSON.stringify(literal)} -b <binary>`;
+      `    search it:          macho-explorer sym <pattern> ${JSON.stringify(literal)}\n` +
+      `    or name the binary: macho-explorer sym <pattern> -b ${JSON.stringify(literal)}\n` +
+      `    to match the path as text: macho-explorer sym ${JSON.stringify(literal)} -b <binary>`;
     if (flags.has('json')) {
       // Emitted, because this tool already emits for `bad-pattern` above and a
       // caller piping `--json` should not have to parse prose to learn that the

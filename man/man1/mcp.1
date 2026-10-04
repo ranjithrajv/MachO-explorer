@@ -59,7 +59,7 @@ Register with a client:
 .PP
 .nf
 .RS
-claude mcp add macho \-\- node /absolute/path/to/src/mcp.mjs
+claude mcp add macho \-\- macho-explorer mcp
 .RE
 .fi
 .PP
@@ -69,8 +69,8 @@ Or in a project's
 .nf
 .RS
 { "mcpServers": { "macho": {
-    "command": "node",
-    "args": ["/absolute/path/to/src/mcp.mjs"],
+    "command": "macho-explorer",
+    "args": ["mcp"],
     "env": { "MACHO_EXPLORER_BINARY": "/path/to/a/binary" } } } }
 .RE
 .fi

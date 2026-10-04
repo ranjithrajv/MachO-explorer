@@ -2,8 +2,8 @@
 /**
  * a2o.mjs — which byte of the file is this virtual address?
  *
- *   node src/a2o.mjs <hex-vaddr> [<hex-vaddr> ...] [--json] [--arch=<name>]
- *   node src/a2o.mjs 0x100001000 -b /path/to/binary
+ *   macho-explorer a2o <hex-vaddr> [<hex-vaddr> ...] [--json] [--arch=<name>]
+ *   macho-explorer a2o 0x100001000 -b /path/to/binary
  *
  * The inverse of `o2a`. Every address a tool reports is a virtual address,
  * because that is what a call site or a symbol refers to; every position a hex
@@ -36,12 +36,12 @@
  */
 import { requireBinary } from './target.mjs';
 import { addressToOffset } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/a2o.mjs <hex-vaddr> [<hex-vaddr> ...] [--json] [--arch=<name>] [-b <binary>]',
+  'usage: macho-explorer a2o <hex-vaddr> [<hex-vaddr> ...] [--json] [--arch=<name>] [-b <binary>]',
   '',
   '  every positional is an address, so the binary comes from -b/--binary,',
   '  $MACHO_EXPLORER_BINARY or $MACHO_EXPLORER_APP.',
@@ -49,6 +49,10 @@ const HELP = [
   'options:',
   '  --arch=<name>      read one architecture (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',
   '  -b, --binary <p>   the binary to read',
+  '  -q, --quiet        suppress non-essential output',
+  '  --color            force color output',
+  '  --no-color         disable color output',
+  '  -v, --verbose      diagnostic output',
   '  --json             one JSON object on stdout; prose to stderr',
   '  -h, --help         this message',
 ];

@@ -2,7 +2,7 @@
 /**
  * describe.mjs — what is in this binary?
  *
- *   node src/describe.mjs [binary|bundle] [--json]
+ *   macho-explorer describe [binary|bundle] [--json]
  *
  * Every slice, with its architecture, file extent, whether it is thin or part of
  * a fat file, symbol counts, where its `__TEXT` starts, and how many sections
@@ -29,13 +29,13 @@
 import { requireBinary, FALLBACK_TARGET } from './target.mjs';
 import { isCodeSection, archMatches } from './macho.mjs';
 import { describe } from './api.mjs';
-import { parseArgs, emitJSON, usage, count, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, count, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/describe.mjs [binary|bundle] [--json] [--arch=<name>]',
-  '                          [--sections] [--segments] [--loads] [-b <binary>]',
+  'usage: macho-explorer describe [binary|bundle] [--json] [--arch=<name>]',
+  '                             [--sections] [--segments] [--loads] [-b <binary>]',
   '',
   '  what is in this binary: every slice, its architecture, extent, symbol',
   '  counts and where __TEXT starts. Defaults to $MACHO_EXPLORER_BINARY, then $MACHO_EXPLORER_APP,',
@@ -48,6 +48,10 @@ const HELP = [
   '  --arch=<name>     read one slice of a universal binary (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',
   '  --json            one JSON object on stdout; prose to stderr',
   '  -b, --binary <p>  the binary to read',
+  '  -q, --quiet       suppress non-essential output',
+  '  --color           force color output',
+  '  --no-color        disable color output',
+  '  -v, --verbose     diagnostic output',
   '  -h, --help        this message',
 ];
 
@@ -114,6 +118,13 @@ for (const s of r.slices) {
   console.log(
     `  ${s.arch.padEnd(8)} file ${s.offset}..${s.offset + s.size}` +
       `  ${s.bits || '?'}-bit` +
+      // What kind of file this is, and what it was built for. Both are one word, both
+      // come from the header, and both were documented here before either was
+      // decoded — so a reader that printed neither had a binary it could not classify.
+      // An unnamed value shows as its number rather than being dropped, because
+      // "this is not a filetype I know" and "this file does not say" differ.
+      `  ${s.filetype?.name ?? (s.filetype ? `filetype ${s.filetype.raw}` : 'filetype ?')}` +
+      `  ${s.buildVersion?.platform ?? 'platform ?'}` +
       `  ${count(s.defined)} defined / ${count(s.nsyms)} symbols` +
       `  ${s.codeSections} code section(s)${text}`,
   );
@@ -153,8 +164,44 @@ for (const s of r.slices) {
   // meaning and the list is printed in the order the binary declares it.
   for (const rp of s.rpaths) console.log(`           rpath ${rp}`);
 
+  // The `dylib_command` family, in the order the linker recorded it. `linkage`
+  // is printed rather than dropped because it changes what an absent library
+  // means, and a list that showed five identical-looking paths would lose the one
+  // fact that distinguishes them. Marked on the weak/reexport/lazy/upward cases
+  // only, so the common case reads like `otool -L` and stays scannable.
+  if (s.installName) console.log(`           install name ${s.installName.name}`);
+  for (const d of s.dylibs) {
+    const tag = d.linkage === 'load' ? '' : `  (${d.linkage})`;
+    console.log(`           dylib ${d.name}${tag}`);
+  }
+
   if (s.sourceVersion) {
     console.log(`           source version ${s.sourceVersion.text}`);
+  }
+
+  // The platform the binary was built for, and the OS and SDK it declares. Before
+  // this was decoded the command was named in `--loads` and nothing said what it
+  // said, so `describe` could tell you the binary carried an `LC_BUILD_VERSION` and
+  // not what the binary was — which is the whole question the command exists to
+  // answer.
+  if (s.buildVersion) {
+    const bv = s.buildVersion;
+    console.log(`           minos ${bv.minos.text}  sdk ${bv.sdk.text}`);
+    // A build version with tool records carries 8 more bytes per tool past the 24
+    // this reader reads. Saying so beats reporting a value that silently omits them.
+    if (bv.ntools) console.log(`           (${bv.ntools} tool record(s) not read)`);
+  }
+
+  // FairPlay. This is the line that changes what every other answer on this screen
+  // means: an App Store binary's `__TEXT` is ciphertext, so a zero from `findcall`,
+  // `findliteral` or `--strings` is "not readable", not "not there".
+  if (s.encryption) {
+    const e = s.encryption;
+    console.log(
+      e.encrypted
+        ? `           ENCRYPTED (cryptid=${e.cryptid}) — __TEXT is ciphertext; findcall, findliteral and --strings cannot read it`
+        : `           not encrypted (cryptid=${e.cryptid})`,
+    );
   }
 
   if (s.note) console.log(`           note: ${s.note}`);

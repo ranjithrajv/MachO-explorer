@@ -84,6 +84,23 @@ const LC_RPATH = 0x1c;
 // witness; a fixture that borrowed the reader's constant would encode its typo.
 const LC_MAIN = 0x80000028;
 const LC_SOURCE_VERSION = 0x2a;
+// The `dylib_command` family, written out rather than derived from the reader's
+// table for the same reason every other constant in this block is: the builder
+// must be an independent witness, or a typo shared with the reader is invisible.
+const LC_LOAD_DYLIB = 0x0c;
+const LC_ID_DYLIB = 0x0d;
+const LC_LOAD_WEAK_DYLIB = 0x80000018;
+const LC_REEXPORT_DYLIB = 0x8000001f;
+const LC_LAZY_LOAD_DYLIB = 0x20;
+const LC_LOAD_UPWARD_DYLIB = 0x80000023;
+const LC_BUILD_VERSION = 0x32;
+// Transcribed from `<mach-o/loader.h>` in the installed SDK rather than recalled,
+// because the numbering changed in 2017 and the old values are the ones that come
+// back first. `PLATFORM_MACOS` was 6 and is now 1; `PLATFORM_IOS` was 7 and is now 2.
+const PLATFORM_MACOS = 1;
+const PLATFORM_IOS = 2;
+const PLATFORM_IOSSIMULATOR = 7;
+const PLATFORM_VISIONOS = 11;
 
 /**
  * Header `flags` bits, for the fixture that exercises flag decoding.
@@ -598,6 +615,62 @@ function lcRpath(path) {
 }
 
 /**
+ * One `dylib_command`: the name is an *offset*, not inline bytes.
+ *
+ * `struct dylib_command` is 24 bytes of header — `cmd`, `cmdsize`, the `lc_str`
+ * offset, and the timestamp and two packed versions — followed by the name. The
+ * `24` appears twice on purpose: once as the floor for where the name may start,
+ * and once as the length of the fixed part. A name written inline at byte 8
+ * produces a string that looks like a path, which is the bug this layout exists
+ * to make impossible to write by accident.
+ *
+ * `timestamp` is `2` for a current SDK rather than `0`, so a decoder that
+ * defaulted to zero and one that reads the field cannot be told apart by a
+ * healthy fixture — only by this one.
+ */
+function lcDylib(cmd, name, { timestamp = 2, current = 0x10000, compat = 0x10000 } = {}) {
+  const str = Buffer.from(name, 'latin1');
+  const total = Math.ceil((24 + str.length + 1) / 8) * 8;
+  const b = Buffer.alloc(total);
+  b.writeUInt32LE(cmd, 0);
+  b.writeUInt32LE(total, 4);
+  b.writeUInt32LE(24, 8);   // the offset, relative to this command
+  b.writeUInt32LE(timestamp, 12);
+  b.writeUInt32LE(current, 16);
+  b.writeUInt32LE(compat, 20);
+  str.copy(b, 24);
+  return b;
+}
+
+/**
+ * `LC_BUILD_VERSION`: the platform, and the minimum OS and SDK, as packed `X.Y.Z`.
+ *
+ * `PLATFORM_IOSSIMULATOR` (7) rather than `PLATFORM_IOS` (2) on purpose. Those two
+ * numbers were swapped in every table this project got wrong first, because the
+ * pre-2017 numbering had `PLATFORM_IOS` at 7 — and the mistake is invisible until a
+ * real binary is run through it, at which point every iOS binary on the machine
+ * reports as a simulator. `minos` is `13.4.1` for the same reason: three unequal
+ * fields, so reading them as three equal bytes produces components that all look
+ * like plausible versions and none of them are.
+ *
+ * `ntools` is 2 with no tool records written, which is a *lie* on purpose: it is the
+ * only way a reader can be caught claiming it read a command's whole contents when it
+ * read 24 bytes of a longer one. The fixture asserts the count is reported, so the
+ * gap is visible rather than silent.
+ */
+function lcBuildVersion(platform, minos, sdk, ntools = 0) {
+  const pack = (x, y, z) => ((x << 16) | (y << 8) | z) >>> 0;
+  const buf = Buffer.alloc(24);
+  buf.writeUInt32LE(LC_BUILD_VERSION, 0);
+  buf.writeUInt32LE(24, 4);
+  buf.writeUInt32LE(platform, 8);
+  buf.writeUInt32LE(pack(...minos), 12);
+  buf.writeUInt32LE(pack(...sdk), 16);
+  buf.writeUInt32LE(ntools, 20);
+  return buf;
+}
+
+/**
  * `LC_SOURCE_VERSION`, packed `a24.b10.c10.d10.e10`.
  *
  * The field widths are unequal and that is the point: `A` occupies bits 40..63 and
@@ -689,6 +762,64 @@ function codeFixture(cputype, { extraLoadcmds = 0, base = VMADDR_BASE } = {}) {
       { name: '_free', type: N_EXT, sect: 0, value: 0n },
     ],
     addresses: { text: TEXT, callerA: CALLER_A, callerB: CALLER_B, target: TARGET },
+  };
+}
+
+/**
+ * Enough symbols that `sym --json` on it is larger than one pipe buffer.
+ *
+ * ## Why this fixture exists at all
+ *
+ * Every other fixture in this corpus produces between 264 bytes and 7 KB of
+ * `--json`. The largest output in the suite was `populated.macho` at 7,027 bytes,
+ * which is an order of magnitude below the 65,536 bytes a macOS pipe holds — so
+ * every tool in the suite passed, every run, forever, while `emitJSON` was
+ * truncating every real payload past one buffer. It wrote with
+ * `process.stdout.write`, which is asynchronous on a pipe, and then called
+ * `process.exit`, which does not wait for pending stream writes:
+ *
+ *     $ findliteral --strings --json /usr/lib/dyld > f   # 826,998 bytes, parses
+ *     $ findliteral --strings --json /usr/lib/dyld | cat  #  65,536 bytes, does not
+ *
+ * A test suite cannot catch a size-dependent defect with no fixture near the
+ * size, so this one is here to be that fixture. `BULK_SYMBOLS` is chosen against
+ * the measured per-row cost of the envelope rather than a round number: at
+ * indent 2 a row is ~130 bytes, and the assertion in the suite is that the output
+ * exceeds 65,536 bytes *and* survives a pipe intact.
+ *
+ * The names are padded to a realistic length rather than being `_b0001`. A short
+ * name would make the fixture lighter than the binaries it stands in for, and
+ * what is being tested is bytes on a wire, not bytes per row.
+ *
+ * The count is set against the *MCP* per-row cost, not the CLI's, because the MCP
+ * response is the tighter of the two: the same envelope over stdio comes to ~73
+ * bytes a row against the CLI's ~113, so a count that clears one pipe buffer on
+ * the CLI can still sit under it on the MCP transport — and the MCP transport is
+ * a pipe *always*, with no redirect to hide behind. 1,100 rows puts both above
+ * 65,536 bytes, and stays under `sym`'s default 4,000-row cap so no run is
+ * reporting a truncation it did not cause.
+ */
+const BULK_SYMBOLS = 1100;
+
+function bulkFixture() {
+  const c = codeFixture(CPU_X86_64);
+  // Real binaries are dominated by imports, and `sym` reaches them only with
+  // `--all-imp`, so the bulk is imports. A fixture of defined symbols would test
+  // a code path a real binary barely uses.
+  const fillers = [];
+  for (let i = 0; i < BULK_SYMBOLS; i++) {
+    fillers.push({
+      name: `_imported_symbol_number_${String(i).padStart(4, '0')}`,
+      type: N_EXT,
+      sect: 0,
+      value: 0n,
+    });
+  }
+  return {
+    text: c.text,
+    data: c.data,
+    symbols: [...c.symbols, ...fillers],
+    addresses: c.addresses,
   };
 }
 
@@ -1292,6 +1423,7 @@ function metaFixture() {
     lcMain(ENTRYOFF, STACKSIZE),
     lcRpath(RPATH),
     lcSourceVersion(VERSION.a, VERSION.b, VERSION.c, VERSION.d, VERSION.e),
+    lcBuildVersion(PLATFORM_IOSSIMULATOR, [13, 4, 1], [17, 0, 0], 2),
   ];
   // Derived from the buffers rather than written down, because `extraLoadcmds`
   // shifts every address in the file: a restated total would be right today and
@@ -1324,7 +1456,71 @@ function metaFixture() {
     flagNames: ['MH_NOUNDEFS', 'MH_DYLDLINK', 'MH_TWOLEVEL', 'MH_PIE'],
     // The order the commands were written in, which is the order the reader must
     // report them in.
-    loadCommandNames: ['LC_SEGMENT_64', 'LC_SYMTAB', 'LC_MAIN', 'LC_RPATH', 'LC_SOURCE_VERSION'],
+    loadCommandNames: ['LC_SEGMENT_64', 'LC_SYMTAB', 'LC_MAIN', 'LC_RPATH', 'LC_SOURCE_VERSION', 'LC_BUILD_VERSION'],
+    buildVersion: {
+      platform: 'ios-simulator',
+      platformRaw: PLATFORM_IOSSIMULATOR,
+      minos: '13.4.1',
+      sdk: '17.0.0',
+      ntools: 2,
+    },
+  };
+}
+
+/**
+ * A binary that links, in one image, all five dependency linkages plus its own
+ * install name.
+ *
+ * This exists because no binary on a normal machine exercises the interesting
+ * cases. A stock macOS executable has `LC_LOAD_DYLIB` and nothing else — dyld's
+ * chained fixups removed the weak and re-export forms years ago — so a decoder
+ * that handled only `0x0c` would pass against every real file on the machine and
+ * still be wrong on the four commands that distinguish "this library is missing"
+ * from "this library is optional".
+ *
+ * The order is deliberate and meaningful: it is link order, which is the order
+ * `@rpath` resolution and any consumer diffing two binaries both care about.
+ */
+function dylibsFixture() {
+  const DEPS = [
+    { cmd: LC_LOAD_DYLIB, name: '/usr/lib/libSystem.B.dylib', linkage: 'load' },
+    { cmd: LC_LOAD_WEAK_DYLIB, name: '@rpath/optional.framework/Versions/A/optional', linkage: 'weak' },
+    { cmd: LC_REEXPORT_DYLIB, name: '/usr/lib/libresolv.9.dylib', linkage: 'reexport' },
+    { cmd: LC_LAZY_LOAD_DYLIB, name: '@rpath/lazy.dylib', linkage: 'lazy' },
+    { cmd: LC_LOAD_UPWARD_DYLIB, name: '@rpath/upward.dylib', linkage: 'upward' },
+  ];
+  const INSTALL_NAME = '@rpath/libfixture.dylib';
+  // Packed `X.Y.Z` as the linker writes it, so a reader that reports the raw
+  // word and one that unpacks it are distinguishable by the fixture.
+  const VERSIONS = { current: 0x01020003, compat: 0x01000000 };
+
+  const extra = [
+    ...DEPS.map((d) => lcDylib(d.cmd, d.name, VERSIONS)),
+    lcDylib(LC_ID_DYLIB, INSTALL_NAME, VERSIONS),
+  ];
+  const extraLoadcmds = extra.reduce((n, c) => n + c.length, 0);
+
+  const c = codeFixture(CPU_X86_64, { extraLoadcmds });
+  const buf = thinMachO({ cputype: CPU_X86_64, ...c, extraCommands: extra });
+
+  return {
+    buf,
+    dylibs: DEPS,
+    installName: INSTALL_NAME,
+    versions: VERSIONS,
+    extraLoadcmds,
+    addresses: c.addresses,
+    loadCommandNames: [
+      'LC_SEGMENT_64', 'LC_SYMTAB',
+      ...DEPS.map((d) => ({
+        LC_LOAD_DYLIB: 'LC_LOAD_DYLIB',
+        LC_LOAD_WEAK_DYLIB: 'LC_LOAD_WEAK_DYLIB',
+        LC_REEXPORT_DYLIB: 'LC_REEXPORT_DYLIB',
+        LC_LAZY_LOAD_DYLIB: 'LC_LAZY_LOAD_DYLIB',
+        LC_LOAD_UPWARD_DYLIB: 'LC_LOAD_UPWARD_DYLIB',
+      })[d.cmd]),
+      'LC_ID_DYLIB',
+    ],
   };
 }
 
@@ -1861,6 +2057,40 @@ async function verify(files) {
       s.abnormalities.length === 0,
       `meta: a well-formed binary reports no abnormalities (got ${s.abnormalities.map((a) => a.kind).join(',') || 'none'})`,
     );
+    // LC_BUILD_VERSION. The platform name is the whole assertion, because the table
+    // that decodes it was written wrong first — with the pre-2017 numbering, in which
+    // PLATFORM_IOS is 7 — and nothing caught it until a real binary was run through
+    // it. `PLATFORM_IOSSIMULATOR` is 7 in the *current* numbering, so a reader holding
+    // the old table names this fixture's iOS-simulator binary `ios` and stops there.
+    const bv = exp.buildVersion;
+    expect(
+      s.buildVersion?.platform === bv.platform,
+      `meta: LC_BUILD_VERSION names the platform (got ${s.buildVersion?.platform})`,
+    );
+    expect(
+      s.buildVersion?.platformRaw === bv.platformRaw,
+      `meta: the raw platform word is reported beside the name (got ${s.buildVersion?.platformRaw})`,
+    );
+    // Three unequal fields: 13.4.1 read as three equal bytes is 0.13.4.0.
+    expect(
+      s.buildVersion?.minos.text === bv.minos && s.buildVersion?.sdk.text === bv.sdk,
+      `meta: minos and sdk decode as packed X.Y.Z (got ${s.buildVersion?.minos.text}, ${s.buildVersion?.sdk.text})`,
+    );
+    expect(
+      s.buildVersion?.minos.raw === ((13 << 16) | (4 << 8) | 1) >>> 0,
+      `meta: the packed version word is kept raw for cross-reader comparison (got ${s.buildVersion?.minos.raw})`,
+    );
+    // The fixture declares two tool records and writes none. Asserting the count is
+    // reported is what makes "this reader read 24 bytes of a longer command" visible
+    // instead of silent.
+    expect(
+      s.buildVersion?.ntools === bv.ntools,
+      `meta: un-read tool records are counted rather than implied absent (got ${s.buildVersion?.ntools})`,
+    );
+    expect(
+      s.buildVersion?.command === 'LC_BUILD_VERSION',
+      `meta: buildVersion says which command it was decoded from (got ${s.buildVersion?.command})`,
+    );
     // The fixture must remain a working binary for every other tool, or the
     // assertions above would be reached through a file the rest of the suite
     // cannot read.
@@ -1871,6 +2101,78 @@ async function verify(files) {
     expect(
       lookupAddress(files.meta, exp.addresses.target).function === 'target_fn',
       'meta: symbols still resolve with three extra load commands present',
+    );
+  }
+
+  // The `dylib_command` family. Every linkage, in one image, because a stock
+  // macOS executable emits only `LC_LOAD_DYLIB` — so a decoder handling just that
+  // one command passes against every real binary on the machine and is still
+  // wrong four times out of five.
+  {
+    const e = dylibsFixture();
+    const s = describe(files.dylibs).slices[0];
+
+    expect(
+      s.dylibs.length === e.dylibs.length,
+      `dylibs: every dependency is reported (got ${s.dylibs.length}, want ${e.dylibs.length})`,
+    );
+    // Names first, and by index: order is link order, and a reader that sorted
+    // them would still report the right *set*.
+    expect(
+      s.dylibs.map((d) => d.name).join('|') === e.dylibs.map((d) => d.name).join('|'),
+      `dylibs: names and order round-trip (got ${s.dylibs.map((d) => d.name).join('|')})`,
+    );
+    // The linkage, per entry. This is the assertion a `0x0c`-only decoder fails,
+    // and it is the one that matters: the five commands differ in what a *missing*
+    // library means.
+    expect(
+      s.dylibs.map((d) => d.linkage).join('|') === e.dylibs.map((d) => d.linkage).join('|'),
+      `dylibs: each command keeps its own linkage (got ${s.dylibs.map((d) => d.linkage).join('|')})`,
+    );
+    // The name sits behind an `lc_str` offset. Reading eight bytes in as if they
+    // were the first characters yields a string that looks like a path and names
+    // no library — so this also pins the offset arithmetic.
+    expect(
+      s.dylibs.every((d) => d.name.startsWith('/') || d.name.startsWith('@rpath/')),
+      `dylibs: every name is a real path or token (got ${s.dylibs.map((d) => d.name).join(' ')})`,
+    );
+    expect(
+      s.dylibs.every((d) => d.cmdName && d.cmdName.startsWith('LC_')),
+      `dylibs: every entry is attributed to a named command`,
+    );
+    // The packed versions, chosen so that reporting the raw word and unpacking it
+    // are distinguishable: 0x01020003 is 1.2.3, and a decoder reading the wrong
+    // field would produce a value that still looks like a version.
+    expect(
+      s.dylibs.every((d) => d.currentVersion === e.versions.current && d.compatVersion === e.versions.compat),
+      `dylibs: the packed versions are read from the right fields (got ${s.dylibs[0]?.currentVersion.toString(16)}, ${s.dylibs[0]?.compatVersion.toString(16)})`,
+    );
+    expect(
+      s.dylibs.every((d) => d.timestamp === 2),
+      `dylibs: the timestamp is read rather than defaulted (got ${s.dylibs[0]?.timestamp})`,
+    );
+    // LC_ID_DYLIB names this image, so it must not appear as a dependency — the
+    // distinction is the whole reason it is a separate field.
+    expect(
+      s.installName?.name === e.installName,
+      `dylibs: LC_ID_DYLIB is the install name, not a dependency (got ${s.installName?.name})`,
+    );
+    expect(
+      !s.dylibs.some((d) => d.name === e.installName),
+      'dylibs: the install name is not also listed as a dependency',
+    );
+    expect(
+      s.installName?.linkage === undefined,
+      `dylibs: the install name carries no linkage (got ${s.installName?.linkage})`,
+    );
+    // Still a working binary for every other tool.
+    expect(
+      findCalls(files.dylibs, e.addresses.target).count === 2,
+      'dylibs: the six extra load commands did not break the call scan',
+    );
+    expect(
+      lookupAddress(files.dylibs, e.addresses.target).function === 'target_fn',
+      'dylibs: symbols still resolve with six extra load commands present',
     );
   }
 
@@ -2288,6 +2590,8 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
   const st = stringsFixture();
   const b32 = bits32Fixture();
   const meta = metaFixture();
+  const dylibs = dylibsFixture();
+  const bulk = bulkFixture();
   const dmg = damagedFixture();
   const bent = bentFat();
   const newer = newerFlagsFixture();
@@ -2324,6 +2628,13 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     // Header-level metadata: flags, section type + attributes, and the three load
     // commands that carry values rather than just declaring a dependency.
     'meta.macho': meta.buf,
+    // All five dependency linkages in one image. Nothing on a normal macOS
+    // machine emits the weak, re-export, lazy or upward forms any more, so
+    // without this the decoder's four of five paths would be untested.
+    'dylibs.macho': dylibs.buf,
+    // Large enough that its `--json` exceeds one pipe buffer, so the suite can
+    // reach the size-dependent write path no other fixture comes near.
+    'bulk.macho': thinMachO({ cputype: CPU_X86_64, text: bulk.text, data: bulk.data, symbols: bulk.symbols }),
     // A file whose header disagrees with its contents. Present so the abnormality
     // checks run against something actually broken.
     'damaged.macho': dmg.buf,

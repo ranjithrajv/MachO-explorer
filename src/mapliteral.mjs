@@ -2,7 +2,7 @@
 /**
  * mapliteral.mjs — map a literal to its addresses, and find what points at them.
  *
- *   node src/mapliteral.mjs <literal> [binary|bundle] [file-offset ...] [--json]
+ *   macho-explorer mapliteral <literal> [binary|bundle] [file-offset ...] [--json]
  *
  * Steps:
  *   1. parse the fat header and choose a slice
@@ -35,18 +35,22 @@
  */
 import { requireBinary } from './target.mjs';
 import { mapLiteral } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/mapliteral.mjs <literal> [binary|bundle] [file-offset ...] [--json] [-b <binary>]',
+  'usage: macho-explorer mapliteral <literal> [binary|bundle] [file-offset ...] [--json] [-b <binary>]',
   '',
   '  maps each occurrence of <literal> to a vaddr, then finds pointers to it.',
-  '  file offsets are absolute, as reported by findliteral.mjs.',
+  '  file offsets are absolute, as reported by findliteral.',
   '',
   'options:',
   '  -b, --binary <p>   the binary to read',
+  '  -q, --quiet        suppress non-essential output',
+  '  --color            force color output',
+  '  --no-color         disable color output',
+  '  -v, --verbose      diagnostic output',
   '  --json             one JSON object on stdout; prose to stderr',
   '  -h, --help         this message',
 ];

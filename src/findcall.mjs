@@ -2,8 +2,8 @@
 /**
  * findcall.mjs — locate direct call/jmp sites targeting a given vaddr.
  *
- *   node src/findcall.mjs <hex-vaddr> [binary|bundle] [--json] [--arch=<name>]
- *   node src/findcall.mjs --list [binary|bundle] [max] [--include-data]
+ *   macho-explorer findcall <hex-vaddr> [binary|bundle] [--json] [--arch=<name>]
+ *   macho-explorer findcall --list [binary|bundle] [max] [--include-data]
  *
  * `objdump` in Command Line Tools silently ignores `--start-address` on a fat
  * binary, so this scans code sections directly for the rel32 of a direct `call`
@@ -61,13 +61,13 @@
  */
 import { requireBinary } from './target.mjs';
 import { findCalls, listCallTargets } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/findcall.mjs <hex-vaddr> [binary|bundle] [--json] [--arch=<name>] [-b <binary>] [--include-data]',
-  '       node src/findcall.mjs --list [binary|bundle] [max] [--json] [--include-data]',
+  'usage: macho-explorer findcall <hex-vaddr> [binary|bundle] [--json] [--arch=<name>] [-b <binary>] [--include-data]',
+  '       macho-explorer findcall --list [binary|bundle] [max] [--json] [--include-data]',
   '',
   '  direct call/jmp sites targeting an address, or with --list the distinct',
   '  targets a binary calls, most-called first.',
@@ -78,6 +78,10 @@ const HELP = [
   '                     accepting false positives from data that decodes as a call',
   '  --arch=<name>      read one architecture (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',
   '  -b, --binary <p>   the binary to read',
+  '  -q, --quiet        suppress non-essential output',
+  '  --color            force color output',
+  '  --no-color         disable color output',
+  '  -v, --verbose      diagnostic output',
   '  --json             one JSON object on stdout; prose to stderr',
   '  -h, --help         this message',
 ];

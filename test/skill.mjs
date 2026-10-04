@@ -29,6 +29,25 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 const SKILL_DIR = path.join(ROOT, 'skill');
 const FIXTURES = path.join(HERE, 'fixtures');
+const CLI = path.join(ROOT, 'src', 'macho-explorer.mjs');
+
+/**
+ * The dispatcher's published subcommand list, read from the source.
+ *
+ * Module scope because two separate sections need it and one of them is not the
+ * one that introduced it — which is the shape of the bug this replaces. The flag
+ * checks read it to know which tools exist; the installability check reads it to
+ * confirm `mcp` is still reachable. Both are statements about what the CLI accepts,
+ * and there is exactly one answer to that, so there is exactly one place to read it
+ * from.
+ *
+ * Parsed out of the source rather than imported: the dispatcher executes its
+ * subcommand on import, so importing it to ask it a question would run a tool as a
+ * side effect of the test that lists the tools.
+ */
+const SUBCOMMANDS = (fs.readFileSync(CLI, 'utf8').match(/const SUBCOMMANDS = \[([\s\S]*?)\];/)?.[1] ?? '')
+  .match(/'([a-z0-9]+)'/g)
+  ?.map((s) => s.replace(/'/g, '')) ?? [];
 
 let pass = 0;
 let fail = 0;
@@ -162,32 +181,62 @@ for (const name of SKILLS) {
   // takes an address and a count — feeding them the older tools' arguments makes
   // them exit 2 on the *arguments* and the flag looks rejected when it is not.
   //
-  // The tool list comes from package.json's `bin`, which is authoritative, and this
-  // is a correction rather than an improvement. Deriving it from `src/*.mjs` instead
-  // swept in the non-CLI modules — `api.mjs`, `output.mjs`, `bundle.mjs`,
-  // `instruction.mjs` — and those exit 0 for *any* argument because they have no CLI
-  // to reject one. So the first module tried accepted everything, every flag passed,
-  // and the check went green while testing nothing at all. A guard that silently
-  // stops guarding is worse than no guard, and this file's own comment says so.
+  // The tool list comes from the dispatcher's own `SUBCOMMANDS`, which is
+  // authoritative for the same reason `bin` used to be: it is the list the CLI
+  // actually accepts.
   //
-  // `mcp` is excluded from the same reasoning, for a different reason: it is a stdio
-  // server, so it reads stdin until stdin closes and then exits 0 — whatever it was
-  // handed. It would "accept" any flag the same way. It genuinely takes no flags of
-  // its own, so there is nothing here for it to prove.
-  const TOOLS_ON_DISK = Object.keys(JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).bin ?? {})
-    .filter((t) => t !== 'mcp');
+  // Deriving it from `src/*.mjs` is the mistake this comment used to make against.
+  // That swept in the non-CLI modules — `api.mjs`, `output.mjs`, `bundle.mjs`,
+  // `instruction.mjs` — and those exit 0 for *any* argument because they have no CLI
+  // to reject one, so the first module tried accepted everything and the check went
+  // green while testing nothing at all. A guard that silently stops guarding is worse
+  // than no guard, and this file's own history says so.
+  //
+  // It then became `Object.keys(pkg.bin)`, which was right while every tool had its
+  // own `bin` entry and wrong the moment `bin` collapsed to one `macho-explorer`
+  // dispatcher: the list became `['macho-explorer']`, so each check ran
+  // `macho-explorer --sections` — no subcommand, which is a usage error — and all
+  // sixteen flags were reported rejected. Sixteen failures, none of them about a flag.
+  // The suite is at its most valuable on exactly this property, which is why it is
+  // worth being careful about where the list comes from.
+  //
+  // So: read `SUBCOMMANDS` out of the dispatcher, and invoke through the dispatcher.
+  // That also means these checks now exercise the *published* front door rather than
+  // the per-tool files behind it, which is the surface a user actually types.
+  //
+  // `mcp` is excluded, for a reason unrelated to any of that: it is a stdio server, so
+  // it reads stdin until stdin closes and then exits 0 — whatever it was handed. It
+  // would "accept" any flag the same way. It genuinely takes no flags of its own, so
+  // there is nothing here for it to prove.
+  const TOOLS_ON_DISK = SUBCOMMANDS.filter((t) => t !== 'mcp');
+
+  check(
+    SUBCOMMANDS.length > 0,
+    'the dispatcher publishes a subcommand list this suite can read',
+    `${SUBCOMMANDS.length} subcommand(s): ${SUBCOMMANDS.join(', ')}`,
+  );
+  check(
+    TOOLS_ON_DISK.every((t) => fs.existsSync(path.join(ROOT, 'src', `${t}.mjs`))),
+    'every subcommand has a tool file behind it',
+    TOOLS_ON_DISK.filter((t) => !fs.existsSync(path.join(ROOT, 'src', `${t}.mjs`))).join(', ') || 'all present',
+  );
 
   const argsFor = (t, flag) => {
-    const src = path.join(ROOT, 'src', `${t}.mjs`);
+    // Every invocation goes through the dispatcher, with the subcommand in front, so
+    // this suite tests the command a user types. Passing `src/<tool>.mjs` directly
+    // would still prove the flag is accepted, but it would miss a dispatcher that
+    // dropped the flag on the way past.
+    const src = CLI;
+    const sub = [t];
     switch (t) {
       case 'audit':
-        return [src, `--${flag}`, rebuilt];
+        return [src, ...sub, `--${flag}`, rebuilt];
       case 'fingerprint':
-        return [src, `--${flag}`, probeBin];
+        return [src, ...sub, `--${flag}`, probeBin];
       case 'diff':
-        return [src, `--${flag}`, rebuilt, rebuilt2];
+        return [src, ...sub, `--${flag}`, rebuilt, rebuilt2];
       case 'disasm':
-        return [src, `--${flag}`, '0x100000160', probeBin, '1'];
+        return [src, ...sub, `--${flag}`, '0x100000160', probeBin, '1'];
       case 'overview': {
         // `--max` and `--min` take a number, and `overview` refuses a value it
         // cannot read rather than falling back to the default — `--max=abc`
@@ -199,8 +248,8 @@ for (const name of SKILLS) {
         // carve out, for the same reason: a value-taking flag needs a value, and a
         // guard that reports its absence as a defect is guarding nothing. Given a
         // value, the flag is accepted.
-        if (flag === 'max' || flag === 'min') return [src, `--${flag}=8`, probeBin];
-        return [src, `--${flag}`, probeBin];
+        if (flag === 'max' || flag === 'min') return [src, ...sub, `--${flag}=8`, probeBin];
+        return [src, ...sub, `--${flag}`, probeBin];
       }
       case 'sym': {
         // The corpus flags change `sym`'s shape: `--in` *replaces* the binary
@@ -212,15 +261,15 @@ for (const name of SKILLS) {
         const CORPUS_VALUE_FLAGS = new Set(['in', 'per-file', 'max-files', 'max-depth']);
         if (CORPUS_VALUE_FLAGS.has(flag)) {
           const value = flag === 'in' ? path.join(HERE, 'fixtures') : '5';
-          return [src, `--${flag}`, value, 'pop'];
+          return [src, ...sub, `--${flag}`, value, 'pop'];
         }
-        if (flag === 'matched-only') return [src, `--${flag}`, 'pop', '--in', path.join(HERE, 'fixtures')];
+        if (flag === 'matched-only') return [src, ...sub, `--${flag}`, 'pop', '--in', path.join(HERE, 'fixtures')];
         break;
       }
       default:
         break;
     }
-    const args = [src, `--${flag}`];
+    const args = [src, ...sub, `--${flag}`];
     if (t === 'sym') args.push('pop');
     else if (t === 'symlookup' || t === 'a2o') args.push('0x100000120');
     else if (t === 'o2a') args.push('0x120');
@@ -335,10 +384,10 @@ for (const name of SKILLS) {
   // tells an agent to use and the only one that emits a parseable envelope.
   // Reading a reason code out of the human-readable output would test the wrong
   // surface — and would pass on a file where the JSON contract is broken.
-  const found = run([path.join(ROOT, 'src', 'sym.mjs'), '--json', 'pop', path.join(FIXTURES, 'populated.macho')]);
-  const empty = run([path.join(ROOT, 'src', 'sym.mjs'), '--json', 'zzz-nothing-zzz', path.join(FIXTURES, 'populated.macho')]);
-  const usage = run([path.join(ROOT, 'src', 'symlookup.mjs'), '--json', 'not-an-address', '-b', path.join(FIXTURES, 'populated.macho')]);
-  const unreadable = run([path.join(ROOT, 'src', 'describe.mjs'), '--json', '/nonexistent/nope']);
+  const found = run([path.join(ROOT, 'src', 'macho-explorer.mjs'), 'sym', '--json', 'pop', path.join(FIXTURES, 'populated.macho')]);
+  const empty = run([path.join(ROOT, 'src', 'macho-explorer.mjs'), 'sym', '--json', 'zzz-nothing-zzz', path.join(FIXTURES, 'populated.macho')]);
+  const usage = run([path.join(ROOT, 'src', 'macho-explorer.mjs'), 'symlookup', '--json', 'not-an-address', '-b', path.join(FIXTURES, 'populated.macho')]);
+  const unreadable = run([path.join(ROOT, 'src', 'macho-explorer.mjs'), 'describe', '--json', '/nonexistent/nope']);
 
   check(found.status === 0, `${short}: documented exit 0 — found something`, `got ${found.status}`);
   check(empty.status === 1, `${short}: documented exit 1 — ran, found nothing`, `got ${empty.status}`);
@@ -346,7 +395,7 @@ for (const name of SKILLS) {
   check(unreadable.status === 3, `${short}: documented exit 3 — could not do the job`, `got ${unreadable.status}`);
 
   // And the two failure modes are distinguishable, which the skill claims they are.
-  const nonMachO = run([path.join(ROOT, 'src', 'describe.mjs'), '--json', file]);
+  const nonMachO = run([path.join(ROOT, 'src', 'macho-explorer.mjs'), 'describe', '--json', file]);
   const codes = (out) => {
     try {
       return JSON.parse(out).errors;
@@ -382,10 +431,26 @@ check(
   'the skill directory is in package.json `files`, so it ships',
   JSON.stringify(pkg.files),
 );
+// `mcp` used to be asserted as its own `bin` entry. It no longer is, and it should
+// not be: `bin` names one published entry point, `macho-explorer`, and the server is
+// reached as `macho-explorer mcp`. What has to stay true is that the server is
+// *installable and reachable from the published binary* — so that is what is asserted.
+// Checking `pkg.bin['mcp']` after the collapse would report a missing binary for a
+// server that ships, which is the mirror image of the sixteen false flag rejections
+// above: a guard asserting a shape that was deliberately replaced.
 check(
-  !!pkg.bin?.['mcp'],
-  'mcp is a published binary, so the server is installable',
+  !!pkg.bin?.['macho-explorer'],
+  'the published bin entry point exists, so every subcommand is installable',
   JSON.stringify(Object.keys(pkg.bin || {})),
+);
+check(
+  SUBCOMMANDS.includes('mcp'),
+  'mcp is reachable as a subcommand of the published binary',
+  SUBCOMMANDS.join(', '),
+);
+check(
+  fs.existsSync(path.join(ROOT, 'src', 'mcp.mjs')),
+  'the mcp server file the subcommand points at is in the tree',
 );
 check(
   fs.existsSync(path.join(SKILL_DIR, 'README.md')),

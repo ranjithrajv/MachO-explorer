@@ -1,7 +1,8 @@
-.TH A2O 1 "October 3, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MACHO-EXPLORER 1 "October 3, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-a2o \- map a virtual address to a file offset
+macho-explorer \- Mach\-O binary introspection
 .SH SYNOPSIS
+.B macho-explorer
 .B a2o
 .I hex-vaddr
 .RI [ hex-vaddr ...]
@@ -110,8 +111,8 @@ The file could not be read or parsed.
 .PP
 .RS
 .nf
-a2o 0x100001000 \-b /usr/local/go/bin/go
-a2o \-\-json 0x100001000 \-b /usr/local/go/bin/go | jq '.data.queries[0].offset'
+macho-explorer a2o 0x100001000 \-b /usr/local/go/bin/go
+macho-explorer a2o \-\-json 0x100001000 \-b /usr/local/go/bin/go | jq '.data.queries[0].offset'
 .fi
 .RE
 .PP
@@ -119,7 +120,7 @@ Read six bytes from the file at an address reported by another tool:
 .PP
 .RS
 .nf
-a2o \-\-json 0x100085c30 \-b /usr/local/go/bin/go |
+macho-explorer a2o \-\-json 0x100085c30 \-b /usr/local/go/bin/go |
   jq -r '.data.queries[0].absoluteOffset' |
   xargs -I{} dd if=/usr/local/go/bin/go bs=1 skip={} count=6 2>/dev/null
 .fi

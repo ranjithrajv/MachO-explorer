@@ -34,15 +34,30 @@ describe --arch=arm64 /path/to/binary # one slice of a universal binary
 The `code`/`data` marking is the same signal `findcall` types its scan by,
 so the two can be checked against each other.
 
-Load commands are **named, not interpreted**. Knowing a binary declares
-`LC_LOAD_DYLIB` or `LC_CODE_SIGNATURE` is a fact about it; following the
-dependency or parsing the signature is not something these tools do.
+Load commands are **named, not interpreted** — with four families decoded. Knowing
+a binary declares `LC_CODE_SIGNATURE` or `LC_DYLD_CHAINED_FIXUPS` is a fact about
+it; parsing the signature or walking the fixups is not something these tools do.
 
-Three commands are interpreted rather than merely named, because their values are
-plain fields rather than another format: `LC_RPATH` (the `@rpath` search paths, in
-declaration order), `LC_SOURCE_VERSION` (the five-part `A.B.C.D.E` source version),
-and `LC_MAIN` (the entry point). Each is in `--json` as `rpaths`, `sourceVersion`
-and `entryPoint`.
+Four families are interpreted rather than merely named, because their values are
+plain fields rather than another format:
+
+| | `--json` | |
+|---|---|---|
+| `LC_RPATH` | `rpaths` | the `@rpath` search paths, in declaration order |
+| the `dylib_command` family | `dylibs`, `installName` | what the binary must find to load — see below |
+| `LC_SOURCE_VERSION` | `sourceVersion` | the five-part `A.B.C.D.E` version |
+| `LC_MAIN` | `entryPoint` | the entry point |
+
+`dylibs` is the answer to "what does this need to run", and each entry keeps its
+own `linkage`, because the five commands differ in what a *missing* library
+means — `'weak'` tolerates absence, `'load'` does not, `'reexport'` also
+republishes that image's symbols, `'lazy'` defers, `'upward'` is satisfied by an
+older image already loaded. `installName` is separate because a dylib's own
+`LC_ID_DYLIB` names *itself*, not a dependency.
+
+Expect `dylibs: []` on a modern macOS executable. System libraries arrive
+through `LC_DYLD_CHAINED_FIXUPS` and are not on disk as Mach-O at all — an empty
+list is the correct answer, not a gap in the reader.
 
 **`entryPoint.vaddr` is always `null`.** The header calls `LC_MAIN`'s `entryoff` a
 `__TEXT` offset and measurement does not bear that out — on a real 113 MB binary it
@@ -67,18 +82,21 @@ from one template differ in almost nothing structural.
 |---|---|---|
 | same build? | `fingerprint` | identical `uuid` — exact, useless once anything relinks |
 | same program? | `fingerprint` | identical `fingerprint` — survives a rebuild |
-| what changed? | `diff` | structural facts only, so a rebuilt pair reads as unchanged |
+| what changed? | `diff` | structure and literal content, so a rebuilt pair reads as unchanged |
 
 ```sh
 fingerprint a.dylib b.dylib          # "same program, rebuilt"
-diff a.dylib b.dylib                 # 0 structural differences, exit 0
+diff a.dylib b.dylib                 # 0 differences, exit 0
 ```
 
 `diff` keeps three lists apart and only the first decides the verdict:
-`differences` (structural), `buildMetadata` (UUIDs, signing — reported, never
-counted) and `sizeChanges` (a recompiled dependency moves a size without changing
-the program). **A UUID difference is never a structural difference.** If you see
-one in `differences`, that is a bug worth reporting.
+`differences` (structure and literal strings), `buildMetadata` (UUIDs, signing —
+reported, never counted) and `sizeChanges` (a recompiled dependency moves a size
+without changing the program). **A UUID difference is never a structural
+difference.** If you see one in `differences`, that is a bug worth reporting. An
+added or removed literal string *is* one: it does not move on a rebuild, so it is a
+change to the program. Strings are compared by text, since the whole point is that
+their addresses differ.
 
 Check `tier` before relying on a `fingerprint` match: `structure-only` means the
 binary is stripped, so the match rests on section and load-command shape alone —

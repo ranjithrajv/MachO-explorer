@@ -2,7 +2,7 @@
 /**
  * overview.mjs — the whole structural picture of a binary, in one call.
  *
- *   node src/overview.mjs [binary|bundle] [--json] [--symbols] [--strings]
+ *   macho-explorer overview [binary|bundle] [--json] [--symbols] [--strings]
  *
  * ## Why this tool exists
  *
@@ -41,14 +41,14 @@
  */
 import { requireBinary, FALLBACK_TARGET } from './target.mjs';
 import { overview } from './api.mjs';
-import { parseArgs, emitJSON, usage, count, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, count, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/overview.mjs [binary|bundle] [--json] [--symbols] [--strings]',
-  '                            [--max=<n>] [--min=<n>] [--compact] [--arch=<name>]',
-  '                            [-b <binary>]',
+  'usage: macho-explorer overview [binary|bundle] [--json] [--symbols] [--strings]',
+  '                               [--max=<n>] [--min=<n>] [--compact] [--arch=<name>]',
+  '                               [-b <binary>]',
   '',
   '  the whole structural picture of a binary in one call: every slice, its',
   '  segments, sections, load commands, flags and entry point, plus --symbols',
@@ -63,6 +63,10 @@ const HELP = [
   '  --arch=<name>     read one slice of a universal binary (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',
   '  --json            one JSON object on stdout; prose to stderr',
   '  -b, --binary <p>  the binary to read',
+  '  -q, --quiet       suppress non-essential output',
+  '  --color           force color output',
+  '  --no-color        disable color output',
+  '  -v, --verbose     diagnostic output',
   '  -h, --help        this message',
 ];
 

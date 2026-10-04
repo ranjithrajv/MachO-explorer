@@ -1,6 +1,6 @@
-#compdef describe
+#compdef macho-explorer
 #
-# zsh completion for describe. Install as _describe in a directory
+# zsh completion for macho-explorer. Install as _macho-explorer in a directory
 # on your $fpath.
 #
 # MachO-explorer 0.1.0.

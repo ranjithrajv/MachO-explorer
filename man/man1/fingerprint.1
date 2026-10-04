@@ -1,13 +1,14 @@
-.TH FINGERPRINT 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MACHO-EXPLORER 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-fingerprint \- identify a Mach-O, and compare two of them
+macho-explorer \- Mach\-O binary introspection
 .SH SYNOPSIS
+.B macho-explorer
 .B fingerprint
 .I binary
 .RB [ \-\-json ]
 .RB [ \-\-arch= name ]
 .br
-.B fingerprint
+.B macho-explorer fingerprint
 .I a
 .I b
 .RB [ \-\-json ]
@@ -83,9 +84,9 @@ are for.
 .SH EXAMPLES
 .PP
 .nf
-fingerprint /usr/local/go/bin/go
-fingerprint shipped.app/…/app baseline.app/…/app
-fingerprint \-\-json a.dylib b.dylib | jq .data.verdict
+macho-explorer fingerprint /usr/local/go/bin/go
+macho-explorer fingerprint shipped.app/…/app baseline.app/…/app
+macho-explorer fingerprint \-\-json a.dylib b.dylib | jq .data.verdict
 .fi
 .SH SEE ALSO
 .BR audit (1),

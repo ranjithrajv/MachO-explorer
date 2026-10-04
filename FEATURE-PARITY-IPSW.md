@@ -96,6 +96,8 @@ copied from a plausible-looking surface listing rather than from source:
 | FAT32 (`FAT_MAGIC`) | ✅ | ✅ |
 | FAT64 (`FAT_MAGIC_64`) | ❌ `go-macho` rejects it | ❌ |
 | Diff two binaries | ❌ **`macho diff` is a panic stub** | ✅ **`diff`** |
+| **Linked libraries, per linkage** | ✅ `info` prints a `Dylibs:` block from `sd.Dylibs` | ✅ **`dylibs`, with `load`/`weak`/`reexport`/`lazy`/`upward` kept distinct** |
+| **This image's install name** (`LC_ID_DYLIB`) | ✅ | ✅ **`installName`** |
 | arm64 + x86_64 | ✅ | ✅ |
 
 **The `--arch` row is now marked ⚠️ rather than ✅, and that is a defect on our side.**
@@ -104,6 +106,24 @@ previously recorded as "all 8 tools", which was true when there were eight and h
 been quietly untrue as tools were added. It is not yet clear whether this is a bug or
 correct-by-design — `mapliteral` already reports per-slice — but the honest entry is
 the one that names it, not the one that rounds up.
+
+**The two `Dylib` rows are new, and they close a gap this document had missed
+entirely.** Every earlier version of this table rated `describe --loads` as "names
+every load command, interprets none", which was true and read as a limitation. It
+was not a limitation: `LC_LOAD_DYLIB` names the file a binary cannot start
+without, it is the answer to the most-asked question about any executable, and
+`ipsw` — which this document has called a strict superset on format coverage
+since it was written — has always printed it. A reader that named the command and
+withheld the name was strictly worse than `otool -L` on the one question
+`otool -L` exists to answer, on a tool whose entire claim is that it can read a
+Mach-O on a machine with no Apple toolchain.
+
+The five linkages are kept distinct rather than flattened to a list of paths,
+because they differ in what a *missing* library means: an absent `weak` dylib is
+normal, an absent `load` dylib is a broken install. `test/fixtures/dylibs.macho`
+carries all five in one image, because a stock macOS executable emits only
+`LC_LOAD_DYLIB` — chained fixups removed the other four — so without that fixture
+four of the five decode paths would be untested while every test still passed.
 
 ### 2.2 Symbols
 

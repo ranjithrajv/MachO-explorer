@@ -385,10 +385,36 @@ function lines(tool, env) {
         // would otherwise see `LC_RPATH` named and no path, and conclude the binary
         // declares none — the same reasoning gap the UUID note above is about.
         if (s.flagsNamed?.length) L.push(`      flags ${s.flagsNamed.join(' ')}`);
+        // What the file *is* and what it was built for, plus whether it is readable
+        // at all. A model handed a binary with no filetypes, no platform and no
+        // encryption state cannot tell an executable from a dSYM, or an App Store
+        // build whose `__TEXT` is ciphertext from one that simply contains no
+        // matching bytes — and the second is the difference between a real finding
+        // and a false one.
+        if (s.filetype) L.push(`      filetype ${s.filetype.name ?? s.filetype.raw}`);
+        if (s.buildVersion) {
+          L.push(`      platform ${s.buildVersion.platform ?? s.buildVersion.platformRaw}` +
+            `  minos ${s.buildVersion.minos.text}  sdk ${s.buildVersion.sdk.text}`);
+        }
+        if (s.encryption) {
+          L.push(s.encryption.encrypted
+            ? `      ENCRYPTED (cryptid=${s.encryption.cryptid}) — __TEXT is ciphertext; findcall, findliteral and --strings cannot read it`
+            : `      not encrypted (cryptid=${s.encryption.cryptid})`);
+        }
         if (s.flagsUnknown) {
           L.push(`      flags 0x${s.flagsUnknown.toString(16)} set but unnamed in <mach-o/loader.h> — a newer toolchain, or a header this reader cannot trust`);
         }
         for (const rp of s.rpaths || []) L.push(`      rpath ${rp}`);
+        // Dependencies, for the same reason as the rpaths above: a model that saw
+        // three `LC_LOAD_DYLIB` commands named and no names would report that the
+        // binary links nothing, which is the reasoning gap this project keeps
+        // having to close. `linkage` is included because "no weak dylib on this
+        // system" is a normal outcome and not the same finding as a missing
+        // required one.
+        if (s.installName) L.push(`      install name ${s.installName.name}`);
+        for (const d of s.dylibs || []) {
+          L.push(`      dylib ${d.name}${d.linkage && d.linkage !== 'load' ? ` (${d.linkage})` : ''}`);
+        }
         if (s.sourceVersion) L.push(`      source version ${s.sourceVersion.text}`);
         if (s.entryPoint) {
           // No address, deliberately — and the text says so, because a model shown

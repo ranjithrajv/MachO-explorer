@@ -1,7 +1,8 @@
-.TH OVERVIEW 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MACHO-EXPLORER 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-overview \- report a Mach\-O file's whole structural picture in one call
+macho-explorer \- Mach\-O binary introspection
 .SH SYNOPSIS
+.B macho-explorer
 .B overview
 .RI [ binary | bundle ]
 .RB [ \-\-json ]
@@ -105,9 +106,9 @@ The file could not be read, or is not a Mach\-O.
 .SH EXAMPLES
 .RS
 .nf
-overview /usr/local/go/bin/go
-overview \-\-symbols /usr/local/go/bin/go
-overview \-\-json \-\-compact \-\-symbols /usr/local/go/bin/go | jq '.data.symbols.count'
+macho-explorer overview /usr/local/go/bin/go
+macho-explorer overview \-\-symbols /usr/local/go/bin/go
+macho-explorer overview \-\-json \-\-compact \-\-symbols /usr/local/go/bin/go | jq '.data.symbols.count'
 .fi
 .RE
 .SH NOTES

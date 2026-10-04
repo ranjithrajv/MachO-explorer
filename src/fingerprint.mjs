@@ -2,9 +2,9 @@
 /**
  * fingerprint.mjs — is this the same program as that one?
  *
- *   node src/fingerprint.mjs <binary>            # what is it
- *   node src/fingerprint.mjs <a> <b>             # are these the same program
- *   node src/fingerprint.mjs <a> <b> --json
+ *   macho-explorer fingerprint <binary>            # what is it
+ *   macho-explorer fingerprint <a> <b>             # are these the same program
+ *   macho-explorer fingerprint <a> <b> --json
  *
  * ## Three questions, three answers
  *
@@ -41,12 +41,12 @@
  */
 import { requireBinary } from './target.mjs';
 import { fingerprint, compareFingerprints } from './api.mjs';
-import { parseArgs, emitJSON, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/fingerprint.mjs <binary> [<other-binary>] [--json] [--arch=<name>]',
+  'usage: macho-explorer fingerprint <binary> [<other-binary>] [--json] [--arch=<name>]',
   '',
   '  with one binary, reports its fingerprint. With two, reports whether they are',
   '  the same program — which survives a rebuild, unlike a byte comparison.',
@@ -54,6 +54,10 @@ const HELP = [
   'options:',
   '  --arch=<name>      fingerprint only this slice of a universal binary',
   '  --json             one JSON object on stdout; prose to stderr',
+  '  -q, --quiet        suppress non-essential output',
+  '  --color            force color output',
+  '  --no-color         disable color output',
+  '  -v, --verbose      diagnostic output',
   '  -h, --help         this message',
 ];
 

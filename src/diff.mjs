@@ -2,7 +2,7 @@
 /**
  * diff.mjs — what changed between two binaries, ignoring what a rebuild moves.
  *
- *   node src/diff.mjs <a> <b> [--json] [--arch=<name>] [--max=<n>]
+ *   macho-explorer diff <a> <b> [--json] [--arch=<name>] [--max=<n>]
  *
  * ## Why not `cmp`
  *
@@ -39,12 +39,12 @@
  */
 import { requireBinary } from './target.mjs';
 import { diffBinaries } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/diff.mjs <binary> <binary> [--json] [--arch=<name>] [--max=<n>]',
+  'usage: macho-explorer diff <binary> <binary> [--json] [--arch=<name>] [--max=<n>]',
   '',
   '  structural differences only: architectures, header flags, load commands,',
   '  sections and symbols. Addresses, sizes, offsets and the build UUID are not',
@@ -54,6 +54,10 @@ const HELP = [
   '  --arch=<name>      compare only this architecture',
   '  --max=<n>          cap on symbol names listed per direction (default 20)',
   '  --json             one JSON object on stdout; prose to stderr',
+  '  -q, --quiet        suppress non-essential output',
+  '  --color            force color output',
+  '  --no-color         disable color output',
+  '  -v, --verbose      diagnostic output',
   '  -h, --help         this message',
 ];
 

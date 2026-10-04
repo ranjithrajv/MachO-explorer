@@ -50,6 +50,7 @@ import {
   toFileOffset, isBackedByFile, archMatches,
   decodeHeaderFlags, decodeSectionFlags, decodeSourceVersion, detectAbnormalities,
   detectContainerAbnormalities, resolveEntryPoint, sliceShape, fileShape,
+  decodeFiletype, decodePlatform, decodePackedVersion, filetypeKey,
 } from './macho.mjs';
 
 /* ------------------------------------------------------------------ *
@@ -138,7 +139,9 @@ export function describe(path) {
           nsyms: 0, defined: 0, codeSections: 0, textAddr: null, textSize: 0,
           uuid: null, segments: [], sections: [], loadCommands: [],
           flags: 0, flagsNamed: [], flagsUnknown: 0,
-          entryPoint: null, rpaths: [], sourceVersion: null, abnormalities: [],
+          entryPoint: null, rpaths: [], dylibs: [], installName: null,
+          sourceVersion: null, buildVersion: null, encryption: null,
+          filetype: null, abnormalities: [],
           note: 'no Mach-O header at this offset',
         });
         continue;
@@ -187,8 +190,35 @@ export function describe(path) {
         // Runtime search paths, in the order the binary declares them. Order is
         // load order, and `@rpath` resolution depends on it.
         rpaths: thin.rpaths,
+        // What this binary must be able to find to load, in the order the linker
+        // recorded it — the question `otool -L` answers. `linkage` is kept per
+        // entry because the five commands differ in what a *missing* library means:
+        // an absent `weak` dylib is normal, an absent `load` dylib is a broken
+        // install, and a `reexport` also republishes that image's symbols here.
+        // The install name is separate because it names this image, not a
+        // dependency, and a dylib's own `LC_ID_DYLIB` is the only record of what
+        // clients are supposed to link against.
+        dylibs: thin.dylibs,
+        installName: thin.installName,
         // The five-part source version, or null when the binary declares none.
         sourceVersion: thin.sourceVersion,
+        // Which platform this slice was built for, and the minimum OS and SDK it
+        // declares — from `LC_BUILD_VERSION`, or from the older
+        // `LC_VERSION_MIN_*` command that names its platform implicitly. Null when
+        // the binary declares neither, which is a real answer rather than a gap:
+        // an `MH_OBJECT` and a pre-10.14 build both look like this.
+        buildVersion: thin.buildVersion,
+        // FairPlay state, or null for a binary that declares no encryption
+        // command at all. `encrypted` is `cryptid > 0`, not "the command is
+        // present" — a decrypted App Store binary keeps the command with
+        // `cryptid` 0, and reading presence would call it still encrypted. This
+        // is the one field that decides whether a zero result from `findcall` or
+        // `findliteral` means "not present" or "not readable".
+        encryption: thin.encryption,
+        // What kind of Mach-O this is. Fourteen `MH_*` values, named; an
+        // unrecognised one is null rather than a guess, because "an executable"
+        // and "a file whose second word is 2" are not the same claim.
+        filetype: thin.filetype,
         // Structural problems, reported alongside the parse rather than instead
         // of it. Empty on a healthy binary, which is the common case.
         abnormalities: detectAbnormalities(f, thin, { sliceOffset: s.offset, sliceSize: s.size }),
@@ -241,7 +271,6 @@ const NOT_READ = [
   'Objective-C and Swift metadata',
   'dSYM and DWARF',
   'FAT32 containers',
-  'the dylib an LC_LOAD_DYLIB names',
   'disassembly, and the mnemonics behind an instruction length',
 ];
 
@@ -261,9 +290,11 @@ const NOT_READ = [
  *
  * It is not a complete Mach-O parser, and `notRead` says so in the result rather
  * than leaving a consumer to infer completeness from an object that looks
- * exhaustive. The load commands are named, not interpreted; the strings come
- * from C-string sections only; there is no disassembly, because a linear sweep
- * of a whole binary is not a disassembly of anything.
+ * exhaustive. Most load commands are named, not interpreted — the `dylib_command`
+ * family is the exception, because its name is the single most-asked fact about
+ * an executable. The strings come from C-string sections only; there is no
+ * disassembly, because a linear sweep of a whole binary is not a disassembly of
+ * anything.
  *
  * ## Why the shape is `describe`'s
  *
@@ -2215,9 +2246,16 @@ export function diffBinaries(a, b, { arch = null, maxNames = 20 } = {}) {
     if (!before || !after) continue;
     const d0 = differences.length;
 
-    if (before.filetype !== after.filetype) {
-      add('header', archName, 'filetype-changed', `${archName}: filetype ${before.filetype} -> ${after.filetype}`,
-        before.filetype, after.filetype);
+    // Compared and reported through `filetypeKey`, never as the raw value. `parseThin`
+    // returns the decoded object, and two of those are never `===`, so comparing them
+    // directly reported `filetype-changed` for *every* pair of binaries — including a
+    // file against itself. Interpolating them printed `filetype [object Object] ->
+    // [object Object]` in the message, so the report was both universal and useless.
+    const beforeFt = filetypeKey(before.filetype);
+    const afterFt = filetypeKey(after.filetype);
+    if (beforeFt !== afterFt) {
+      add('header', archName, 'filetype-changed', `${archName}: filetype ${beforeFt} -> ${afterFt}`,
+        beforeFt, afterFt);
     }
     if (before.bits !== after.bits) {
       add('header', archName, 'bits-changed', `${archName}: ${before.bits}-bit -> ${after.bits}-bit`,
@@ -2307,11 +2345,38 @@ export function diffBinaries(a, b, { arch = null, maxNames = 20 } = {}) {
         removed.length, null);
     }
 
+    // Literal strings, by content. A string that appears or disappears is a change
+    // to the program — a new error message, a removed URL, a branch that now
+    // compiles out — and unlike an address it does not move on a rebuild, so it
+    // belongs in `differences` rather than beside the UUID. Matched by text, since
+    // the whole point is that the addresses differ.
+    //
+    // Quoted in the detail so a string whose content is a number or a `-` cannot
+    // read as a count or a flag. The list is capped like the symbol lists, for the
+    // same reason: a Go binary with 200,000 strings otherwise produces a diff nobody
+    // reads past the first line.
+    const litA = before.literalTexts;
+    const litB = after.literalTexts;
+    const litAdded = [...litB].filter((x) => !litA.has(x));
+    const litRemoved = [...litA].filter((x) => !litB.has(x));
+    const quote = (xs) => xs.slice(0, maxNames).map((x) => JSON.stringify(x)).join(', ');
+    if (litAdded.length) {
+      add('literals', archName, 'literals-added',
+        `${archName}: ${litAdded.length} string(s) added${litAdded.length > maxNames ? `, first ${maxNames}: ${quote(litAdded)}` : `: ${quote(litAdded)}`}`,
+        null, litAdded.length);
+    }
+    if (litRemoved.length) {
+      add('literals', archName, 'literals-removed',
+        `${archName}: ${litRemoved.length} string(s) removed${litRemoved.length > maxNames ? `, first ${maxNames}: ${quote(litRemoved)}` : `: ${quote(litRemoved)}`}`,
+        litRemoved.length, null);
+    }
+
     perArch.push({
       arch: archName,
       differenceCount: differences.length - d0,
       symbols: { a: symA.size, b: symB.size, added: added.length, removed: removed.length },
       sections: { a: sa.size, b: sb.size },
+      literals: { a: litA.size, b: litB.size, added: litAdded.length, removed: litRemoved.length },
     });
   }
 
@@ -2379,6 +2444,44 @@ const DYLIB_COMMANDS = new Set([
   'LC_ID_DYLIB',
 ]);
 
+/**
+ * The distinct NUL-terminated strings in a slice's C-string sections.
+ *
+ * The same sections `findStrings` reports and the same `printable` filter, so a
+ * string that `findliteral` can find is a string `diff` can diff — the alternative
+ * is two tools disagreeing about what a literal is, which is the failure this
+ * package treats as a defect rather than a coin toss. A `Set` rather than a list
+ * because the question here is set membership ("did this string appear or
+ * disappear"), and a binary that happens to hold `"error"` four hundred times
+ * changed once when it stops holding it.
+ *
+ * Bounded by each section's own size and clamped to the file, exactly as
+ * `findStrings` does, because a linker can record a section that runs past the end
+ * and reading it would throw in the middle of an otherwise good answer.
+ */
+function literalTextsOf(f, s, thin, min = 4) {
+  const out = new Set();
+  for (const sec of thin.sections) {
+    if (!CSTRING_SECTIONS.includes(sec.sectname) || sec.size === 0) continue;
+    const lo = s.offset + sec.offset;
+    const hi = Math.min(lo + sec.size, f.size);
+    if (hi <= lo) continue;
+    const buf = f.read(lo, hi - lo);
+    let start = 0;
+    while (start < buf.length) {
+      const end = buf.indexOf(0, start);
+      const stop = end === -1 ? buf.length : end;
+      if (stop - start >= min) {
+        const raw = buf.subarray(start, stop);
+        if (printable(raw)) out.add(raw.toString('latin1'));
+      }
+      if (end === -1) break;
+      start = end + 1;
+    }
+  }
+  return out;
+}
+
 /** Everything a per-slice comparison needs, read once. */
 function readSide(path, arch) {
   const f = opener(path);
@@ -2399,6 +2502,7 @@ function readSide(path, arch) {
         symbolNames: readSymbols(f, s.offset, thin).entries
           .filter((e) => e.defined)
           .map((e) => e.name),
+        literalTexts: literalTextsOf(f, s, thin),
       };
     }
     return null;

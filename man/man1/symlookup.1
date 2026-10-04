@@ -1,7 +1,8 @@
-.TH SYMLOOKUP 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MACHO-EXPLORER 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-symlookup \- find which function contains a virtual address
+macho-explorer \- Mach\-O binary introspection
 .SH SYNOPSIS
+.B macho-explorer
 .B symlookup
 .I hex-vaddr
 .RI [ hex-vaddr ...]
@@ -107,8 +108,8 @@ The file could not be read, or the chosen slice has no symbol table.
 .SH EXAMPLES
 .RS
 .nf
-symlookup 0x100085c30 \-b /usr/local/go/bin/go
-symlookup \-\-json 0x100085c30 \-b /usr/local/go/bin/go | jq '.data.function'
+macho-explorer symlookup 0x100085c30 \-b /usr/local/go/bin/go
+macho-explorer symlookup \-\-json 0x100085c30 \-b /usr/local/go/bin/go | jq '.data.function'
 .fi
 .RE
 .PP

@@ -2,8 +2,8 @@
 /**
  * disasm.mjs — decode instructions at an address in a Mach-O binary.
  *
- *   node src/disasm.mjs [<hex-addr>] [binary|bundle] [count] [--json]
- *   node src/disasm.mjs --branches [<hex-addr>] [binary|bundle] [count]
+ *   macho-explorer disasm [<hex-addr>] [binary|bundle] [count] [--json]
+ *   macho-explorer disasm --branches [<hex-addr>] [binary|bundle] [count]
  *
  * ## What this adds that `findcall` cannot do on its own
  *
@@ -42,13 +42,13 @@
  */
 import { requireBinary } from './target.mjs';
 import { disassemble, supportedArch } from './instruction.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/disasm.mjs [<hex-addr>] [binary|bundle] [count] [--json]',
-  '       node src/disasm.mjs --branches [<hex-addr>] [binary|bundle] [count]',
+  'usage: macho-explorer disasm [<hex-addr>] [binary|bundle] [count] [--json]',
+  '       macho-explorer disasm --branches [<hex-addr>] [binary|bundle] [count]',
   '',
   '  decode instructions from an address (or from the start of the first code',
   '  section) and report their lengths, and where they branch to.',
@@ -59,6 +59,10 @@ const HELP = [
   '  --bytes=<n>      decode a byte range instead of a count (whole section if omitted)',
   '  --arch=<name>    read one architecture (x86_64, arm64, arm64e)',
   '  -b, --binary <p> the binary to read',
+  '  -q, --quiet      suppress non-essential output',
+  '  --color          force color output',
+  '  --no-color       disable color output',
+  '  -v, --verbose    diagnostic output',
   '  --json           one JSON object on stdout; prose to stderr',
   '  -h, --help       this message',
   '',
@@ -196,7 +200,7 @@ if (r.slices.length === 0) {
   }
   console.error(`\nno code to disassemble: ${why}`);
   if (addr !== null) {
-    console.error('  find an address first:  node src/describe.mjs ' + JSON.stringify(binary));
+    console.error('  find an address first:  macho-explorer describe ' + JSON.stringify(binary));
   }
   process.exit(EXIT.empty);
 }

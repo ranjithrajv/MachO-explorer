@@ -1,7 +1,8 @@
-.TH O2A 1 "October 3, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MACHO-EXPLORER 1 "October 3, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-o2a \- map a file offset to a virtual address
+macho-explorer \- Mach\-O binary introspection
 .SH SYNOPSIS
+.B macho-explorer
 .B o2a
 .I offset
 .RI [ offset ...]
@@ -99,8 +100,8 @@ The file could not be read or parsed.
 .PP
 .RS
 .nf
-o2a 0x1000 \-b /usr/local/go/bin/go
-o2a \-\-json 0x1000 \-b /usr/local/go/bin/go | jq '.data.queries[0].vaddr'
+macho-explorer o2a 0x1000 \-b /usr/local/go/bin/go
+macho-explorer o2a \-\-json 0x1000 \-b /usr/local/go/bin/go | jq '.data.queries[0].vaddr'
 .fi
 .RE
 .PP
@@ -110,7 +111,7 @@ to the address a symbol lookup needs:
 .PP
 .RS
 .nf
-o2a \-\-json 0x59d140 \-b /usr/local/go/bin/go | jq -r '.data.queries[0].vaddr'
+macho-explorer o2a \-\-json 0x59d140 \-b /usr/local/go/bin/go | jq -r '.data.queries[0].vaddr'
 .fi
 .RE
 .SH NOTES

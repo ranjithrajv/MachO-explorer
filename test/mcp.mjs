@@ -1018,6 +1018,62 @@ console.log('\nmcp: the protocol\n');
   process.stdout.write = process.stdout.constructor.prototype.write.bind(process.stdout);
 }
 
+/* ---- 13. a response larger than one pipe buffer arrives whole ---------- */
+
+console.log('\nmcp: a large response\n');
+{
+  // The transport is stdio, so fd 1 is *always* a pipe here. There is no
+  // "redirect to a file and it works" fallback, which is exactly what hid the
+  // same bug on the CLI: `emitJSON` wrote with `process.stdout.write`,
+  // asynchronous on a pipe, and the process exited before the tail flushed.
+  // Measured on the CLI: 826,998 bytes redirected, 65,536 piped.
+  //
+  // A client does not see an error when this happens — it sees a JSON-RPC message
+  // with no terminating newline, so a line-oriented reader never emits it at all
+  // and the request simply never completes. That is why this asserts on the
+  // *content* of the last message and not on the byte count: a truncated tail
+  // leaves well-formed earlier messages behind, and a test that counted messages
+  // would pass.
+  const bulk = path.join(FIXTURES, 'bulk.macho');
+  if (!fs.existsSync(bulk)) {
+    skipped.push({ name: 'a large MCP response', why: 'test/fixtures/bulk.macho is missing' });
+  } else {
+    const res = await session([
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: MODERN, capabilities: {}, clientInfo: { name: 't', version: '1' } } },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      {
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
+        params: {
+          name: 'sym',
+          arguments: { binary: bulk, pattern: '.', regex: true, include_imports: true, dedupe: false, max: 4000 },
+          _meta: meta(),
+        },
+      },
+    ], { timeoutMs: 60000 });
+
+    const { msgs, bad } = parseStream(res.out);
+    const PIPE = 65536;
+    const call = byId(msgs, 2);
+    const rows = call?.result?.structuredContent?.data?.matches?.length ?? null;
+
+    check(
+      res.out.length > PIPE,
+      'a response larger than one pipe buffer was produced to test with',
+      `${res.out.length} bytes vs a ${PIPE}-byte pipe`,
+    );
+    check(
+      bad.length === 0,
+      'every line on the wire is a complete JSON-RPC message',
+      bad.length ? `${bad.length} unparseable line(s), first at ${bad[0].length} bytes` : `${msgs.length} message(s)`,
+    );
+    check(
+      rows !== null && rows > 500,
+      'a response larger than one pipe buffer arrives whole',
+      rows === null ? 'the request never completed — the tail was cut' : `${rows} rows`,
+    );
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * summary
  * ------------------------------------------------------------------ */

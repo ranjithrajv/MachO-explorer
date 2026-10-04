@@ -16,447 +16,83 @@ depth. It decodes *instruction boundaries* and *direct* branch displacements —
 lengths and edges, which are facts about the bytes — and stops there. It does not
 print mnemonics or operands, and it will not grow to.
 
+## Quick start
+
 ```sh
-node src/describe.mjs /usr/local/go/bin/go       # what is in this file?
-node src/describe.mjs --sections /usr/local/go/bin/go   # every section, and which are code
-node src/describe.mjs --loads /usr/local/go/bin/go      # every load command, by name
-node src/sym.mjs 'runtime.main' /usr/local/go/bin/go
-node src/symlookup.mjs 0x100085c30 -b /usr/local/go/bin/go
-node src/findcall.mjs --list /usr/local/go/bin/go 20
-node src/findliteral.mjs LZ4 "/Applications/Some App.app"
-node src/findliteral.mjs --strings --filter=error /usr/local/go/bin/go
-node src/a2o.mjs 0x100085c30 -b /usr/local/go/bin/go
-node src/o2a.mjs 0x85c30 -b /usr/local/go/bin/go
-node src/disasm.mjs 0x100085c30 /usr/local/go/bin/go
-node src/findcall.mjs --json 0x100085c30 /usr/local/go/bin/go | jq '.count'
+macho-explorer describe /usr/local/go/bin/go       # what is in this file?
+macho-explorer describe --sections /usr/local/go/bin/go   # every section
+macho-explorer sym 'runtime.main' /usr/local/go/bin/go
+macho-explorer symlookup 0x100085c30 -b /usr/local/go/bin/go
+macho-explorer findcall --list /usr/local/go/bin/go 20
+macho-explorer findliteral LZ4 "/Applications/Some App.app"
+macho-explorer a2o 0x100085c30 -b /usr/local/go/bin/go
+macho-explorer o2a 0x85c30 -b /usr/local/go/bin/go
+macho-explorer disasm 0x100085c30 /usr/local/go/bin/go
+macho-explorer findcall --json 0x100085c30 /usr/local/go/bin/go | jq '.count'
 ```
 
 No dependencies, no build step, no install, no network. Node ≥ 22.15.
 
-## What it covers
-
-Mach-O, on every platform Apple ships it — which is the whole reason one reader
-is enough:
-
-| Platform | Architectures |
-|---|---|
-| **macOS** | `x86_64`, `arm64`, `i386` |
-| **iOS / iPadOS** | `arm64`, `arm64e`, `armv7` |
-| **tvOS** | `arm64` |
-| **watchOS** | `arm64_32`, `armv7k` |
-| **visionOS** | `arm64` |
-
-| | |
-|---|---|
-| **Format** | thin and fat (universal), 32-bit and 64-bit, little-endian |
-| **Filetypes** | all twelve `MH_*` values named — executable, dylib, bundle, dylinker, kext, fileset, dSYM, core, object |
-| **Also reported** | the target platform and SDK (`LC_BUILD_VERSION`), and `ppc` / `ppc64` by name |
-| **Not covered** | big-endian Mach-O, ELF, PE, the dyld shared cache, firmware images |
-| **Hosts** | Linux, macOS and Windows — one Node runtime, no dependencies, no build step |
-
-Five things about that table are worth stating rather than leaving to be
-discovered:
-
-- **visionOS needs nothing new.** A Vision Pro binary is arm64 Mach-O — the M2 —
-  so the same reader handles it and only the platform constant distinguishes it.
-  `LC_BUILD_VERSION` reports `visionos` and `visionos-simulator` separately.
-- **iPadOS is reported as `ios`**, and that is the file's doing, not the tool's.
-  Apple defines `PLATFORM_IOS` and no separate iPadOS constant, so an iPadOS
-  binary says `ios` and reporting anything else would be a fabrication.
-- **watchOS is the awkward one.** `arm64_32` is a 32-bit ABI on the arm64
-  instruction set, so it uses the *64-bit* Mach-O header with 32-bit pointers —
-  `bits: 64` is right about the file and wrong about the pointer. And `armv7k`
-  reports as `arm`: the subtype is what makes it a watch, so it is the platform
-  command, not the architecture name, that identifies one.
-- **Big-endian is refused, not misread.** A PowerPC or 68k slice is named and
-  listed in the slice table, but reports `readable: false` with
-  `unknown-encoding` rather than being parsed as if its bytes were little-endian
-  — so a NeXTSTEP or classic Mac OS binary is visibly unsupported instead of
-  quietly wrong.
-- **All twelve `MH_*` filetypes are named; four are read with a caveat.** The
-  eight loaded-image shapes — `MH_EXECUTE`, `MH_DYLIB`, `MH_BUNDLE`,
-  `MH_DYLINKER`, `MH_KEXT_BUNDLE`, `MH_FVMLIB`, `MH_PRELOAD`, `MH_DYLIB_STUB` —
-  are what the tools are built for. The other four parse and are named, but the
-  address model does not carry over: `MH_OBJECT` is relocatable, so it has no
-  load address (`textAddr` is `0x0` and symbol values are section-relative
-  offsets, making `symlookup`/`a2o` answers meaningful only relative to the
-  object); `MH_FILESET` is named but **not traversed**, so the nested Mach-Os
-  inside a kernelcache are not walked; `MH_DSYM` carries only `__DWARF`, which
-  this does not read; and `MH_CORE` keeps its state in `LC_THREAD`, not `__text`.
-
-An App Store binary's `__TEXT` is ciphertext, which changes what a zero result
-means. That is not a footnote: see
-[iOS binaries, and what an encrypted one means](#ios-binaries-and-what-an-encrypted-one-means).
-
-## The tools
-
-| | |
-|---|---|
-| `describe.mjs` | What is in this file? Every slice, architecture, extent, **platform** (ios / macos / tvos…), **filetype**, symbol counts, where `__TEXT` starts, the build's **UUID**, the header's **flags** (`MH_PIE`, `MH_TWOLEVEL`, …), each section's **type** and **attributes**, the **entry point**, **rpaths** and **source version** — plus, with `--sections`, `--segments` or `--loads`, every section, segment and load command by name. Reports **abnormalities** when a header disagrees with the file |
-| `sym.mjs` | Search a symbol table by substring, or by regex with `--regex`. Imports marked rather than shown as `0x0` |
-| `symlookup.mjs` | Which function contains this vaddr? Reads symbols directly, because `nm` on a large universal binary is unusable |
-| `findcall.mjs` | Direct `call`/`jmp` xrefs to an address — or `--list` for the distinct targets a binary calls |
-| `findliteral.mjs` | Find a byte literal anywhere in a file, per slice, with context — or `--strings` to list what the binary already contains |
-| `mapliteral.mjs` | Map a literal to vaddrs, then find the pointers to them — which is how you find the code that handles a format |
-| `a2o.mjs` | Which byte of the file is this vaddr? Both the slice-relative and the absolute offset, and zero-fill as its own answer |
-| `o2a.mjs` | Which vaddr does this file offset have? Every slice's answer, since one offset means a different address in each |
-| `disasm.mjs` | Where do instructions start and end at this address, and where do they branch? Instruction lengths plus resolved **direct** branch edges for `arm64`, `arm64e` and `x86_64` — bytes, not mnemonics |
-| `audit.mjs` | Is this file internally consistent? Every structural claim it makes about itself, checked, with a verdict and an exit status a build can gate on |
-| `fingerprint.mjs` | Is this the same **program** as that one? A digest that survives a rebuild, which a byte comparison cannot |
-| `diff.mjs` | What changed between two binaries — structural facts only, so a rebuilt pair does not read as a different program |
-| `overview.mjs` | The whole picture in one call: every slice, segment, section, load command, flag, UUID and entry point, plus `--symbols` and `--strings` on request — all read from **one** slice, and carrying a `notRead` list of what this package does not parse |
-
-Thirteen tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
-`sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, eight
-until `disasm.mjs` added the boundary decoder, and nine until `audit`, `fingerprint`
-and `diff` answered the three questions a build or a reviewer asks about *two*
-binaries at once. `overview` is the thirteenth, and it is the one that composes
-the others rather than adding a new kind of question — see below for why it is not
-called `dump`.
-
-### One call instead of four
-
-`describe` + `sym` + `findliteral --strings` is how you get a complete picture
-today, and each of those three independently chooses which slice of a universal
-binary to read. That is the real cost: nothing in any of the three outputs says
-which slice it chose, so a caller holding a symbol table and a string list has to
-work out whether they came from the same architecture. `overview` reads the file
-once and answers once.
+## Install
 
 ```sh
-$ overview --symbols --strings /usr/local/go/bin/go
-$ overview --json --compact --symbols /usr/local/go/bin/go | jq '.data.symbols.count'
-```
-
-`slices` is exactly `describe`'s own slice objects, so `.data.slices[0].sections`
-means the same thing in both and switching tools means relearning nothing.
-
-**It is not a "dump everything" tool, and that is the design.** Three things make
-it safe to hand to a program, and all three are the opposite of a god-object:
-
-| | |
-|---|---|
-| **Inventories are opt-in and capped** | The structure is 9.2 KB of JSON on a 14.5 MB Go binary; its 19,526 symbols turn that into 422 KB. A default that included them would be 99% symbol table on exactly the binaries where the structural half is what you wanted. `--max` defaults to 4000 and `--compact` is a further 41% off |
-| **`notRead` is in every result** | Code signature, entitlements, export trie, chained fixups, ObjC/Swift metadata, dSYM/DWARF, FAT32. A JSON object that looks exhaustive and is silent about what it skipped cannot be told from one that genuinely has nothing to report |
-| **Zero is never bare** | No `__cstring` section gives zero strings *and a note saying the section is absent* — a fact about the file. A stripped slice gives no defined symbols *and a note saying that* — a fact about the slice. Both would otherwise be the same `[]` |
-
-The names it cannot read are the ones `README.md` § *What it will not do* already
-refuses, and they are named in the output rather than left to a caveat. Adopting
-"everything" as the contract is the strategy change `CONTRIBUTING.md` § *Scope
-comes first* says belongs in an issue, not a pull request.
-
-There is deliberately **no `overview` on the MCP server**, which makes the same
-argument about the same bundling — see the note in `src/mcp-tools.mjs`.
-
-### Three questions about two binaries
-
-The last three tools exist because one question — "is this the same thing?" — has
-three different answers, and every existing tool gives you the wrong one:
-
-| | |
-|---|---|
-| **same build** | the `LC_UUID`. Exact, and useless the moment anything is relinked |
-| **same program** | a `fingerprint`. Survives a rebuild; changes if a symbol or a section does |
-| **what changed** | a `diff`. Structural facts only, so a rebuilt pair is not a changed one |
-
-Byte comparison gets both directions wrong. Two builds of one source differ in every
-address — PIE and ASLR move them — in the dylib version fields, and in any
-timestamp, so `cmp` calls them different. Two *different* programs built from one
-template with a function renamed differ in almost nothing structural, so a loose
-structural diff calls them the same.
-
-```sh
-$ fingerprint v1.0/libthing.dylib v1.1/libthing.dylib
-  same program, rebuilt
-$ diff v1.0/libthing.dylib v1.1/libthing.dylib
-  same program, rebuilt  —  0 structural difference(s), 1 build-metadata change(s)
-  exit 0
-```
-
-`audit` is the fourth thing in this family, and the one aimed at a build rather than
-a person: it checks every structural claim a file makes about itself and exits
-non-zero when it does not hold up. Findings carry a **severity** — `error` means the
-file disagrees with itself, `warning` means it parsed and something is merely
-unfamiliar — so `--strict` can widen the gate without failing every build produced
-by a newer Xcode:
-
-```sh
-$ audit --strict build/Contents/MacOS/app
-app — FAILED  2 error(s), 1 warning(s)
-exit 1
-```
-
-It also checks the fat table itself, which no per-slice check can: two slices
-claiming the same file bytes are *each* internally consistent, and the damage only
-exists between them.
-
-### Installing
-
-```sh
-npm install -g macho-explorer          # describe, sym, ...
-man sym
+npm install -g macho-explorer
 ```
 
 Or vendor `src/`. Or copy **`src/macho.mjs` alone** — it imports nothing but
 `node:fs`, so the whole raw reader is one auditable file with no `node_modules`,
-no lockfile and no install step. Man pages ship in `man/man1/`, completions in
-`completions/` (bash and zsh).
+no lockfile and no install step.
 
-### Pointing it at a binary
+## Subcommands
 
-1. an explicit argument, where the tool accepts one
-2. `$MACHO_EXPLORER_BINARY` — a path to an executable
-3. `$MACHO_EXPLORER_APP` — a `.app` bundle; the executable is found inside it
-4. a documented fallback system binary, so a bare invocation is not a dead end
-   (`null` on Windows, where a bare invocation says what to pass instead)
+| | |
+|---|---|
+| `describe` | What is in this file? Every slice, architecture, extent, platform, filetype, symbol counts, `__TEXT` bounds, UUID, header flags, section types and attributes, entry point, rpaths, source version, linked libraries — plus `--sections`, `--segments`, `--loads` for full listings. Reports abnormalities when a header disagrees with the file |
+| `sym` | Search a symbol table by substring, or by regex with `--regex`. Imports marked rather than shown as `0x0` |
+| `symlookup` | Which function contains this vaddr? Reads symbols directly, because `nm` on a large universal binary is unusable |
+| `findcall` | Direct `call`/`jmp` xrefs to an address — or `--list` for the distinct targets a binary calls |
+| `findliteral` | Find a byte literal anywhere in a file, per slice, with context — or `--strings` to list what the binary already contains |
+| `mapliteral` | Map a literal to vaddrs, then find the pointers to them — which is how you find the code that handles a format |
+| `a2o` | Which byte of the file is this vaddr? Both the slice-relative and the absolute offset, and zero-fill as its own answer |
+| `o2a` | Which vaddr does this file offset have? Every slice's answer, since one offset means a different address in each |
+| `disasm` | Where do instructions start and end at this address, and where do they branch? Instruction lengths plus resolved direct branch edges for `arm64`, `arm64e` and `x86_64` — bytes, not mnemonics |
+| `audit` | Is this file internally consistent? Every structural claim it makes about itself, checked, with a verdict and an exit status a build can gate on |
+| `fingerprint` | Is this the same program as that one? A digest that survives a rebuild, which a byte comparison cannot |
+| `diff` | What changed between two binaries — structural facts only, so a rebuilt pair does not read as a different program |
+| `overview` | The whole picture in one call: every slice, segment, section, load command, flag, UUID and entry point, plus `--symbols` and `--strings` on request — all read from one slice, and carrying a `notRead` list of what this package does not parse |
+| `mcp` | Serve the tools over the Model Context Protocol (JSON-RPC on stdin/stdout) |
 
-```sh
-node src/sym.mjs 'someSymbol' /path/to/binary
-MACHO_EXPLORER_APP="/Applications/Some App.app" node src/sym.mjs 'someSymbol'
-```
+### Global flags
 
-`symlookup` takes only addresses as positionals, so its binary comes from `-b`
-or the environment rather than from a position — a path told apart from an
-address by *looking* like one turns a typo into a confident wrong answer.
+Every subcommand accepts:
 
 | Flag | Meaning |
 |---|---|
-| `--json` | Emit one JSON object on stdout; diagnostics go to stderr. Every response carries `schemaVersion`; the shape is published in [`schema/envelope.schema.json`](schema/envelope.schema.json) |
-| `-b`, `--binary <path>` | The binary, for tools where every positional is a query |
-| `--arch=<name>` | Restrict to one architecture. A preference, not a requirement: if the slice is absent another is read, and the note says which |
-| `--sections`, `--segments`, `--loads` | `describe`: list sections, segments, or load commands by name. The lists themselves are always in `--json` |
-| `--strings`, `--min`, `--filter` | `findliteral`: list the strings already in the binary instead of searching for one. On an encrypted binary this reports `encrypted` rather than "no strings" |
-| `--include-data` | `findcall`: widen the scan from code sections to every section |
-| `--in`, `--matched-only`, `--per-file`, `--max-files`, `--max-depth` | `sym`: search a **file or directory** instead of one binary, through the same envelope. `--in` takes a comma-separated list; non-Mach-O files under a directory are skipped, not failed |
-| `--strict` | `audit`: fail on warnings as well as errors. The default fails only where the file disagrees with itself |
-| `--branches` | `disasm`: report only branches, as `{from, to}` edges, with the byte column dropped |
-| `--count=<n>`, `--bytes=<n>` | `disasm`: stop after `n` instructions, or after `n` bytes. `--count 0` means no cap, and is only sensible with `--bytes` |
-| `--symbols`, `--strings` | `overview`: add that inventory to the structural answer. Both are off by default and both are capped |
-| `--max=<n>`, `--min=<n>` | `overview`: cap each inventory (default 4000, `0` unlimited) and the shortest string to report (default 4). `--min` is the same flag `findliteral` uses |
-| `--compact` | `overview`: write the JSON on one line instead of indenting it. 41% smaller on a 4,000-row inventory |
+| `--json` | Emit one JSON object on stdout; diagnostics go to stderr |
+| `-b`, `--binary <path>` | The binary, for subcommands where every positional is a query |
+| `--arch=<name>` | Restrict to one architecture. A preference, not a requirement |
+| `-q`, `--quiet` | Suppress non-essential output |
+| `--color` / `--no-color` | Force or disable color output |
+| `-v`, `--verbose` | Diagnostic output |
 | `-h`, `--help` | Print usage |
+| `-V`, `--version` | Print version |
 
 **An unrecognised flag is a usage error**, exit 2, with a suggestion when the
 name is a near miss:
 
 ```sh
-$ node src/sym.mjs --regexx 'runtime\.main' /path/to/binary
+$ macho-explorer sym --regexx 'runtime\.main' /path/to/binary
 unknown flag: --regexx
 
   did you mean --regex?
 ```
 
-This is not cosmetic. It used to be the other way round on every tool but
-`describe`: `parseArgs` dropped anything it did not recognise, so a typo'd
-`--regex` silently became a substring search and answered a *different question*
-with exit 1 — "found nothing" — which is a confident wrong answer wearing a
-successful exit status.
+## Documentation
 
-`a2o` and `o2a` take only addresses or offsets as positionals, so their binary
-comes from `-b` like `symlookup`'s does.
-
-### iOS binaries, and what an encrypted one means
-
-A Mach-O from an iPhone and one from a Mac agree at every level this reader used
-to look: same magic, same word size, same load-command shape. Four things tell
-them apart, and all four are now read:
-
-| | |
-|---|---|
-| `platform` | From `LC_BUILD_VERSION` or the older `LC_VERSION_MIN_*`: `ios`, `macos`, `tvos`, `watchos`, `maccatalyst`, `ios-simulator`, `visionos`, … plus `minos` and `sdk` |
-| `filetype` | `MH_EXECUTE`, `MH_DYLIB`, `MH_BUNDLE`, `MH_FILESET`, … — an iOS `.app` contains all three of the first, and "which is this" is the first question a bundle raises |
-| `cpusubtype` | `arm64e` is `CPU_TYPE_ARM64` with a different *subtype*, so the type alone cannot name it. Reported as `arm64e` now, because on iOS that is the difference between a binary that uses pointer authentication and one that does not |
-| `cryptid` | From `LC_ENCRYPTION_INFO`/`_64` |
-
-The fourth is the one that matters. An App Store binary ships with `__TEXT`
-encrypted, so its code and its `__cstring` are **ciphertext**:
-
-```sh
-$ node src/describe.mjs SomeApp.app/Contents/MacOS/SomeApp
-  arm64e   file 0..48123456  64-bit  ios MH_EXECUTE  0 defined / 0 symbols  2 code section(s)
-           ENCRYPTED (cryptid=1) — __TEXT is ciphertext, an App Store build; findcall, findliteral and --strings cannot read it
-           minos 16.4  sdk 17.0
-```
-
-Without that check, `findcall` on such a binary returns **zero hits** and reads
-as *"nothing calls this function"* — a claim about code that was never readable.
-So the scanners refuse instead, with a reason code that is not `no-*`:
-
-| | unencrypted, nothing found | encrypted, could not look |
-|---|---|---|
-| exit | `1` | `3` |
-| `errors` | `["no-call-sites"]` | `["encrypted"]` |
-| MCP | `ok: true`, `count: 0` | `isError: true` |
-
-`"found nothing"` and `"could not look"` are different answers, and the whole
-exit-code taxonomy exists to keep them apart.
-
-The asymmetry worth knowing: **the symbol table is not encrypted**, so
-`symlookup` still resolves names on a binary whose code cannot be read. That is
-the real situation, and it is what the `ios.macho` fixture reproduces — including
-the encryption itself, not merely the declaration, because a fixture that
-declared ciphertext and shipped plaintext would let `--strings` "succeed" and
-look like the check was broken.
-
-**Coverage, honestly.** macOS x86_64/arm64 and 32-bit i386 work; iOS armv7 and
-arm64/arm64e work. **Big-endian Mach-O is not supported** — NeXTSTEP on m68k,
-SPARC or HPPA, and macOS on PowerPC, are refused as `unknown-encoding` rather
-than misread. A big-endian slice inside a fat binary is reported as unreadable
-with its raw `cputype`, so it is visible rather than silently absent.
-
-### A lone path is the binary, not a pattern
-
-`sym` takes a pattern and *then* a binary, so a single positional that names a
-Mach-O used to be read as the pattern. The binary then defaulted, and the tool
-answered about `/bin/ls` while saying nothing about the file that was never
-opened:
-
-```sh
-$ node src/sym.mjs /Applications/Developer.app/Contents/MacOS/Developer
-no symbol matched; a stripped binary has none to match against   # about /bin/ls
-exit=1
-```
-
-Exit 1 — "found nothing" — about a file nobody asked about. It is now a usage
-error that names what it read and what to type instead, and `--json` reports it
-as `missing-pattern` with the path in `binary`:
-
-```
-test/fixtures/populated.macho names a Mach-O, and sym takes a pattern and then a binary.
-
-  Read as a pattern it would search /bin/ls instead — a different
-  file — so this is refused rather than answered.
-
-    search it:          node src/sym.mjs <pattern> "…/populated.macho"
-```
-
-The fallback was never the defect — falling back is correct when no binary is
-given at all. It is wrong while *holding* an argument that is a binary, because
-the answer is then about a file the caller never named.
-
-**Deliberately narrow.** It fires only on a lone Mach-O or `.app` path. A pattern
-that merely looks like a path is still searched, which is why `findliteral` and
-`mapliteral` do not do this: for those a literal that is also a real file is a
-legitimate search, not a mistake. `findcall` needs no such rule — it already
-requires a hex address first.
-
-### Zero-fill is a third answer
-
-`a2o` distinguishes three outcomes, because they are three different facts and
-conflating any two of them puts a patch script in the wrong place:
-
-| | |
-|---|---|
-| `offset: 0x85c30` | mapped, and there is a byte at that position |
-| `zerofill: true` | mapped, and there is **no byte** — `__bss`, `__noptrbss`, `__PAGEZERO` |
-| `mapped: false` | not in this binary at all |
-
-`__bss` has an address and a size, and the linker records its file offset as `0`,
-so a reader that walks sections without asking whether they occupy bytes resolves
-the Mach-O header into `__bss` — in `go`, a prefix of the file measured in
-  hundred-odd kilobytes. The `zerofill` fixture exists to keep that fixed, and
-  reverting the fix fails the suite against it.
-
-### A header is a set of claims, and some of them are false
-
-A Mach-O header states things about the file, and a reader's job is to report
-those claims faithfully — including when it cannot make sense of one. `describe`
-now decodes the header's `flags` word into names, and each section's `flags` into
-its **type** and its **attributes**, which are disjoint halves of the same 32-bit
-field:
-
-```sh
-$ node src/describe.mjs --sections test/fixtures/meta.macho
-  x86_64   file 0..879  64-bit  4 defined / 6 symbols  1 code section(s) __text 0x100000170+320
-           flags MH_NOUNDEFS MH_DYLDLINK MH_TWOLEVEL MH_PIE
-           entry entryoff 64  (no address derived; see --json entryPoint.note)
-           rpath @executable_path/../Frameworks
-           source version 4660.12.4.5.6
-
-sections in x86_64:
-  __TEXT,__text                      0x100000170..0x1000002b0           320  file       368  code  S_REGULAR
-  __TEXT,__data                      0x1000002b0..0x1000002d0            32  file       688  data  S_CSTRING_LITERALS
-```
-
-`code`/`data` comes from the attributes and the type is a separate fact, and a
-section is routinely both at once: `__text` is `code` because of
-`S_ATTR_PURE_INSTRUCTIONS` and `S_REGULAR` because that is what its type byte
-says. Reading only the attributes calls a `__cstring` and a `__symbol_stub` both
-"data", which is true and useless.
-
-Two details here are less obvious than they look, and both were found by measuring
-the machine rather than by reading the header:
-
-- **`MH_*` is more than the 28 flags usually quoted.** Four are newer
-  (`MH_NLIST_OUTOFSYNC_WITH_DYLDINFO`, `MH_SIM_SUPPORT`, `MH_IMPLICIT_PAGEZERO`,
-  `MH_DYLIB_IN_CACHE`), and bit `0x20000000` has *no* name in the header at all. A
-  table that stopped at `MH_APP_EXTENSION_SAFE` would report four real flags as
-  unknown on real binaries — which is exactly the false alarm the abnormality check
-  must not be able to raise. Unrecognised bits are reported as their own value,
-  never folded in with the absent ones.
-- **`LC_SOURCE_VERSION` is not five equal fields.** It is packed `a24.b10.c10.d10.e10`
-  — `A` is 24 bits and the rest are 10. Decoding it as five 10-bit fields is the
-  obvious reading, silently mangles `A`, and still produces a version that looks
-  plausible.
-
-### Abnormalities: reported alongside the parse, never instead of it
-
-A malformed file still answers every other question. `describe` reports what is
-wrong *and* what it could genuinely read, because conflating "this file is broken"
-with "this file does not have that" is the same mistake `zerofill` above exists to
-avoid:
-
-```sh
-$ node src/describe.mjs test/fixtures/damaged.macho
-  x86_64   file 0..799  64-bit  4 defined / 6 symbols  1 code section(s) __text 0x100000120+320
-           flags MH_NOUNDEFS MH_DYLDLINK MH_TWOLEVEL MH_PIE
-           flags 0x20000000 set but unnamed in <mach-o/loader.h> — newer than this reader, or not a header we can trust
-
-3 abnormality(ies) — the file parsed, but these parts do not add up:
-  x86_64  unknown-header-flags
-      header sets flag bits with no name in <mach-o/loader.h>: 0x20000000
-  x86_64  load-commands-truncated
-      header declares 99 load command(s), only 3 were readable — the segment, section and symbol tables below may be incomplete
-  x86_64  strtab-past-slice-end
-      LC_SYMTAB claims a string table in bytes 736..2147484383, past the end of the slice at 799
-```
-
-Each is decidable from the bytes alone, and each would change a tool's answer:
-unnameable flag bits; fewer readable load commands than `ncmds` claims; a section,
-segment, symbol table or string table reaching past its slice; the symbol and
-string tables overlapping; an `LC_MAIN` outside `__TEXT`.
-
-Two are deliberately **not** checked, which is as much a part of the contract:
-
-- **Unknown load commands.** Already surfaced by `describe --loads` as a number
-  rather than a name. That is this project's chosen line for "present but not
-  understood", and listing them a second time as damage would grade an
-  unfamiliar-but-valid command as broken.
-- **`LC_MAIN` pointing outside `__TEXT`.** That is the normal state of a dyld
-  shared-cache stub — `/bin/ls` and most of `/bin` are stubs — and measurement
-  found it on a fully-symbolled 113 MB `node` too. A warning that is always true
-  teaches a reader to skip warnings.
-
-### `LC_MAIN`: the raw offset, and no address
-
-`describe` reports `LC_MAIN`'s `entryoff` and deliberately reports **no address**
-for it. `<mach-o/loader.h>` calls the field a `__TEXT` offset, and that is not
-what it is:
-
-- on a fully-symbolled 113 MB arm64 `node`, `entryoff` is 88,241,840 while `__TEXT`
-  spans file bytes `0..85,082,112` — it is *past the end of `__TEXT`*, and read as
-  a slice-relative offset it resolves into `__LINKEDIT`, matching no symbol under
-  any of the three plausible bases;
-- every one of the 672 `LC_MAIN`s measured on this machine declares **`cmdsize`
-  16**, not the 24 the header documents. In that form there is no `stacksize`, and
-  the upper 32 bits of `entryoff` are **uninitialised** — zero on arm64, and on the
-  x86_64 stubs whatever followed in the buffer. Reading the field as a `uint64`
-  reported `/bin/ls`'s entry offset as 103,079,241,432.
-
-So the reader takes the width from the command's own `cmdsize`, discloses the raw
-upper half as `rawHigh32`, and returns `vaddr: null`. Publishing
-`__TEXT.vmaddr + entryoff` would produce an address of exactly the shape a caller
-feeds to `symlookup` — and it would be wrong on essentially every binary.
+- **[User Manual](docs/user-manual.md)** — detailed reference for every subcommand, flag, and usage pattern
+- **[Envelope Schema](schema/envelope.schema.json)** — JSON Schema for `--json` output
+- **[Agent Skill](skill/)** — instructions for AI coding agents
+- **[Contributing](CONTRIBUTING.md)** — how to contribute
 
 ## When to use this, and when not to
 
@@ -511,6 +147,8 @@ Reach for **something else** when:
 | vaddr → file offset | yes | yes (`macho a2o`) | no | no | no | by hand |
 | file offset → vaddr | yes | yes (`macho o2a`) | no | no | no | by hand |
 | Zero-fill reported as its own case | yes | no ¶ | no | no | no | no |
+| Linked libraries, per linkage (`otool -L`) | yes | yes | yes | yes | `otool -L` | by hand |
+| Platform, `minos`/`sdk`, filetype, `cryptid` | yes | yes | yes | yes | `vtool -show`, `codesign` | by hand |
 | Direct-call xrefs | yes | **no** † | no | no | no | yes |
 | Indirect / PLT xrefs | **no** | no | no | no | no | yes |
 | Literal → vaddr → pointers | yes | **no** † | no | no | no | by hand |
@@ -579,11 +217,12 @@ much time:
 
 | Will not | Because |
 |---|---|
-| **Disassemble to text** | `disasm.mjs` gives instruction lengths and direct branch edges, which is the last step before a real disassembler and the only part that a byte-level reader can do without guessing. Past that — mnemonics, operands, a control flow graph — is Hopper or Ghidra's job, and duplicating it is the clearest possible way to become a worse Hopper |
+| **Disassemble to text** | `disasm` gives instruction lengths and direct branch edges, which is the last step before a real disassembler and the only part that a byte-level reader can do without guessing. Past that — mnemonics, operands, a control flow graph — is Hopper or Ghidra's job, and duplicating it is the clearest possible way to become a worse Hopper |
 | **Resolve indirect / PLT calls** | The target is not in the instruction; it is a pointer reachable only by following the register through a stub and then through `LC_DYLD_CHAINED_FIXUPS` or a bind, and none of which is read here. A wrong edge here would be worse than a missing one: it would look like a call graph |
 | **Read dSYM / DWARF** | A different file format and a large amount of code for the minority of binaries whose symbols are in a sidecar |
 | **Parse ObjC/Swift metadata** | MachOKit does this properly and is better at it. Duplicating it is the clearest possible way to become a worse MachOKit |
 | **ELF or PE** | Mach-O is the focus, not the first of four. Depth in one format beats breadth across several |
+| **FAT64 containers** | A fat header with 64-bit slice offsets (`FAT_MAGIC_64`) is refused rather than half-read: its offset type is wider than the 32-bit one every other field uses, and reading it as 32-bit would resolve a slice to an offset inside the file's first 4 GiB. Linux's `objdump` rejects it too, so the refusal is the portable one |
 | **Code signing, fixups, export tries** | LIEF and `codesign` cover them, and none of them changes which function a vaddr lands in |
 
 The test for anything on that list is not "is it hard" — indirect call
@@ -591,258 +230,6 @@ resolution is genuinely hard, which is why it stays out. The test is whether
 closing the gap would make this package *worse at the thing it is for*. A
 package that answers 40% of a question is useful; one that answers all of a
 question it was never built for is not.
-
-## Limits
-
-- **One format, on purpose.** Mach-O is what this package is for, not the only
-  format it has not got round to yet. Android APKs, iOS bundles and Windows PE
-  need a different reader, and always will.
-- **Little-endian only.** Fields are read in little-endian order, so big-endian
-  Mach-O — NeXTSTEP on m68k, SPARC or HPPA, and classic Mac OS on PowerPC — is
-  refused as `unknown-encoding` rather than misread. A big-endian slice inside a
-  fat binary is listed by name (`ppc`) and reported `readable: false`, so it is
-  visible rather than silently absent. This is the boundary of the coverage
-  table above, and it is a refusal rather than a parse that happens to be wrong.
-- **Direct calls only.** Indirect calls, register calls and jumps through a PLT
-  stub do not encode their target in the instruction, so they do not appear in
-  `findcall`, and `disasm` reports `null` for their target rather than inventing
-  one. Every `findcall` hit is a site *worth disassembling*; every `disasm` edge
-  is a displacement read out of the instruction.
-- **`findcall`'s x86_64 scan is typed by *section*, not by instruction.** It
-  restricts itself to sections the linker flagged as code, which removes data
-  false positives, but it will still match a byte inside a multi-byte instruction
-  rather than at an instruction boundary — because the bytes alone do not say
-  where instructions begin. Alignment is not something the file format records.
-  `disasm` is the answer to that limit rather than a workaround for it: given a
-  start address it knows where each instruction ends, which is exactly the fact
-  `findcall` cannot recover. The arm64 path steps 4 bytes at a time and does see
-  only aligned `BL`s.
-- **`disasm` is a linear sweep, not a recursive descent.** It decodes every byte
-  of the range in address order, so alignment padding and any data interleaved
-  into a code section are read as instructions too. It is a coverage tool for a
-  range you already believe is code — *start it at a symbol*, not at the section
-  head. Measured against `/usr/lib/dyld`, 91.0% of a slice's symbols landed on an
-  instruction boundary when the sweep began at the section start, against 100% when
-  each sweep began at its own symbol's address. On `arm64` the exposure is much
-  smaller because every instruction is 4 bytes, so a boundary cannot drift; on
-  `x86_64` one wrong length shifts every boundary after it.
-- **The x86_64 opcode tables are incomplete, and the gaps are listed.** 3DNow!,
-  AMD `extrq`/`insertq`, EVEX opcodes that take an immediate, and APX are not
-  decoded, so those instructions are read **one byte short** — a short reading
-  desynchronises the sweep at that instruction and leaves it visible, which is the
-  least damaging way to be wrong. A length that is too *long* would swallow the
-  instruction behind it and hide it, so nothing in the table guesses. RIP-relative
-  operands are deliberately not reported as branches: the displacement addresses a
-  pointer, not code, and treating it as a branch displacement fabricates a target
-  roughly 2^32 bytes away. `mapliteral` is the tool for those.
-- **Stripped binaries have no symbols** to grep. `sym` and `symlookup` report
-  nothing rather than guess; `findcall` and `findliteral` read bytes rather than
-  names and are unaffected. There is no dSYM support, so a shipped build with
-  its symbols in a sidecar is out of reach.
-- **Not a general Mach-O parser.** `describe --loads` names every load command but
-  interprets none of them: no code signing, no fixups, no export trie, no
-  ObjC/Swift metadata, no FAT32, and no following a `LC_LOAD_DYLIB` to the library
-  it names.
-- **Verified on macOS and Linux.** The reader is portable buffer arithmetic; on
-  Windows only the generated half of the suite runs.
-
-## Scripting it
-
-Every tool takes `--json`, with two guarantees so a consumer does not have to
-learn one dialect: **stdout is JSON only** (progress lines, per-slice narration
-and "none found" prose all go to stderr), and **one envelope, always** —
-`{ schemaVersion, tool, ok, binary, errors, messages?, notes?, data }`, where
-`errors` holds machine-readable reason codes (`bad-arguments`, `bad-address`,
-`bad-pattern`, `no-match`, `no-call-sites`, `no-symbols`, `unknown-encoding`,
-`io`) rather than prose.
-
-The envelope's shape is published as JSON Schema in
-[`schema/envelope.schema.json`](schema/envelope.schema.json), and every response
-carries `schemaVersion` — so a consumer can pin the version it was written
-against and fail loudly when it changes, instead of discovering it from an empty
-field. `test/types.mjs` runs every tool and checks its real output against that
-schema, because a schema that has drifted from the code is worse than none.
-
-`io` and `unknown-encoding` are deliberately distinct, because the two are
-different problems: one is a file that cannot be read, the other a file that
-reads fine and is not a Mach-O. Told "not a Mach-O binary" about a path that
-does not exist, a caller goes looking for the wrong file entirely.
-
-### One envelope, any scale
-
-`sym --in` searches a directory, and the answer arrives in the **same envelope** —
-`data.files[]` instead of `data.matches`. A caller that can read one binary's
-output can read four thousand, which is the whole point: other tools can search a
-directory, but not through one uniform door.
-
-```sh
-$ sym --all-imp CCCrypt --in ./artifacts --matched-only --json | jq -r \
-    '.data.files[] | "\(.count)\t\(.path)"'
-```
-
-Three distinctions the output keeps apart, each of which a naive implementation
-conflates:
-
-- **non-Mach-O is skipped, not failed.** A build tree is full of plists and
-  headers; failing over them would make the tool useless for its actual use.
-- **a path that does not exist is reported**, with reason code `io`. Silently
-  dropping a path the caller named is the failure this project refuses most
-  consistently.
-- **`files` and `looked` are separate.** The first counts every Mach-O found, the
-  second only those actually read — so a summary saying "N Mach-O read" cannot
-  claim N files were read when none were.
-
-Addresses are emitted as `"0x..."` strings, never JSON numbers: a 64-bit vaddr
-does not survive a `Number`, and a silent precision loss would be
-indistinguishable from a correct answer.
-
-| Code | Meaning |
-|---|---|
-| 0 | Ran, found something |
-| 1 | **Ran, found nothing.** Deliberately distinct from an error |
-| 2 | Usage error — bad or missing arguments |
-| 3 | Could not do the job — unreadable file, unparseable Mach-O |
-
-`audit` and `diff` both use 1 for a *negative answer* rather than an absence: exit 1
-from `audit` means "this file is not sound", and from `diff` "these are different
-programs". An unreadable file still exits 3, so a mistyped path in a CI script can
-never be mistaken for a clean result.
-
-A caller that cannot tell "found nothing" from "could not look" has the problem
-this project keeps fixing, so it is encoded in the exit status. The status is
-the same with and without `--json`: the flag changes the format of the answer,
-not the answer, and a tool whose text mode and JSON mode disagree about whether
-something was found is worse than one with no contract at all. The suite asserts
-that parity across tools rather than listing expected values per tool, so a tool
-added later fails the same check.
-
-### For coding agents
-
-Two doorways, and they are not redundant.
-
-**An MCP server**, so an agent that speaks the protocol finds these tools at
-all:
-
-```sh
-claude mcp add macho -- node /absolute/path/to/src/mcp.mjs
-```
-
-```json
-{ "mcpServers": { "macho": {
-    "command": "node",
-    "args": ["/absolute/path/to/src/mcp.mjs"],
-    "env": { "MACHO_EXPLORER_BINARY": "/path/to/a/binary" } } } }
-```
-
-Eleven tools — `describe`, `sym`, `symlookup`,
-`findcall`, `findliteral`, `mapliteral`, `a2o`,
-`o2a`, `audit`, `fingerprint`, `diff` — each returning
-the **same envelope** the CLIs emit under `--json`,
-plus a short text block. Nothing new to learn depending on how you arrived.
-
-`disasm` is the one CLI with no MCP tool yet, which breaks the "every tool has
-both doors" rule above. It is called out rather than quietly counted: a reader who
-compares this list with the tool table will notice the gap, and it is better that
-they notice it than that they assume the list is wrong.
-
-It speaks both protocol eras, because clients in the wild still use both: the
-modern `2026-07-28` revision (per-request `_meta`, no handshake) and the legacy
-`initialize` handshake back to `2024-11-05`.
-
-**An [Agent Skill](skill/)**, for agents that drive the CLI or the library
-instead. It carries the three things that produce confidently wrong answers —
-addresses are hex *strings*, an empty result is not an error, `findcall` sees
-direct calls only — plus the workflow and the fallbacks. It is plain
-`SKILL.md` in an open format, so it works in Claude Code, Codex, Cursor, VS Code,
-Copilot and Gemini CLI by copying one directory.
-
-```sh
-mkdir -p .claude/skills && cp -r skill/macho-explorer .claude/skills/
-```
-
-Be clear-eyed about what this is: Hopper, Binary Ninja and `ipsw` all ship an MCP
-server, so **this is distribution, not differentiation**. An MCP server is how an
-agent discovers a capability exists; without one this package is invisible to
-every agent-driven workflow while being well suited to it. See
-[`COMPETITIVE-LANDSCAPE.md`](COMPETITIVE-LANDSCAPE.md).
-
-```js
-import { describe, findCalls, lookupAddress, mapLiteral } from 'macho-explorer';
-
-const { slices } = describe('/path/to/binary');
-const fn = lookupAddress('/path/to/binary', 0x100085c30n);
-const callers = findCalls('/path/to/binary', fn.start);
-const tables = mapLiteral('/path/to/binary', 'LZ4');
-```
-
-The specifier is `macho-explorer`, exactly as `"name"` spells it in `package.json` —
-package names are case-sensitive when Node resolves them.
-
-The name is lowercase because npm will not accept a capital letter in a name
-published for the first time. That was not a style choice: this package shipped
-as `MachO-Tools`, and `npm publish --dry-run` reported `+ MachO-Tools@0.1.0` and
-exited 0 on it, because a dry run never asks the registry whether a name is
-acceptable. `npm view` returned E404 with the reason spelled out — *"name can no
-longer contain capital letters"* — and npm's own validator reported
-`validForNewPackages: false`. The command that looks like the check was not one.
-
-| Export | Returns |
-|---|---|
-| `describe(path)` | Every slice: architecture, extent, symbol counts, `__TEXT` bounds, **`uuid`**, decoded header **`flags`**, **`entryPoint`**, **`rpaths`**, **`sourceVersion`**, **`abnormalities`**, and the full `segments` / `sections` / `loadCommands` lists |
-| `searchSymbols(path, pattern, opts)` | Symbol search. `mode: 'substring'` (default) or `'regex'`; `definedOnly` and `dedupe` default true |
-| `lookupAddress(path, vaddr, opts)` | The function containing an address |
-| `findCalls(path, vaddr, opts)` | Direct call/jmp sites targeting an address |
-| `listCallTargets(path, opts)` | The distinct addresses a binary calls |
-| `findLiteral(path, lit, opts)` | Byte-literal occurrences, per slice, with context |
-| `mapLiteral(path, lit, opts)` | Literal → vaddr → the pointers to it |
-| `addressToOffset(path, vaddr, opts)` | vaddr → file offset, both bases, or `zerofill` |
-| `offsetToAddress(path, offsets, opts)` | File offset → vaddr, one row per slice |
-| `withFile(path, fn)` | Open, hand to a callback, close |
-| `coversAddress(thin, vaddr)` | Is this address mapped by this slice? |
-
-Two conventions worth knowing: **a negative answer is a value, not an
-exception** (`{ matches: [] }`, `{ function: null }` — genuine I/O failures still
-throw, so "no result" and "could not look" stay distinguishable), and
-**addresses are `bigint`** in, `"0x…"` out.
-
-`lookupAddress` returns `{ function: null }` for an address the slice does not
-map, rather than for the last symbol below it. A symbol table records where code
-*starts*, not where the slice *ends*, so without that check every address above
-the last symbol would resolve to that symbol with an offset of billions of bytes
-— a wrong answer shaped like a measurement. A symbol's own entry point still
-resolves even where it sits one past the last mapped byte, which is where a BSS
-symbol can land. `findCalls` and `mapLiteral` have always asked the same
-question, so the three agree about any address in any binary.
-
-`aliases` carries a second caveat: when several symbols start at the same
-address, the answer names the alternatives rather than implying it is the only
-one. This is ordinary, not exotic — Go's linker writes zero-size region markers
-beside real symbols, so in `go` both `_go:buildid` and `_runtime.text` sit at
-`0x100001000`. `nlist_64` has no size field, so nothing in the table separates a
-marker from a function, and a `size` derived from the next unrelated symbol is a
-bound rather than a measurement. `aliases: null` means the answer stands alone.
-
-`addressToOffset` and `offsetToAddress` report `query` and `vaddr` as `"0x…"`
-strings for the same reason every other address here is: a 64-bit position does not
-survive a JSON number. Offsets stay numeric — they are arithmetic, and a file
-position is far below 2^53 in practice.
-
-`src/macho.mjs` — the raw reader — is also importable and is where new format
-support lands first. It is stable within a major version but lower-level and more
-likely to grow than `api.mjs`.
-
-## Configuration
-
-`config.json` holds the two things that are facts about the world rather than
-about the format: the bundle convention (`.app`, `Contents/MacOS`) and the scan
-chunking. Both are overridable with `$MACHO_EXPLORER_CONFIG`, and a malformed override
-falls back to the shipped values rather than failing — a typo should not stop a
-tool you handed an explicit binary.
-
-```sh
-echo '{"bundle":{"ext":".bundle","macosDir":["bin","exec"]}}' > /tmp/alt.json
-MACHO_EXPLORER_CONFIG=/tmp/alt.json node src/sym.mjs 'someSymbol'
-```
 
 ## Verify it yourself, in about five seconds
 

@@ -445,8 +445,146 @@ export interface Thin {
     cmdsize: number;
   } | null;
   sourceVersion: SourceVersion | null;
+  /**
+   * The platform this slice was built for, or null when it declares none.
+   *
+   * Null is a real answer, not a gap: an `MH_OBJECT` and a pre-10.14 binary both
+   * look like this, because `LC_BUILD_VERSION` did not exist before 10.14 and the
+   * older `LC_VERSION_MIN_*` commands are decoded into the same shape.
+   */
+  buildVersion: BuildVersion | null;
+  /** FairPlay state, or null. See {@link Encryption}. */
+  encryption: Encryption | null;
+  /** What kind of Mach-O this is. See {@link Filetype}. */
+  filetype: Filetype | null;
   /** `LC_RPATH` paths, in the order the binary declares them. */
   rpaths: string[];
+  /**
+   * Every `dylib_command` dependency, in declaration order.
+   *
+   * Empty for `MH_EXECUTE` on modern macOS, which links nothing — the system
+   * libraries arrived through `LC_DYLD_CHAINED_FIXUPS` and are not on disk as
+   * Mach-O at all. See `README.md` §Limits.
+   */
+  dylibs: DylibRef[];
+  /**
+   * This image's own `LC_ID_DYLIB` install name, or null.
+   *
+   * Set on `MH_DYLIB`, `MH_BUNDLE` and `MH_DYLIB_STUB`; what clients are meant to
+   * link against. `null` on an executable, which has no install name.
+   */
+  installName: DylibRef | null;
+}
+
+/**
+ * A decoded `filetype` — what kind of Mach-O this is.
+ *
+ * `name` is null when the value is not one of the fourteen this reader's table
+ * covers, which is how a platform adding a fifteenth shows up: as an unnamed number
+ * rather than as a confident wrong name.
+ */
+export interface Filetype {
+  /** The raw `filetype` word from the header. */
+  raw: number;
+  /** `MH_EXECUTE`, `MH_DYLIB`, `MH_DSYM`, … or null when unrecognised. */
+  name: string | null;
+  /** False only when `name` is null. */
+  named: boolean;
+}
+
+/**
+ * FairPlay encryption state, from `LC_ENCRYPTION_INFO` or `LC_ENCRYPTION_INFO_64`.
+ *
+ * The field that matters is `encrypted`, and it is `cryptid > 0` rather than "this
+ * command is present": a decrypted App Store binary keeps the command with `cryptid`
+ * 0. Reading presence instead of value reports a decrypted binary as still encrypted
+ * and a still-encrypted one as readable, which inverts the answer.
+ */
+export interface Encryption {
+  /** Which command it came from. */
+  command: string;
+  cryptoff: number;
+  cryptsize: number;
+  /** 0 is not encrypted or already decrypted; 1 is an App Store build; >1 is keyed. */
+  cryptid: number;
+  /** `cryptid > 0` — __TEXT is ciphertext. */
+  encrypted: boolean;
+}
+
+/**
+ * A decoded `LC_BUILD_VERSION`, or of the older `LC_VERSION_MIN_*` that replaced it.
+ *
+ * The platform name is `null` when `platformRaw` is not a value this reader's table
+ * covers — a newer SDK adding a platform must show up as an unnamed number rather
+ * than as a confident wrong name.
+ */
+export interface BuildVersion {
+  /** Which command it came from: `LC_BUILD_VERSION`, or e.g. `LC_VERSION_MIN_IPHONEOS`. */
+  command: string;
+  /** The platform by name — `macos`, `ios`, `ios-simulator`, `visionos`, … or null. */
+  platform: string | null;
+  /**
+   * The raw `platform` word.
+   *
+   * Null for the `LC_VERSION_MIN_*` commands, which carry no platform field — their
+   * platform *is* the command. Non-null alongside a null `platform` means the word is
+   * one this reader's table does not name.
+   */
+  platformRaw: number | null;
+  minos: PackedVersion;
+  sdk: PackedVersion;
+  /**
+   * Tool records the command declares past the 24 bytes read here.
+   *
+   * Non-zero means there is more in the command than this reports. It is surfaced
+   * rather than ignored so that a caller knows a field is absent by choice.
+   */
+  ntools: number;
+}
+
+/**
+ * A version in the linker's packed `X << 16 | Y << 8 | Z` form.
+ *
+ * `raw` is the file's own word and `text` the same value read out; both are reported
+ * so a value can be compared against another reader's without either side converting.
+ */
+export interface PackedVersion {
+  raw: number;
+  x: number;
+  y: number;
+  z: number;
+  /** `X.Y.Z`. */
+  text: string;
+}
+
+/**
+ * One decoded `struct dylib_command`.
+ *
+ * The three version fields are the linker's **packed** form, `X << 16 | Y << 8 |
+ * Z`, not separate numbers — `0x05000001` is compatibility version 5.0.1. They
+ * are reported packed because that is what the file holds and what Go's
+ * `debug/macho` reports, so a value cross-checked against another reader compares
+ * equal without a conversion either side has to make.
+ */
+export interface DylibRef {
+  /** The recorded name: an absolute path, or an `@rpath`/`@loader_path` token. */
+  name: string;
+  /** The raw `cmd` word. */
+  cmd: number;
+  /** Its name in `<mach-o/loader.h>`, e.g. `LC_LOAD_WEAK_DYLIB`. */
+  cmdName: string;
+  /**
+   * How the loader treats the command, and therefore what a *missing* library
+   * means. `'load'` is a hard dependency; `'weak'` tolerates absence; `'lazy'`
+   * defers the load; `'reexport'` also republishes that image's symbols here;
+   * `'upward'` is satisfied by an older image already in the stack.
+   *
+   * Absent on {@link SliceShape.installName}, which is not a dependency.
+   */
+  linkage?: 'load' | 'weak' | 'lazy' | 'reexport' | 'upward';
+  timestamp: number;
+  currentVersion: number;
+  compatVersion: number;
 }
 
 /** One symbol-table entry. */
@@ -758,8 +896,26 @@ export declare function describe(path: string): {
     /** Flag bits with no name in `<mach-o/loader.h>`. Zero on a known binary. */
     flagsUnknown: number;
     entryPoint: EntryPoint | null;
+    /**
+     * The platform this slice was built for, or null.
+     *
+     * See {@link BuildVersion}. `null` on an object file and on a pre-10.14 binary.
+     */
+    buildVersion: BuildVersion | null;
+    /** FairPlay state, or null when the binary declares no encryption command. */
+    encryption: Encryption | null;
+    /** What kind of Mach-O this is. See {@link Filetype}. */
+    filetype: Filetype | null;
     /** `LC_RPATH` paths, in declaration order. */
     rpaths: string[];
+    /**
+     * What this slice must be able to find to load, in declaration order — the
+     * answer `otool -L` gives. Each entry keeps its own `linkage`, because the
+     * five `dylib_command`s differ in what an absent library means.
+     */
+    dylibs: DylibRef[];
+    /** This slice's own `LC_ID_DYLIB` install name, or null. */
+    installName: DylibRef | null;
     sourceVersion: SourceVersion | null;
     /** Structural problems. Empty on a healthy binary. */
     abnormalities: Abnormality[];

@@ -2,7 +2,7 @@
 /**
  * findliteral.mjs — find every occurrence of a byte literal in a binary.
  *
- *   node src/findliteral.mjs <literal> [binary|bundle] [--text] [--json]
+ *   macho-explorer findliteral <literal> [binary|bundle] [--text] [--json]
  *
  * Reports each hit's file offset, which architecture slice it falls in, its
  * vaddr where the slice maps one, and the surrounding bytes as printable
@@ -32,19 +32,19 @@
  */
 import { requireBinary } from './target.mjs';
 import { findLiteral, findStrings } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, count, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, count, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/findliteral.mjs <literal> [binary|bundle] [--text] [--json]',
-  '                           [--arch=<name>] [-b <binary>]',
-  '       node src/findliteral.mjs --strings [binary|bundle] [--json]',
-  '                           [--arch=<name>] [--min=<n>] [--filter=<s>] [-b <binary>]',
+  'usage: macho-explorer findliteral <literal> [binary|bundle] [--text] [--json]',
+  '                              [--arch=<name>] [-b <binary>]',
+  '       macho-explorer findliteral --strings [binary|bundle] [--json]',
+  '                              [--arch=<name>] [--min=<n>] [--filter=<s>] [-b <binary>]',
   '',
   '  <literal> is matched as raw latin1 bytes, so escapes work:',
-  '    node src/findliteral.mjs LZ4 /Applications/Some.app',
-  '    node src/findliteral.mjs \\x1f\\x8b --text',
+  '    macho-explorer findliteral LZ4 /Applications/Some.app',
+  '    macho-explorer findliteral \\x1f\\x8b --text',
   '',
   '  --strings              list the strings in the binary instead of searching',
   '                         for one. Each carries its file offset, address and',
@@ -56,6 +56,10 @@ const HELP = [
   '  --text                 search __TEXT only, rather than the whole file',
   '  --arch=<name>          read one slice of a universal binary (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',
   '  -b, --binary <p>       the binary to read',
+  '  -q, --quiet            suppress non-essential output',
+  '  --color                force color output',
+  '  --no-color             disable color output',
+  '  -v, --verbose          diagnostic output',
   '  --json                 one JSON object on stdout; prose to stderr',
   '  -h, --help             this message',
 ];

@@ -1,7 +1,8 @@
-.TH DISASM 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MACHO-EXPLORER 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-disasm \- decode instruction lengths and direct branch targets
+macho-explorer \- Mach\-O binary introspection
 .SH SYNOPSIS
+.B macho-explorer
 .B disasm
 .RI [ hex-addr ]
 .RI [ binary | bundle ]
@@ -208,7 +209,7 @@ Where do instructions start at this address, and where do they go?
 .PP
 .RS
 .nf
-disasm 0x100085c30 /usr/local/go/bin/go
+macho-explorer disasm 0x100085c30 /usr/local/go/bin/go
 .fi
 .RE
 .PP
@@ -216,7 +217,7 @@ Every direct branch in the next 4 KiB, as edges:
 .PP
 .RS
 .nf
-disasm \-\-branches \-\-bytes=4096 \-\-count=0 \-b /usr/local/go/bin/go
+macho-explorer disasm \-\-branches \-\-bytes=4096 \-\-count=0 \-b /usr/local/go/bin/go
 .fi
 .RE
 .PP
@@ -226,7 +227,7 @@ found, resolved to real instruction boundaries:
 .PP
 .RS
 .nf
-disasm \-\-json 0x100085c30 64 /usr/local/go/bin/go \
+macho-explorer disasm \-\-json 0x100085c30 64 /usr/local/go/bin/go \
   | jq -r '.data.instructions[] | select(.kind) | "\(.addr) \(.kind) \(.target)"'
 .fi
 .RE
@@ -235,7 +236,7 @@ disasm \-\-json 0x100085c30 64 /usr/local/go/bin/go \
 .PP
 .RS
 .nf
-disasm \-\-arch=arm64 \-\-count=16 /usr/local/go/bin/go
+macho-explorer disasm \-\-arch=arm64 \-\-count=16 /usr/local/go/bin/go
 .fi
 .RE
 .SH NOTES

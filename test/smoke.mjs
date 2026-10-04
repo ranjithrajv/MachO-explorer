@@ -133,7 +133,7 @@ const skip = (label, why) => {
  */
 function run(tool, args, { env = {}, timeout = 120000 } = {}) {
   const started = Date.now();
-  const res = spawnSync(process.execPath, [`${SRC}${tool}`, ...args], {
+  const res = spawnSync(process.execPath, [`${SRC}macho-explorer.mjs`, tool, ...args], {
     encoding: 'utf8',
     timeout,
     maxBuffer: 64 * 1024 * 1024,
@@ -487,7 +487,7 @@ console.log('macho.mjs:');
   // EXIT.empty while the text branch fell off the end of the script and exited 0,
   // so the same search answered differently depending on an output-format flag.
   // Four tools had that shape.
-  const bogus = run('sym.mjs', ['zzq-no-such-symbol-zzq', b.path]);
+  const bogus = run('sym', ['zzq-no-such-symbol-zzq', b.path]);
   check(
     bogus.code === 1 && /0 match/.test(bogus.stdout),
     'sym: an unmatched pattern exits 1, in text mode as well as --json',
@@ -515,14 +515,14 @@ console.log('\n--json:');
   // indistinguishable in the output — and a check you cannot tell apart is one
   // whose failure you cannot act on.
   const cases = [
-    ['describe', 'describe.mjs', [probe.path]],
-    ['sym substring', 'sym.mjs', ['target|main|true', probe.path]],
-    ['sym regex', 'sym.mjs', ['--regex', 'target|main|true', probe.path]],
-    ['sym capped', 'sym.mjs', ['a', probe.path, '5']],
-    ['symlookup', 'symlookup.mjs', ['0x' + addr, '-b', probe.path]],
-    ['findcall', 'findcall.mjs', ['--list', probe.path, '3']],
-    ['findliteral', 'findliteral.mjs', [literal, probe.path]],
-    ['mapliteral', 'mapliteral.mjs', [literal, probe.path]],
+    ['describe', 'describe', [probe.path]],
+    ['sym substring', 'sym', ['target|main|true', probe.path]],
+    ['sym regex', 'sym', ['--regex', 'target|main|true', probe.path]],
+    ['sym capped', 'sym', ['a', probe.path, '5']],
+    ['symlookup', 'symlookup', ['0x' + addr, '-b', probe.path]],
+    ['findcall', 'findcall', ['--list', probe.path, '3']],
+    ['findliteral', 'findliteral', [literal, probe.path]],
+    ['mapliteral', 'mapliteral', [literal, probe.path]],
   ];
 
   for (const [label, tool, args] of cases) {
@@ -560,7 +560,7 @@ console.log('\n--json:');
   // cannot tell "found nothing" from "could not look" has the exact problem this
   // project keeps fixing, and encoding it in the exit status is the cheapest way
   // to let a shell branch on it.
-  const none = run('findliteral.mjs', ['--json', 'zzq-no-such-literal-zzq', probe.path], { timeout: 180000 });
+  const none = run('findliteral', ['--json', 'zzq-no-such-literal-zzq', probe.path], { timeout: 180000 });
   let noneParsed = null;
   try { noneParsed = JSON.parse(none.stdout); } catch { /* reported below */ }
   check(
@@ -569,14 +569,14 @@ console.log('\n--json:');
     noneParsed ? `exit ${none.code}, ok=${noneParsed.ok}` : `exit ${none.code}`,
   );
   check(
-    run('findliteral.mjs', ['--json'], {}).code === 2,
+    run('findliteral', ['--json'], {}).code === 2,
     'a usage error still exits 2 under --json',
   );
 
   // `data.ambiguous` has to be counted from the queries themselves rather than
   // trusted, or a field that silently reported 0 would look like a corpus with
   // no shared addresses.
-  const sr = run('symlookup.mjs', ['--json', '0x100001000', '0xdeadbeef00', '-b', probe.path]);
+  const sr = run('symlookup', ['--json', '0x100001000', '0xdeadbeef00', '-b', probe.path]);
   let sp = null;
   try { sp = JSON.parse(sr.stdout); } catch { /* reported below */ }
   check(
@@ -586,6 +586,80 @@ console.log('\n--json:');
     'symlookup: data.ambiguous counts the queries that share their address',
     sp ? `ambiguous=${sp.data.ambiguous}, queries=${sp.data.queries.length}` : `exit ${sr.code}`,
   );
+
+  // A payload larger than one pipe buffer arrives whole.
+  //
+  // `run()` captures stdout through a pipe, so this is the same path a real
+  // `tool --json … | jq` takes — and the reason the case below is the one that
+  // matters. `emitJSON` used to write with `process.stdout.write`, which is
+  // asynchronous when stdout is a pipe, and then call `process.exit`, which does
+  // not wait for pending writes. Everything past the first 65,536 bytes was
+  // discarded: `findliteral --strings --json /usr/lib/dyld` produced 826,998 bytes
+  // redirected to a file and 65,536 through a pipe.
+  //
+  // The suite could not see it, because the largest `--json` any fixture produced
+  // was 7,027 bytes — an order of magnitude under one buffer. Every tool passed,
+  // every run, forever. So the assertion is made where it belongs: at a size that
+  // crosses the boundary, which is what `bulk.macho` is for.
+  //
+  // The invariant checked is *equality with the redirected run*, not a byte
+  // count. A threshold would pass on any output that merely clears it; equality
+  // says the pipe changed nothing, which is the property, and it holds at every
+  // size rather than only above one.
+  const bulkPath = path.join(FIXTURES, 'bulk.macho');
+  if (fs.existsSync(bulkPath)) {
+    const PIPE = 65536;
+    const piped = run('sym', ['--json', '--regex', '.', '--all-imp', '--no-dedupe', bulkPath], { timeout: 180000 });
+
+    // The same command with stdout on a regular file. A descriptor to a regular
+    // file is synchronous, so this is the untruncated reference — and it is why
+    // the bug presented as "redirecting works, piping does not".
+    const refFile = path.join(os.tmpdir(), `macho-explorer-bulk-${process.pid}.json`);
+    const cmd = [
+      JSON.stringify(process.execPath), JSON.stringify(`${SRC}macho-explorer.mjs`),
+      'sym', '--json', '--regex', '.', '--all-imp', '--no-dedupe', JSON.stringify(bulkPath),
+      '>', JSON.stringify(refFile), '2>/dev/null',
+    ].join(' ');
+    spawnSync('/bin/sh', ['-c', cmd], { encoding: 'utf8', timeout: 180000 });
+    const reference = fs.existsSync(refFile) ? fs.readFileSync(refFile, 'utf8') : '';
+    try { fs.unlinkSync(refFile); } catch { /* best effort */ }
+
+    check(
+      reference.length > PIPE,
+      'a --json payload larger than one pipe buffer exists to test with',
+      `${reference.length} bytes vs a ${PIPE}-byte pipe`,
+    );
+
+    let bulkParsed = null;
+    let bulkWhy = piped.timedOut ? 'timed out' : '';
+    try { bulkParsed = JSON.parse(piped.stdout); } catch (e) { bulkWhy = bulkWhy || e.message.slice(0, 60); }
+    check(
+      bulkParsed !== null,
+      'a --json payload larger than one pipe buffer survives the pipe intact',
+      bulkWhy || `${piped.stdout.length} of ${reference.length} bytes`,
+    );
+    check(
+      reference.length > 0 && piped.stdout.length === reference.length && piped.stdout === reference,
+      'piped --json output is byte-identical to the same output redirected to a file',
+      `${piped.stdout.length} vs ${reference.length} bytes`,
+    );
+    // And the payload is complete, not merely present: a truncation that happened
+    // to land on a row boundary would satisfy "it parses", so the row count is
+    // the assertion.
+    if (bulkParsed && reference) {
+      let refParsed = null;
+      try { refParsed = JSON.parse(reference); } catch { /* reported by the check above */ }
+      check(
+        refParsed !== null
+          && bulkParsed.data.count === refParsed.data.count
+          && bulkParsed.data.matches.length === refParsed.data.matches.length,
+        'every row of a large --json payload is present through a pipe',
+        `${bulkParsed.data?.matches?.length} of ${refParsed?.data?.matches?.length} rows`,
+      );
+    }
+  } else {
+    skip('large --json payload through a pipe', 'test/fixtures/bulk.macho is missing — run node test/fixtures.mjs');
+  }
 }
 
 /* ---- a2o and o2a: address <-> file offset ------------------------------ */
@@ -682,8 +756,8 @@ console.log('\na2o / o2a: address and file offset');
     );
 
     // The CLI, both directions, and the exit codes.
-    const at = run('a2o.mjs', ['--json', wire(textAddr), '-b', zf.path]);
-    const ot = run('o2a.mjs', ['--json', String(asOffset.offset), '-b', zf.path]);
+    const at = run('a2o', ['--json', wire(textAddr), '-b', zf.path]);
+    const ot = run('o2a', ['--json', String(asOffset.offset), '-b', zf.path]);
     let ap = null;
     let op = null;
     try { ap = JSON.parse(at.stdout); } catch { /* reported below */ }
@@ -702,7 +776,7 @@ console.log('\na2o / o2a: address and file offset');
 
     // A zero-fill address is a real answer, so it exits 0 — but it must not be
     // counted as one that reached a byte, or the count means nothing.
-    const zb = run('a2o.mjs', ['--json', '0x' + bss.addr.toString(16), '-b', zf.path]);
+    const zb = run('a2o', ['--json', '0x' + bss.addr.toString(16), '-b', zf.path]);
     let bp = null;
     try { bp = JSON.parse(zb.stdout); } catch { /* reported below */ }
     check(
@@ -712,15 +786,15 @@ console.log('\na2o / o2a: address and file offset');
     );
 
     check(
-      run('a2o.mjs', ['--json', '0x7fffffffffff0000', '-b', zf.path]).code === 1
-        && run('o2a.mjs', ['--json', '999999999', '-b', zf.path]).code === 1,
+      run('a2o', ['--json', '0x7fffffffffff0000', '-b', zf.path]).code === 1
+        && run('o2a', ['--json', '999999999', '-b', zf.path]).code === 1,
       'a2o / o2a: an unmapped query is a negative result, exit 1',
     );
     check(
-      run('a2o.mjs', ['-b', zf.path]).code === 2
-        && run('o2a.mjs', ['-b', zf.path]).code === 2
-        && run('a2o.mjs', [zf.path, '-b', zf.path]).code === 2
-        && run('o2a.mjs', ['notanoffset', '-b', zf.path]).code === 2,
+      run('a2o', ['-b', zf.path]).code === 2
+        && run('o2a', ['-b', zf.path]).code === 2
+        && run('a2o', [zf.path, '-b', zf.path]).code === 2
+        && run('o2a', ['notanoffset', '-b', zf.path]).code === 2,
       'a2o / o2a: a missing or malformed query is a usage error, exit 2',
     );
   }
@@ -810,8 +884,8 @@ console.log('\na2o / o2a: address and file offset');
         `count=${filtered.count}`,
       );
       check(
-        run('findliteral.mjs', ['--strings', '--json', st.path]).code === 0
-          && run('findliteral.mjs', ['--strings', '--json', '--min=20', st.path]).code === 0,
+        run('findliteral', ['--strings', '--json', st.path]).code === 0
+          && run('findliteral', ['--strings', '--json', '--min=20', st.path]).code === 0,
         '--strings: exit 0 when strings were found',
       );
 
@@ -822,7 +896,7 @@ console.log('\na2o / o2a: address and file offset');
         '--strings: a binary with no cstring section finds none',
         `count=${noneHere.count}`,
       );
-      const noneCli = run('findliteral.mjs', ['--strings', zf.path]);
+      const noneCli = run('findliteral', ['--strings', zf.path]);
       check(
         noneCli.code === 1 && /NUL-terminated/.test(`${noneCli.stdout}${noneCli.stderr}`),
         '--strings: says which sections it looked in, and exits 1',
@@ -834,13 +908,13 @@ console.log('\na2o / o2a: address and file offset');
       if (uni) {
         const all = describeFile(uni.path);
         check(all.slices.length === 2, 'universal: describe sees both slices with no --arch');
-        const slim = JSON.parse(run('describe.mjs', ['--json', '--arch=arm64', uni.path]).stdout);
+        const slim = JSON.parse(run('describe', ['--json', '--arch=arm64', uni.path]).stdout);
         check(
           slim.data.slices.length === 1 && slim.data.slices[0].arch === 'arm64' && slim.data.fat === true,
           'describe --arch: narrows to one slice and still reports the file as universal',
           `slices=${slim.data.slices.length}`,
         );
-        const miss = JSON.parse(run('describe.mjs', ['--json', '--arch=riscv', uni.path]).stdout);
+        const miss = JSON.parse(run('describe', ['--json', '--arch=riscv', uni.path]).stdout);
         check(
           miss.data.slices.length === 2 && miss.notes.some((n) => /matched none/.test(n)),
           'describe --arch: an architecture that is absent shows every slice and says so',
@@ -858,9 +932,9 @@ console.log('\na2o / o2a: address and file offset');
         // that exists in neither and passed for the wrong reason by comparing two
         // zeros.
         const NEEDLE = 'target_fn';
-        const litAll = JSON.parse(run('findliteral.mjs', ['--json', NEEDLE, uni.path]).stdout);
-        const litX86 = JSON.parse(run('findliteral.mjs', ['--json', '--arch=x86_64', NEEDLE, uni.path]).stdout);
-        const litArm = JSON.parse(run('findliteral.mjs', ['--json', '--arch=arm64', NEEDLE, uni.path]).stdout);
+        const litAll = JSON.parse(run('findliteral', ['--json', NEEDLE, uni.path]).stdout);
+        const litX86 = JSON.parse(run('findliteral', ['--json', '--arch=x86_64', NEEDLE, uni.path]).stdout);
+        const litArm = JSON.parse(run('findliteral', ['--json', '--arch=arm64', NEEDLE, uni.path]).stdout);
         check(
           litAll.data.archRead.length === 2 && litAll.data.count === litX86.data.count + litArm.data.count,
           'findliteral --arch: reads every slice when none is named, and each half is findable alone',
@@ -885,7 +959,7 @@ console.log('\na2o / o2a: address and file offset');
           'findliteral --arch: each hit names the slice it came from',
           JSON.stringify([...new Set(litX86.data.hits.map((h) => h.slice))]),
         );
-        const litMiss = JSON.parse(run('findliteral.mjs', ['--json', '--arch=riscv', NEEDLE, uni.path]).stdout);
+        const litMiss = JSON.parse(run('findliteral', ['--json', '--arch=riscv', NEEDLE, uni.path]).stdout);
         check(
           litMiss.data.archHonoured === null && litMiss.data.archRead.length === 1 && litMiss.data.count > 0,
           'findliteral --arch: an absent architecture still answers, from one slice, and admits it did not get the one asked for',
@@ -1009,7 +1083,7 @@ console.log('\na2o / o2a: address and file offset');
 
       // The CLI and JSON agree, because a second code path reading the same
       // binary is where a per-form offset would drift.
-      const cli = run('describe.mjs', ['--json', '--sections', b32.path]);
+      const cli = run('describe', ['--json', '--sections', b32.path]);
       const env = JSON.parse(cli.stdout);
       check(
         env.data.slices[0].bits === 32
@@ -1099,13 +1173,13 @@ console.log('\na2o / o2a: address and file offset');
     // Both surfaces, because a UUID that reaches JSON but not the text block
     // would still leave the common case unreadable.
     if (withUuid) {
-      const cli = run('describe.mjs', [withUuid.path]);
+      const cli = run('describe', [withUuid.path]);
       check(
         cli.stdout.includes(WANT),
         'describe prints the UUID in its text output too',
         cli.stdout.split('\n').slice(2, 5).join(' | '),
       );
-      const env = JSON.parse(run('describe.mjs', ['--json', withUuid.path]).stdout);
+      const env = JSON.parse(run('describe', ['--json', withUuid.path]).stdout);
       check(
         env.data.slices[0].uuid === WANT,
         'and --json carries the identical string',
@@ -1279,24 +1353,24 @@ console.log('\na2o / o2a: address and file offset');
       );
 
       // ---- and the CLI, because a field nothing prints is a field nothing reads
-      const textOut = run('describe.mjs', ['--sections', meta.path]);
+      const textOut = run('describe', ['--sections', meta.path]);
       check(
         /MH_PIE/.test(textOut.stdout) && /S_CSTRING_LITERALS/.test(textOut.stdout),
-        'describe.mjs: prints the header flags and the section types',
+        'describe: prints the header flags and the section types',
         textOut.stdout.split('\n').filter((l) => /MH_PIE|S_CSTRING/.test(l)).join(' | ').slice(0, 100),
       );
       check(
         /@executable_path/.test(textOut.stdout) && /4660\.12\.4\.5\.6/.test(textOut.stdout),
-        'describe.mjs: prints the rpath and the source version',
+        'describe: prints the rpath and the source version',
       );
-      const metaJson = run('describe.mjs', ['--json', meta.path]);
+      const metaJson = run('describe', ['--json', meta.path]);
       let menv = null;
       try { menv = JSON.parse(metaJson.stdout); } catch { /* asserted below */ }
       check(
         menv?.data?.slices?.[0]?.entryPoint?.vaddr === null
           && Array.isArray(menv?.data?.slices?.[0]?.rpaths)
           && typeof menv?.data?.slices?.[0]?.abnormalities?.length === 'number',
-        'describe.mjs --json: the new fields survive the JSON door',
+        'describe --json: the new fields survive the JSON door',
         metaJson.stdout.slice(0, 60),
       );
     }
@@ -1350,21 +1424,21 @@ console.log('\na2o / o2a: address and file offset');
         'describe: every abnormality carries a machine-readable kind and a human explanation',
       );
 
-      const dOut = run('describe.mjs', [dmg.path]);
+      const dOut = run('describe', [dmg.path]);
       check(
         /abnormality/.test(dOut.stdout) && /load-commands-truncated/.test(dOut.stdout),
-        'describe.mjs: prints the abnormalities rather than hiding them',
+        'describe: prints the abnormalities rather than hiding them',
         dOut.stdout.split('\n').filter((l) => /abnormality|truncated/.test(l)).join(' | ').slice(0, 90),
       );
       check(
         /4 defined/.test(dOut.stdout),
-        'describe.mjs: and still answers the original question about the same file',
+        'describe: and still answers the original question about the same file',
         dOut.stdout.split('\n').filter((l) => /defined/.test(l)).join(' | ').slice(0, 80),
       );
-      const dJson = run('describe.mjs', ['--json', dmg.path]);
+      const dJson = run('describe', ['--json', dmg.path]);
       check(
         dJson.code === 0 && /"abnormalities":\s*\[/.test(dJson.stdout),
-        'describe.mjs --json: abnormalities are in the envelope and the exit is still success',
+        'describe --json: abnormalities are in the envelope and the exit is still success',
         `exit ${dJson.code}`,
       );
 
@@ -1461,7 +1535,7 @@ console.log('\na2o / o2a: address and file offset');
           'container: describe reports the fat-table defect, not just the per-slice ones',
           (d.containerAbnormalities || []).map((a) => a.kind).join(','),
         );
-        const bentOut = run('describe.mjs', [bent.path]);
+        const bentOut = run('describe', [bent.path]);
         check(
           /fat container/.test(bentOut.stdout) && /slices-overlap/.test(bentOut.stdout),
           'container: and the CLI prints it',
@@ -1508,7 +1582,7 @@ console.log('\na2o / o2a: address and file offset');
         // for the warnings-only fixture, and must change nothing for the other
         // three. A strict flag that altered a file with no warnings would be
         // measuring something other than what it claims.
-        const gate = (p, extra = []) => run('audit.mjs', [p, ...extra]).code;
+        const gate = (p, extra = []) => run('audit', [p, ...extra]).code;
         check(gate(populated.path) === 0, 'audit: a sound file exits 0', `exit ${gate(populated.path)}`);
         check(gate(dmg2.path) === 1, 'audit: a file with errors exits 1', `exit ${gate(dmg2.path)}`);
         check(gate(bent2.path) === 1, 'audit: a bent fat container exits 1', `exit ${gate(bent2.path)}`);
@@ -1550,8 +1624,8 @@ console.log('\na2o / o2a: address and file offset');
         // file was reported as passing by one field and failing by another. The
         // gate follows the boolean, never the label.
         const lax = auditFn(newerBin.path);
-        const gateRun = run('audit.mjs', [newerBin.path]);
-        const strictRun = run('audit.mjs', [newerBin.path, '--strict']);
+        const gateRun = run('audit', [newerBin.path]);
+        const strictRun = run('audit', [newerBin.path, '--strict']);
         check(
           lax.verdict === 'warnings' && lax.clean === true && gateRun.code === 0,
           'audit: verdict "warnings" and clean:true both agree the default gate passes',
@@ -1595,7 +1669,7 @@ console.log('\na2o / o2a: address and file offset');
         );
 
         // --- the JSON door
-        const j = run('audit.mjs', ['--json', bent2.path]);
+        const j = run('audit', ['--json', bent2.path]);
         let env = null;
         try { env = JSON.parse(j.stdout); } catch { /* asserted below */ }
         check(
@@ -1610,7 +1684,7 @@ console.log('\na2o / o2a: address and file offset');
           'audit --json: counts and findings, each with a machine-readable kind and severity',
           JSON.stringify(env?.data?.counts),
         );
-        const jBad = run('audit.mjs', ['--json', '/nope']);
+        const jBad = run('audit', ['--json', '/nope']);
         let badEnv = null;
         try { badEnv = JSON.parse(jBad.stdout); } catch { /* asserted below */ }
         check(
@@ -1778,26 +1852,26 @@ console.log('\na2o / o2a: address and file offset');
         // unknown-flag case passed its flag list into a helper that silently dropped
         // it, ran a *valid* comparison, and reported the wrong exit code as a
         // failure of the tool rather than of the test.
-        const gate = (a, b, ...extra) => run('fingerprint.mjs', [a, b, ...extra]).code;
+        const gate = (a, b, ...extra) => run('fingerprint', [a, b, ...extra]).code;
         check(gate(rebuilt.path, rebuilt2.path) === 0, 'fingerprint: two builds of one program exit 0', `exit ${gate(rebuilt.path, rebuilt2.path)}`);
         check(gate(original.path, stringsBin.path) === 1, 'fingerprint: different programs exit 1');
         check(gate(rebuilt.path, '/nope') === 3, 'fingerprint: an unreadable file exits 3, not 1');
         check(gate(rebuilt.path, rebuilt2.path, ['--nope']) === 2, 'fingerprint: an unknown flag is a usage error');
         check(
-          run('fingerprint.mjs', [rebuilt.path, rebuilt2.path]).stdout.includes('rebuilt'),
+          run('fingerprint', [rebuilt.path, rebuilt2.path]).stdout.includes('rebuilt'),
           'fingerprint: the verdict says which question it settled',
         );
 
-        const one = run('fingerprint.mjs', [rebuilt.path]);
+        const one = run('fingerprint', [rebuilt.path]);
         check(one.code === 0 && /full/.test(one.stdout), 'fingerprint: one binary exits 0 and reports its tier');
-        const strippedOut = strippedBin ? run('fingerprint.mjs', [strippedBin.path, strippedBin.path]) : { stdout: '', code: 1 };
+        const strippedOut = strippedBin ? run('fingerprint', [strippedBin.path, strippedBin.path]) : { stdout: '', code: 1 };
         check(
           /structure-only/.test(strippedOut.stdout) && /rests on section and load-command shape/.test(strippedOut.stdout),
           'fingerprint: a stripped comparison discloses that the match is weaker',
           strippedOut.stdout.split('\n').filter((l) => /note:/.test(l)).join(' | ').slice(0, 90),
         );
 
-        const j = run('fingerprint.mjs', ['--json', rebuilt.path, rebuilt2.path]);
+        const j = run('fingerprint', ['--json', rebuilt.path, rebuilt2.path]);
         let env = null;
         try { env = JSON.parse(j.stdout); } catch { /* asserted below */ }
         check(
@@ -1969,24 +2043,24 @@ console.log('\na2o / o2a: address and file offset');
         );
 
         // --- the CLI
-        const gate = (a, b, ...extra) => run('diff.mjs', [a, b, ...extra]).code;
+        const gate = (a, b, ...extra) => run('diff', [a, b, ...extra]).code;
         check(gate(rebuilt.path, rebuilt.path) === 0, 'diff: identical files exit 0', `exit ${gate(rebuilt.path, rebuilt.path)}`);
         check(gate(rebuilt.path, rebuilt2.path) === 0, 'diff: a rebuilt pair exits 0 — the whole point', `exit ${gate(rebuilt.path, rebuilt2.path)}`);
         check(gate(rebuilt.path, meta.path) === 1, 'diff: different programs exit 1', `exit ${gate(rebuilt.path, meta.path)}`);
         // Not through `gate`: that helper always supplies two paths, so calling it
         // with one left `undefined` as a second positional — two arguments, the
         // second unreadable, exit 3. The tool was right and the test was wrong.
-        check(run('diff.mjs', [rebuilt.path]).code === 2, 'diff: one argument is a usage error', `exit ${run('diff.mjs', [rebuilt.path]).code}`);
+        check(run('diff', [rebuilt.path]).code === 2, 'diff: one argument is a usage error', `exit ${run('diff', [rebuilt.path]).code}`);
         check(gate(rebuilt.path, rebuilt2.path, '/nope', 'extra') === 2, 'diff: three arguments is a usage error');
         check(gate(rebuilt.path, '/nope') === 3, 'diff: an unreadable file exits 3, not 1', `exit ${gate(rebuilt.path, '/nope')}`);
         check(gate(rebuilt.path, rebuilt2.path, ['--nope']) === 2, 'diff: an unknown flag is a usage error');
 
-        const out = run('diff.mjs', [rebuilt.path, rebuilt2.path]);
+        const out = run('diff', [rebuilt.path, rebuilt2.path]);
         check(
           /no structural differences/.test(out.stdout) && /build metadata/.test(out.stdout),
           'diff: a clean diff says both things — nothing structural, and what did change',
         );
-        const j = run('diff.mjs', ['--json', rebuilt.path, rebuilt2.path]);
+        const j = run('diff', ['--json', rebuilt.path, rebuilt2.path]);
         let env = null;
         try { env = JSON.parse(j.stdout); } catch { /* asserted below */ }
         check(
@@ -1997,7 +2071,7 @@ console.log('\na2o / o2a: address and file offset');
 
         // And it must work on real binaries, not only fixtures.
         if (fs.existsSync('/bin/ls')) {
-          const real = run('diff.mjs', ['/bin/ls', '/bin/ls']);
+          const real = run('diff', ['/bin/ls', '/bin/ls']);
           check(real.code === 0, 'diff: a real universal binary against itself reports no differences', `exit ${real.code}`);
         }
       }
@@ -2108,7 +2182,7 @@ console.log('\na2o / o2a: address and file offset');
       // --- the CLI, and the three-way exit
       const corpusDir = binaries.length ? path.dirname(binaries[0].path) : null;
       if (corpusDir) {
-        const gate = (...args) => run('sym.mjs', args).code;
+        const gate = (...args) => run('sym', args).code;
         check(gate('target_fn', '--in', corpusDir) === 0, 'corpus CLI: a matching corpus exits 0', `exit ${gate('target_fn', '--in', corpusDir)}`);
         check(gate('zzz-no-such-symbol', '--in', corpusDir) === 1, 'corpus CLI: a corpus with no match exits 1');
         check(gate('x', '--in', '/nope/not/here') === 3, 'corpus CLI: nothing readable exits 3, not 1', `exit ${gate('x', '--in', '/nope/not/here')}`);
@@ -2122,8 +2196,8 @@ console.log('\na2o / o2a: address and file offset');
 
         // Envelope parity: the same door, whatever the scale. A consumer should not
         // have to branch on how many files it asked about.
-        const one = run('sym.mjs', ['--json', 'target_fn', '-b', binaries[0].path]);
-        const many = run('sym.mjs', ['--json', 'target_fn', '--in', corpusDir]);
+        const one = run('sym', ['--json', 'target_fn', '-b', binaries[0].path]);
+        const many = run('sym', ['--json', 'target_fn', '--in', corpusDir]);
         const ej = JSON.parse(many.stdout);
         const eo = one.stdout.trim() ? JSON.parse(one.stdout) : null;
         check(
@@ -2141,7 +2215,7 @@ console.log('\na2o / o2a: address and file offset');
           'corpus CLI: --json carries data.files[] and the looked/skipped/unreadable split',
         );
         check(
-          /non-Mach-O skipped/.test(run('sym.mjs', ['target_fn', '--in', corpusDir]).stdout),
+          /non-Mach-O skipped/.test(run('sym', ['target_fn', '--in', corpusDir]).stdout),
           'corpus CLI: the text output accounts for every file it walked',
         );
       }
@@ -2232,7 +2306,7 @@ console.log('\na2o / o2a: address and file offset');
     if (!target) {
       skip('a lone binary path', 'the populated fixture is missing — run npm run test:fixtures');
     } else {
-      const lone = run('sym.mjs', [target.path]);
+      const lone = run('sym', [target.path]);
 
       check(
         lone.code === 2,
@@ -2252,7 +2326,7 @@ console.log('\na2o / o2a: address and file offset');
 
       // The JSON door has to behave, or a caller piping `--json` parses prose to
       // learn the invocation was wrong. It already does this for `bad-pattern`.
-      const loneJson = run('sym.mjs', ['--json', target.path]);
+      const loneJson = run('sym', ['--json', target.path]);
       let env = null;
       try { env = JSON.parse(loneJson.stdout); } catch { /* asserted below */ }
       check(
@@ -2270,7 +2344,7 @@ console.log('\na2o / o2a: address and file offset');
       // the cases where a lone path is genuinely the pattern.
       const notMachO = path.join(os.tmpdir(), 'macho-smoke-not-a-binary.txt');
       fs.writeFileSync(notMachO, 'this is not a Mach-O\n');
-      const asPattern = run('sym.mjs', ['--json', notMachO, target.path]);
+      const asPattern = run('sym', ['--json', notMachO, target.path]);
       let patEnv = null;
       try { patEnv = JSON.parse(asPattern.stdout); } catch { /* asserted below */ }
       check(
@@ -2279,7 +2353,7 @@ console.log('\na2o / o2a: address and file offset');
         patEnv?.data?.pattern ?? asPattern.stdout.slice(0, 100),
       );
 
-      const missing = run('sym.mjs', ['--json', '/no/such/path/anywhere', target.path]);
+      const missing = run('sym', ['--json', '/no/such/path/anywhere', target.path]);
       let missEnv = null;
       try { missEnv = JSON.parse(missing.stdout); } catch { /* asserted below */ }
       check(
@@ -2289,13 +2363,13 @@ console.log('\na2o / o2a: address and file offset');
       );
 
       // And the commands this must not break.
-      const both = run('sym.mjs', ['--json', 'pop_0', target.path]);
+      const both = run('sym', ['--json', 'pop_0', target.path]);
       check(
         both.code === 0 && JSON.parse(both.stdout).data.count > 0,
         'sym: pattern-then-binary still searches that binary',
         `exit ${both.code}`,
       );
-      const viaFlag = run('sym.mjs', ['--json', 'pop_0', '-b', target.path]);
+      const viaFlag = run('sym', ['--json', 'pop_0', '-b', target.path]);
       check(
         viaFlag.code === 0 && JSON.parse(viaFlag.stdout).data.count > 0,
         'sym: and -b still does too',
@@ -2304,13 +2378,13 @@ console.log('\na2o / o2a: address and file offset');
 
       // The tools that must NOT gain this check, because a literal that happens
       // to be a real file is a legitimate search and not a mistake.
-      const lit = run('findliteral.mjs', ['--json', notMachO, target.path]);
+      const lit = run('findliteral', ['--json', notMachO, target.path]);
       check(
         lit.code !== 2 || !/names a Mach-O/.test(lit.stderr),
         'findliteral: a literal that is also a real file is not refused as a binary',
         `exit ${lit.code}`,
       );
-      const call = run('findcall.mjs', ['--json', target.path]);
+      const call = run('findcall', ['--json', target.path]);
       check(
         call.code === 2 && !/names a Mach-O/.test(call.stderr),
         'findcall: a non-address first argument is refused on its own terms, not this rule',
@@ -2330,13 +2404,13 @@ console.log('\na2o / o2a: address and file offset');
     const ignored = [];
     const stillWorks = [];
     for (const t of TOOLS) {
-      const r = run(`${t}.mjs`, ['--definitely-not-a-flag', '--json']);
+      const r = run(t, ['--definitely-not-a-flag', '--json']);
       if (r.code !== 2) ignored.push(`${t}: exit ${r.code}`);
       if (!/unknown flag/.test(r.stderr)) ignored.push(`${t}: said ${JSON.stringify(r.stderr.slice(0, 60))}`);
     }
     check(ignored.length === 0, 'every tool rejects an unrecognised flag with exit 2', ignored.join('; '));
 
-    const typo = run('sym.mjs', ['--regexx', 'pop', st ? st.path : '--json']);
+    const typo = run('sym', ['--regexx', 'pop', st ? st.path : '--json']);
     check(
       typo.code === 2 && /did you mean --regex/.test(typo.stderr),
       'a near-miss flag is corrected by name, not just refused',
@@ -2348,19 +2422,19 @@ console.log('\na2o / o2a: address and file offset');
     const bin = binaries.find((b) => b.stem === 'populated')?.path;
     if (bin) {
       const invocations = [
-        ['describe.mjs', ['--sections', '--segments', '--loads', bin]],
-        ['sym.mjs', ['--regex', '--case-sensitive', '--all-imp', '--no-dedupe', 'pop', bin]],
-        ['symlookup.mjs', ['--arch=x86_64', '0x100000120', '-b', bin]],
-        ['findcall.mjs', ['--list', '--include-data', bin]],
-        ['findcall.mjs', ['--include-data', '0x100000220', bin]],
-        ['mapliteral.mjs', ['pop', bin]],
-        ['a2o.mjs', ['--arch=x86_64', '0x100000120', '-b', bin]],
-        ['o2a.mjs', ['0x120', '-b', bin]],
-        ['findliteral.mjs', ['--text', 'pop', bin]],
-        ['findliteral.mjs', ['--arch=x86_64', '--strings', '--min=4', bin]],
-        ['disasm.mjs', ['--json', '0x100000120', bin, '8']],
-        ['disasm.mjs', ['--arch=x86_64', '--branches', '--count=4', bin]],
-        ['disasm.mjs', ['--bytes=32', '--count=0', '-b', bin]],
+        ['describe', ['--sections', '--segments', '--loads', bin]],
+        ['sym', ['--regex', '--case-sensitive', '--all-imp', '--no-dedupe', 'pop', bin]],
+        ['symlookup', ['--arch=x86_64', '0x100000120', '-b', bin]],
+        ['findcall', ['--list', '--include-data', bin]],
+        ['findcall', ['--include-data', '0x100000220', bin]],
+        ['mapliteral', ['pop', bin]],
+        ['a2o', ['--arch=x86_64', '0x100000120', '-b', bin]],
+        ['o2a', ['0x120', '-b', bin]],
+        ['findliteral', ['--text', 'pop', bin]],
+        ['findliteral', ['--arch=x86_64', '--strings', '--min=4', bin]],
+        ['disasm', ['--json', '0x100000120', bin, '8']],
+        ['disasm', ['--arch=x86_64', '--branches', '--count=4', bin]],
+        ['disasm', ['--bytes=32', '--count=0', '-b', bin]],
       ];
       for (const [tool, args] of invocations) {
         const r = run(tool, args);
@@ -2385,7 +2459,7 @@ console.log('\na2o / o2a: address and file offset');
     const bad = [];
     for (const t of TOOLS) {
       for (const flag of ['--help', '-h']) {
-        const r = run(`${t}.mjs`, [flag]);
+        const r = run(t, [flag]);
         if (r.code !== 0 || !/usage/.test(r.stdout + r.stderr)) {
           bad.push(`${t} ${flag}: exit ${r.code}`);
         }
@@ -2451,11 +2525,11 @@ console.log('\nexit status: the same answer with and without --json');
   // expected values: a parity check fails for *any* tool that drifts, including
   // one added later, which a list of four literals would not.
   const NEGATIVE = [
-    ['sym.mjs', ['zzq-no-such-symbol-zzq'], 'a pattern matching nothing'],
-    ['mapliteral.mjs', ['zzq-no-such-literal-zzq'], 'a literal that is absent'],
-    ['findliteral.mjs', ['zzq-no-such-literal-zzq'], 'an absent literal'],
-    ['findcall.mjs', ['0xdeadbeef00'], 'a target no slice maps'],
-    ['symlookup.mjs', ['0xdeadbeef00'], 'an address outside every slice'],
+    ['sym', ['zzq-no-such-symbol-zzq'], 'a pattern matching nothing'],
+    ['mapliteral', ['zzq-no-such-literal-zzq'], 'a literal that is absent'],
+    ['findliteral', ['zzq-no-such-literal-zzq'], 'an absent literal'],
+    ['findcall', ['0xdeadbeef00'], 'a target no slice maps'],
+    ['symlookup', ['0xdeadbeef00'], 'an address outside every slice'],
   ];
 
   for (const [tool, args, what] of NEGATIVE) {
@@ -2470,8 +2544,8 @@ console.log('\nexit status: the same answer with and without --json');
 
   // And the positive side, so the parity check above cannot be satisfied by a
   // tool that simply always exits 1.
-  const hit = run('sym.mjs', ['-b', probe.path, '__mh_execute_header'], { timeout: 180000 });
-  const hitJson = run('sym.mjs', ['--json', '-b', probe.path, '__mh_execute_header'], { timeout: 180000 });
+  const hit = run('sym', ['-b', probe.path, '__mh_execute_header'], { timeout: 180000 });
+  const hitJson = run('sym', ['--json', '-b', probe.path, '__mh_execute_header'], { timeout: 180000 });
   check(
     hit.code === 0 && hitJson.code === 0 && /match/.test(hit.stdout),
     'sym: a pattern that matches exits 0 in both modes',
@@ -2729,7 +2803,7 @@ console.log('\nfindcall: typed vs untyped');
     );
 
     // The same distinction, through the CLI, where a reader actually sees it.
-    const cli = run('findcall.mjs', ['--json', '0x' + target.toString(16), decoy.path], { timeout: 120000 });
+    const cli = run('findcall', ['--json', '0x' + target.toString(16), decoy.path], { timeout: 120000 });
     let cliParsed = null;
     try { cliParsed = JSON.parse(cli.stdout); } catch { /* reported below */ }
     check(
@@ -2834,7 +2908,7 @@ for (const b of binaries) {
   // 1. The negative path the import bug lived on: a low address must not be
   //    attributed to a function, and above all not to one at 0x0.
   {
-    const r = run('symlookup.mjs', ['0x10'], { env });
+    const r = run('symlookup', ['0x10'], { env });
     const claimed = /function\s*:/m.test(r.stdout);
     check(!claimed, 'symlookup: a low vaddr is not attributed to a function',
       claimed ? (r.stdout.match(/function.*/) || [''])[0]
@@ -2848,7 +2922,7 @@ for (const b of binaries) {
     skip('symlookup round-trip', 'no defined symbol with a non-zero address');
   } else {
     const addr = '0x' + b.facts.firstAddr.toString(16);
-    const r = run('symlookup.mjs', [addr], { env });
+    const r = run('symlookup', [addr], { env });
     check(/offset into function: 0x0\b/.test(r.stdout), `symlookup: ${addr} resolves at offset 0`,
       /offset into function: 0x0\b/.test(r.stdout) ? b.facts.firstName
                                                    : (r.stdout.match(/function.*/) || [''])[0]);
@@ -2860,7 +2934,7 @@ for (const b of binaries) {
     skip('findcall', 'no __text section with content');
   } else {
     const target = '0x' + b.facts.textAddr.toString(16);
-    const r = run('findcall.mjs', [target, b.path], { timeout: 90000 });
+    const r = run('findcall', [target, b.path], { timeout: 90000 });
     check(!r.timedOut, 'findcall: terminates (no non-advancing loop)', r.timedOut ? 'exceeded 90s' : `${(r.ms / 1000).toFixed(1)}s`);
     const enc = (r.stdout.match(/\[(x86 rel32|arm64 BL)\]/) || [])[1];
     check(Boolean(enc), 'findcall: reports the encoding it used', enc || 'no encoding line');
@@ -2876,12 +2950,12 @@ for (const b of binaries) {
   //    outcomes without crashing. Exit 1 for "no match" is now the documented
   //    contract, so both outcomes are asserted rather than only the happy one.
   {
-    const hit = run('findliteral.mjs', ['LZ4', b.path], { timeout: 180000 });
+    const hit = run('findliteral', ['LZ4', b.path], { timeout: 180000 });
     check(hit.code === 0 || hit.code === 1, 'findliteral: a literal search exits 0 or 1',
       hit.code <= 1 ? (hit.stdout.match(/occurrence\(s\) of .*/) || [''])[0] : `exit ${hit.code}`);
-    const none = run('findliteral.mjs', ['zzq-no-such-literal-zzq', b.path], { timeout: 180000 });
+    const none = run('findliteral', ['zzq-no-such-literal-zzq', b.path], { timeout: 180000 });
     check(none.code === 1, 'findliteral: no match exits 1, a distinct negative result', `exit ${none.code}`);
-    const usage = run('findliteral.mjs', []);
+    const usage = run('findliteral', []);
     check(usage.code === 2, 'findliteral: a missing argument is a usage error', `exit ${usage.code}`);
   }
 }
@@ -2906,7 +2980,7 @@ for (const b of binaries) {
   } else {
     let proved = null;
     for (const b of populated) {
-      const list = run('findcall.mjs', ['--list', b.path, '5'], { timeout: 180000 });
+      const list = run('findcall', ['--list', b.path, '5'], { timeout: 180000 });
       const n = Number((list.stdout.match(/^(\d+) distinct direct call/m) || [])[1] || 0);
       if (n === 0) continue;
       const top = (list.stdout.match(/^\s*0x([0-9a-f]+)\s+\d+ site/m) || [])[1];
@@ -2914,9 +2988,9 @@ for (const b of binaries) {
       const enc = ((list.stderr + list.stdout).match(/\[(x86 rel32|arm64 BL)\]/) || [])[1];
       // Cross-check: the symbol reader must agree this is a real function, and
       // asking for its callers must return the count --list reported.
-      const sym = run('symlookup.mjs', ['0x' + top], { env: { MACHO_EXPLORER_BINARY: b.path } });
+      const sym = run('symlookup', ['0x' + top], { env: { MACHO_EXPLORER_BINARY: b.path } });
       const fn = (sym.stdout.match(/function\s*:\s*(\S+)/) || [])[1];
-      const back = run('findcall.mjs', ['0x' + top, b.path], { timeout: 180000 });
+      const back = run('findcall', ['0x' + top, b.path], { timeout: 180000 });
       const backN = Number((back.stdout.match(/^(\d+) direct call/m) || [])[1] || 0);
       proved = { b, n, top, enc, fn, backN };
       break;
@@ -2978,7 +3052,7 @@ for (const b of binaries) {
 
   /** Decode `count` instructions at `addr` in `p`, via the JSON envelope. */
   function decodeAt(p, addr, n, extra = []) {
-    const r = run('disasm.mjs', ['--json', '0x' + addr.toString(16), p, String(n), ...extra], { timeout: 180000 });
+    const r = run('disasm', ['--json', '0x' + addr.toString(16), p, String(n), ...extra], { timeout: 180000 });
     let data = null;
     try { data = JSON.parse(r.stdout); } catch { /* reported by the caller's own check */ }
     return { ...r, data };
@@ -3133,7 +3207,7 @@ for (const b of binaries) {
   {
     const target = generated.find((x) => x.stem === 'populated') || binaries[0];
 
-    const unknown = run('disasm.mjs', ['--arch=ppc64', target.path, '--json']);
+    const unknown = run('disasm', ['--arch=ppc64', target.path, '--json']);
     let uerr = null;
     try { uerr = JSON.parse(unknown.stdout).errors; } catch { /* below */ }
     check(
@@ -3142,7 +3216,7 @@ for (const b of binaries) {
       `exit ${unknown.code}, errors ${JSON.stringify(uerr)}`,
     );
 
-    const outside = run('disasm.mjs', ['--json', '0xdeadbeef', target.path]);
+    const outside = run('disasm', ['--json', '0xdeadbeef', target.path]);
     let oerr = null;
     try { oerr = JSON.parse(outside.stdout).errors; } catch { /* below */ }
     check(
@@ -3151,7 +3225,7 @@ for (const b of binaries) {
       `exit ${outside.code}, errors ${JSON.stringify(oerr)}`,
     );
 
-    const typo = run('disasm.mjs', ['--json', target.path, '--brachs']);
+    const typo = run('disasm', ['--json', target.path, '--brachs']);
     check(
       typo.code === 2,
       'disasm: an unknown flag is a usage error',
@@ -3275,8 +3349,7 @@ console.log('\noverview (one call, one slice, and a stated gap list):');
     ['export trie', 'Code signing, fixups'],
     ['Objective-C and Swift metadata', 'Parse ObjC/Swift metadata'],
     ['dSYM and DWARF', 'Read dSYM / DWARF'],
-    ['FAT32', 'no FAT32'],
-    ['LC_LOAD_DYLIB', 'LC_LOAD_DYLIB'],
+    ['FAT32', 'FAT64 containers'],
     ['disassembly', 'Disassemble to text'],
   ];
   const undocumentedIn = (list) => list.filter((n) =>
@@ -3377,7 +3450,7 @@ console.log('\noverview (one call, one slice, and a stated gap list):');
   // The flag surface, because `--max=abc` quietly falling back to the default
   // would answer a different question than the one asked — the defect `--regexx`
   // used to be, and the reason every tool refuses unknown flags.
-  const badMax = run('overview.mjs', ['--max=abc', uni.path]);
+  const badMax = run('overview', ['--max=abc', uni.path]);
   check(
     badMax.code === 2 && /--max must be/.test(badMax.stderr),
     'overview(): a non-numeric --max is a usage error, not a silent default',
@@ -3390,7 +3463,7 @@ console.log('\noverview (one call, one slice, and a stated gap list):');
     ['--compact', '--json', uni.path],
     ['--arch=x86_64', uni.path],
   ];
-  const rejected = documented.filter(([flag, ...rest]) => run('overview.mjs', [flag, ...rest]).code === 2);
+  const rejected = documented.filter(([flag, ...rest]) => run('overview', [flag, ...rest]).code === 2);
   check(
     rejected.length === 0,
     'overview(): every documented flag combination is accepted',

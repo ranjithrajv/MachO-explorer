@@ -2,8 +2,8 @@
 /**
  * o2a.mjs — which virtual address does this byte of the file have?
  *
- *   node src/o2a.mjs <offset> [<offset> ...] [--json] [--arch=<name>]
- *   node src/o2a.mjs 0x1000 -b /path/to/binary
+ *   macho-explorer o2a <offset> [<offset> ...] [--json] [--arch=<name>]
+ *   macho-explorer o2a 0x1000 -b /path/to/binary
  *
  * The inverse of `a2o`. Offsets are accepted in hex with an `0x` prefix or in
  * decimal, and every positional is an offset — the binary comes from `-b`, for
@@ -34,12 +34,12 @@
  */
 import { requireBinary } from './target.mjs';
 import { offsetToAddress } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: node src/o2a.mjs <offset> [<offset> ...] [--json] [--arch=<name>] [-b <binary>]',
+  'usage: macho-explorer o2a <offset> [<offset> ...] [--json] [--arch=<name>] [-b <binary>]',
   '',
   '  offsets are 0x-prefixed hex or decimal; every positional is an offset,',
   '  so the binary comes from -b/--binary, $MACHO_EXPLORER_BINARY or $MACHO_EXPLORER_APP.',
@@ -47,6 +47,10 @@ const HELP = [
   'options:',
   '  --arch=<name>      read one architecture (x86_64, arm64, arm64e, arm64_32, ppc, ppc64, arm, i386)',
   '  -b, --binary <p>   the binary to read',
+  '  -q, --quiet        suppress non-essential output',
+  '  --color            force color output',
+  '  --no-color         disable color output',
+  '  -v, --verbose      diagnostic output',
   '  --json             one JSON object on stdout; prose to stderr',
   '  -h, --help         this message',
 ];

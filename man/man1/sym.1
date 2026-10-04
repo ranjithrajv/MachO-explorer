@@ -1,7 +1,8 @@
-.TH SYM 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
+.TH MACHO-EXPLORER 1 "October 2, 2026" "MachO-explorer 0.1.0" "User Commands"
 .SH NAME
-sym \- search a Mach\-O symbol table
+macho-explorer \- Mach\-O binary introspection
 .SH SYNOPSIS
+.B macho-explorer
 .B sym
 .I pattern
 .RI [ binary | bundle ]
@@ -109,7 +110,7 @@ Find a symbol by substring:
 .PP
 .RS
 .nf
-sym runtime.main /usr/local/go/bin/go
+macho-explorer sym runtime.main /usr/local/go/bin/go
 .fi
 .RE
 .PP
@@ -117,7 +118,7 @@ Search with a regular expression:
 .PP
 .RS
 .nf
-sym \-\-regex 'runtime\..*main' /usr/local/go/bin/go
+macho-explorer sym \-\-regex 'runtime\..*main' /usr/local/go/bin/go
 .fi
 .RE
 .PP
@@ -125,7 +126,7 @@ Count matches without reading the human\-readable report:
 .PP
 .RS
 .nf
-sym \-\-json compress /usr/bin/ssh | jq '.count'
+macho-explorer sym \-\-json compress /usr/bin/ssh | jq '.count'
 .fi
 .RE
 .PP
@@ -133,7 +134,7 @@ Include imported names, one row per entry:
 .PP
 .RS
 .nf
-sym \-\-all\-imp \-\-no\-dedupe memcpy /usr/bin/ssh
+macho-explorer sym \-\-all\-imp \-\-no\-dedupe memcpy /usr/bin/ssh
 .fi
 .RE
 .SH NOTES
