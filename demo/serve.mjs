@@ -33,7 +33,10 @@ const TYPES = {
 
 http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
-  const rel = url === '/' ? '/demo/index.html' : url;
+  // `/` and any directory path serve their index.html, so `/demo/` works as
+  // typed rather than 404ing on a directory the reader cannot read as a file.
+  let rel = url === '/' ? '/demo/index.html' : url;
+  if (rel.endsWith('/')) rel += 'index.html';
   // Resolve inside ROOT only: `..` in a URL must not read the filesystem above it.
   const full = path.resolve(ROOT, '.' + rel);
   if (!full.startsWith(ROOT + path.sep) && full !== ROOT) {

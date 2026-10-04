@@ -30,6 +30,29 @@ reads a Mach-O **in the tab**, with the bytes never leaving the machine, and
 `test/browser.mjs` proves it produces byte-for-byte the same answers as the Node
 build on every fixture.
 
+## Run it anywhere
+
+One reader, every platform. The same Mach-O analysis runs on a forensic
+workstation, a CI runner, a laptop, or a phone — no dependencies, no build step,
+no network, no install.
+
+| Platform | How | Use case |
+|---|---|---|
+| **macOS** | Native CLI | Full analysis on the same platform as the binaries |
+| **Linux** | Native CLI | Forensic workstations, CI/CD pipelines, air-gapped environments |
+| **Windows** | Native CLI | Enterprise environments, Windows-based analysis labs |
+| **Android** | Browser demo or Termux | Field triage — drop a binary, get answers, bytes never leave the device |
+| **iOS** | Browser demo | On-device analysis — no upload, no install, no jailbreak |
+
+The browser demo makes it universal: any device with a modern browser can
+analyze a Mach-O binary **client-side**. The file never leaves the device —
+there is no server, no upload, no cloud. For forensic teams, that means
+sensitive binaries can be triaged on-site without network exposure.
+
+On Android, the full CLI runs under [Termux](https://termux.dev), giving you
+the complete toolset — `describe`, `sym`, `findcall`, `diff`, `audit`, and
+every other subcommand — in your pocket.
+
 ## Quick start
 
 ```sh
