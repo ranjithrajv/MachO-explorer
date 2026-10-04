@@ -193,13 +193,21 @@ try {
     notes.push('direct calls only — an indirect call or a PLT stub will not appear here');
   }
 
+  // "Found nothing" and "could not look" must not share a reason code. On an
+  // encrypted binary the scan genuinely did not run, so `no-call-sites` would
+  // report the absence of an answer as the answer — the conflation this
+  // package's exit codes exist to prevent, and the one a caller is least able
+  // to detect on its own.
+  const reason = r.hits.length > 0 ? null : (r.unreadable ? 'encrypted' : 'no-call-sites');
+  const exit = r.hits.length > 0 ? EXIT.ok : (r.unreadable ? EXIT.fail : EXIT.empty);
+
   if (json) {
     emitJSON({
       tool: 'findcall', binary, ok: r.hits.length > 0,
-      errors: r.hits.length ? [] : ['no-call-sites'],
+      errors: reason ? [reason] : [],
       notes,
       data: { ...r, mode: 'callers' },
-    }, r.hits.length ? EXIT.ok : EXIT.empty);
+    }, exit);
   }
 
   for (const s of r.slices) {

@@ -791,6 +791,83 @@ console.log('\nmcp: the protocol\n');
   }
 }
 
+// The iOS facts, over the wire.
+//
+// The point is not the protocol — it is that a model asking "is this an iOS
+// binary and can I read it" gets an answer rather than an empty list. Before
+// this, `macho-describe` on an iPhone binary returned a slice with no platform
+// and no encryption flag, and `macho-findcall` returned `ok: true` with zero
+// hits: a confident "nothing calls this" about code that is ciphertext.
+{
+  const ios = fs.existsSync(path.join(FIXTURES, 'ios.macho'))
+    ? path.join(FIXTURES, 'ios.macho')
+    : null;
+  if (!ios) {
+    skip('iOS binaries over MCP', 'the ios fixture is missing — run npm run test:fixtures');
+  } else {
+    const { out } = await session([
+      { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'macho-describe', arguments: { binary: ios }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'macho-findcall', arguments: { binary: ios, target: '0x100000250' }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'macho-findliteral', arguments: { binary: ios, literal: 'ios-fixture-alpha' }, _meta: meta() } },
+      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'macho-symlookup', arguments: { binary: ios, addresses: ['0x100000250'] }, _meta: meta() } },
+    ], { expectLines: 4 });
+    const { msgs } = parseStream(out);
+    const d = byId(msgs, 1)?.result;
+    const s = d?.structuredContent?.data?.slices?.[0];
+
+    check(
+      s?.arch === 'arm64e',
+      'over MCP: arm64e reaches the client as arm64e, not arm64',
+      `got ${s?.arch}`,
+    );
+    check(
+      s?.platformName === 'ios' && s?.filetypeName === 'MH_EXECUTE',
+      'over MCP: the platform and filetype reach the client',
+      `${s?.platformName} ${s?.filetypeName}`,
+    );
+    check(
+      s?.encrypted === true && s?.cryptid === 1,
+      'over MCP: an App Store binary is reported as encrypted',
+      `encrypted=${s?.encrypted} cryptid=${s?.cryptid}`,
+    );
+    check(
+      (d?.content?.[0]?.text || '').includes('ENCRYPTED'),
+      'over MCP: and the text block warns, so a model reading prose is not misled either',
+      (d?.content?.[0]?.text || '').split('\n').find((l) => l.includes('ENCRYPTED'))?.slice(0, 90),
+    );
+
+    // The scan that would otherwise be a silent zero. `isError` is the point:
+    // a model must not read "0 call sites" as an answer.
+    const fc = byId(msgs, 2)?.result;
+    check(
+      fc?.isError === true,
+      'over MCP: findcall on an encrypted slice is an error, not an empty success',
+      `isError=${fc?.isError}, ok=${fc?.structuredContent?.ok}`,
+    );
+    check(
+      fc?.structuredContent?.errors?.includes('encrypted'),
+      'over MCP: with a reason code that says "could not look", not "found nothing"',
+      JSON.stringify(fc?.structuredContent?.errors),
+    );
+
+    const fl = byId(msgs, 3)?.result;
+    check(
+      fl?.isError === true && fl?.structuredContent?.errors?.includes('encrypted'),
+      'over MCP: findliteral over ciphertext is likewise an error, not a miss',
+      `isError=${fl?.isError} errors=${JSON.stringify(fl?.structuredContent?.errors)}`,
+    );
+
+    // And the asymmetry that makes the fixture realistic: names still resolve,
+    // because the symbol table is not encrypted even though the code is.
+    const sl = byId(msgs, 4)?.result;
+    check(
+      sl?.structuredContent?.data?.queries?.[0]?.function === 'target_fn',
+      'over MCP: symlookup still resolves names on an encrypted binary',
+      JSON.stringify(sl?.structuredContent?.data?.queries?.[0]?.function),
+    );
+  }
+}
+
 // The UUID, over the wire.
 //
 // Same reason as the 32-bit block above: the protocol is not what is under test,

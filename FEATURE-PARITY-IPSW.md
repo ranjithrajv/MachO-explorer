@@ -531,7 +531,7 @@ should be read as "we caught up on directories and did not catch up on images."
 And MachO-explorer is still **not published**.
 
 That last one is the row that matters, and it has not changed. `npm view
-macho-tools` returns E404. The name is now valid and `test/publish.mjs` asserts the
+macho-explorer` returns E404. The name is now valid and `test/publish.mjs` asserts the
 property in CI, so this is the last blocker rather than a permanent one — but every
 row in this document is worth nothing until it clears.
 
@@ -675,7 +675,7 @@ and now drives six LLM providers for decompilation, and Hopper and Binary Ninja 
 servers, so this is table stakes. **Zero footprint is a real consequence of one
 file and zero dependencies, and `ipsw` is now an 80 MiB binary** — that gap widened
 while we were not looking. And **none of it counts while the package is
-unpublished**: `npm view macho-tools` still returns E404, which is worth more than
+unpublished**: `npm view macho-explorer` still returns E404, which is worth more than
 every row in this document combined.
 
 The row worth defending loudest is still `findcall`, because `ipsw` has no

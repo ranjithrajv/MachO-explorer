@@ -115,6 +115,10 @@ if (flags.has('json')) {
 console.log(`${binary} — ${(r.size / 1048576).toFixed(1)} MB, ${r.fat ? 'universal' : 'thin'}, ${r.slices.length} slice(s)\n`);
 for (const s of r.slices) {
   const text = s.textAddr !== null ? ` __text 0x${s.textAddr.toString(16)}+${count(s.textSize)}` : '';
+  // The platform and filetype go on the summary line because they are what the
+  // file *is*: an iOS app and a macOS tool otherwise print identical lines, and
+  // "which am I holding" is the first question a Mach-O raises.
+  const what = [s.platformName, s.filetypeName].filter(Boolean).join(' ');
   console.log(
     `  ${s.arch.padEnd(8)} file ${s.offset}..${s.offset + s.size}` +
       `  ${s.bits || '?'}-bit` +
@@ -125,9 +129,20 @@ for (const s of r.slices) {
       // "this is not a filetype I know" and "this file does not say" differ.
       `  ${s.filetype?.name ?? (s.filetype ? `filetype ${s.filetype.raw}` : 'filetype ?')}` +
       `  ${s.buildVersion?.platform ?? 'platform ?'}` +
+      (what ? `  ${what}` : '') +
       `  ${count(s.defined)} defined / ${count(s.nsyms)} symbols` +
       `  ${s.codeSections} code section(s)${text}`,
   );
+  // Stated as a warning rather than as another field, because it changes what
+  // every other line means: on an encrypted slice the addresses are real and the
+  // bytes behind them are ciphertext.
+  if (s.encrypted) {
+    console.log(
+      `           ENCRYPTED (cryptid=${s.cryptid}) — __TEXT is ciphertext, an App Store build;` +
+        ` findcall, findliteral and --strings cannot read it`,
+    );
+  }
+  if (s.minos) console.log(`           minos ${s.minos}  sdk ${s.sdk}`);
   // The UUID identifies a *build*, which is the one thing a describe tool is
   // uniquely placed to answer: two binaries with identical sizes and symbol
   // counts can still be different builds, and this is what tells them apart.

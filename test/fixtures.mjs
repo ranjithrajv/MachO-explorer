@@ -93,6 +93,10 @@ const LC_LOAD_WEAK_DYLIB = 0x80000018;
 const LC_REEXPORT_DYLIB = 0x8000001f;
 const LC_LAZY_LOAD_DYLIB = 0x20;
 const LC_LOAD_UPWARD_DYLIB = 0x80000023;
+// `0x2c` is `LC_ENCRYPTION_INFO_64`; `0x2d` is `LC_LINKER_OPTION`. The merged
+// branch had `0x2d` here, which made the "encrypted" fixture declare a linker
+// option instead — so every ciphertext assertion passed vacuously.
+const LC_ENCRYPTION_INFO_64 = 0x2c;
 const LC_BUILD_VERSION = 0x32;
 // Transcribed from `<mach-o/loader.h>` in the installed SDK rather than recalled,
 // because the numbering changed in 2017 and the old values are the ones that come
@@ -101,6 +105,12 @@ const PLATFORM_MACOS = 1;
 const PLATFORM_IOS = 2;
 const PLATFORM_IOSSIMULATOR = 7;
 const PLATFORM_VISIONOS = 11;
+
+/** `X.Y.Z` -> the `xxxx.yy.zz` nibble packing `minos`/`sdk` use. */
+function packVersion(v) {
+  const [maj, min, pat] = String(v).split('.').map(Number);
+  return ((maj & 0xffff) << 16) | ((min & 0xff) << 8) | (pat & 0xff);
+}
 
 /**
  * Header `flags` bits, for the fixture that exercises flag decoding.
@@ -234,14 +244,14 @@ const textVaddr = (textOffset, base = VMADDR_BASE) => base + BigInt(textOffset);
  * 180,760 bytes of a real binary, and offset 0x1000 — the first byte of `__text`
  * — comes back as being inside `__bss`.
  */
-function thinMachO({ cputype, cpusubtype = 3, text, data, dataFlags = S_REGULAR, symbols, textFlags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS, zerofill = null, bits = 64, base = VMADDR_BASE, uuid = null, flags = DEFAULT_MH_FLAGS, extraCommands = [] }) {
+function thinMachO({ cputype, cpusubtype = 3, text, data, dataFlags = S_REGULAR, symbols, textFlags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS, zerofill = null, bits = 64, base = VMADDR_BASE, uuid = null, flags = DEFAULT_MH_FLAGS, platform = null, encryption = null, extraCommands = [] }) {
   const segname = '__TEXT';
   const is64 = bits === 64;
   const nsects = zerofill ? 3 : 2;
   // Every appended command counts towards `ncmds`, which is the count the reader
   // uses to decide how far to walk. Understating it would make the walk stop early
   // and silently drop the commands after the gap — so it is derived, never restated.
-  const ncmds = 2 + (uuid ? 1 : 0) + extraCommands.length;
+  const ncmds = 2 + (uuid ? 1 : 0) + (platform ? 1 : 0) + (encryption ? 1 : 0) + extraCommands.length;
   // The three sizes that differ between the two forms. A 32-bit Mach-O has a
   // 28-byte mach_header, an `LC_SEGMENT` (not `_64`) whose own header is 56 bytes
   // with `nsects` at offset 48, and 68-byte `section` entries — so it is not the
@@ -255,8 +265,14 @@ function thinMachO({ cputype, cpusubtype = 3, text, data, dataFlags = S_REGULAR,
   // Unlike everything else in this header it does not vary with the word size,
   // because it carries a fixed-size byte string rather than an address.
   const uuidCmdSize = uuid ? 24 : 0;
+  // `build_version_command` and both `encryption_info_command` forms are 24
+  // bytes: cmd, cmdsize, then four or five 32-bit fields. `_64` adds `pad`, which
+  // keeps it a multiple of 8, so the two encryption forms are the same size.
+  const platformCmdSize = platform ? 24 : 0;
+  const encryptionCmdSize = encryption ? 24 : 0;
   const extraSize = extraCommands.reduce((n, c) => n + c.length, 0);
-  const loadCommandsSize = segCmdSize + symtabCmdSize + uuidCmdSize + extraSize;
+  const loadCommandsSize = segCmdSize + symtabCmdSize + uuidCmdSize
+    + platformCmdSize + encryptionCmdSize + extraSize;
   // `nlist` is 16 bytes in the 64-bit form and 12 in the 32-bit one, which moves
   // the string table and therefore every offset after it.
   const nlistSize = is64 ? 16 : 12;
@@ -469,6 +485,49 @@ function thinMachO({ cputype, cpusubtype = 3, text, data, dataFlags = S_REGULAR,
     raw.copy(buf, o + 8);
   }
 
+  // ---- LC_BUILD_VERSION
+  //
+  // `platform` is the OS this binary is for, which is the one fact that separates
+  // an iOS binary from a macOS one: everything else this reader looks at is
+  // byte-identical between them. `minos` and `sdk` use the nibble packing
+  // `xxxx.yy.zz`, so 13.2.1 is 0x0d0201 — written as a number here rather than a
+  // string, because the packing is the thing under test.
+  if (platform) {
+    o = headerSize + segCmdSize + symtabCmdSize + uuidCmdSize;
+    buf.writeUInt32LE(LC_BUILD_VERSION, o);
+    buf.writeUInt32LE(platformCmdSize, o + 4);
+    buf.writeUInt32LE(platform.platform, o + 8);
+    buf.writeUInt32LE(packVersion(platform.minos), o + 12);
+    buf.writeUInt32LE(packVersion(platform.sdk), o + 16);
+    buf.writeUInt32LE(0, o + 20);             // ntools
+  }
+
+  // ---- LC_ENCRYPTION_INFO_64
+  //
+  // `cryptid` 1 is what an App Store binary looks like: `__TEXT` is ciphertext
+  // and `cryptoff`/`cryptsize` describe the encrypted range. The fixture does not
+  // actually encrypt anything — the point is the *declaration*, because the
+  // defect being guarded is a scanner that returns zero and lets that read as
+  // "nothing calls this" rather than "I could not read the code".
+  if (encryption) {
+    // `'all'` is the shape a real App Store binary has: FairPlay encrypts the
+    // whole `__TEXT` *segment*, so `cryptoff` is 0 and `cryptsize` is the
+    // segment's file size. That covers `__text` and `__cstring` together, which
+    // is the point — an encryption range covering only the code would leave the
+    // string sections readable and the `--strings` path untested, which is how
+    // this was caught.
+    const cryptoff = encryption === 'all' ? 0 : encryption.cryptoff;
+    const cryptsize = encryption === 'all' ? totalSize : encryption.cryptsize;
+    const cryptid = encryption === 'all' ? 1 : encryption.cryptid;
+    o = headerSize + segCmdSize + symtabCmdSize + uuidCmdSize + platformCmdSize;
+    buf.writeUInt32LE(LC_ENCRYPTION_INFO_64, o);
+    buf.writeUInt32LE(encryptionCmdSize, o + 4);
+    buf.writeUInt32LE(cryptoff, o + 8);
+    buf.writeUInt32LE(cryptsize, o + 12);
+    buf.writeUInt32LE(cryptid, o + 16);
+    buf.writeUInt32LE(0, o + 20);             // pad
+  }
+
   // ---- any extra load commands, in the order given
   //
   // Appended *after* LC_UUID rather than in a fixed slot, so a reader that
@@ -477,7 +536,7 @@ function thinMachO({ cputype, cpusubtype = 3, text, data, dataFlags = S_REGULAR,
   // recomputed here: the whole class of bug this corpus exists for is a reader and
   // its fixture disagreeing about a command's length because one of them computed
   // it differently.
-  o = headerSize + segCmdSize + symtabCmdSize + uuidCmdSize;
+  o = headerSize + segCmdSize + symtabCmdSize + uuidCmdSize + platformCmdSize + encryptionCmdSize;
   for (const cmd of extraCommands) {
     // Assert the buffer agrees with itself before trusting it — a command whose
     // declared `cmdsize` does not match its length would desynchronise the walk
@@ -1033,6 +1092,116 @@ function bits32Fixture() {
       segmentName: '__TEXT',
       loadCommands: ['LC_SEGMENT', 'LC_SYMTAB'],
       symbolNames: ['__mh_execute_header', 'caller_a', 'caller_b', 'target_fn'],
+    },
+  };
+}
+
+/**
+ * An iOS binary: arm64e, `MH_EXECUTE`, platform iOS, and App-Store encrypted.
+ *
+ * Every fact here is one this reader could not previously answer, and the corpus
+ * could not previously contain — all ten other fixtures are macOS, so the two
+ * things that make an iOS binary an iOS binary were untestable:
+ *
+ *   - **platform.** A Mach-O from an iPhone and one from a Mac agree at every
+ *     level this reader used to look at: same magic, same word size, same
+ *     load-command shape. `LC_BUILD_VERSION` is the only thing that tells them
+ *     apart, and without it a tool cannot say "this is an iOS binary" at all.
+ *
+ *   - **encryption.** App Store binaries ship with `__TEXT` encrypted and
+ *     `cryptid` set to 1. A byte scanner that does not know this returns zero
+ *     hits and reports "nothing calls this" — a claim about code that was never
+ *     readable. The fixture does not encrypt its bytes; the *declaration* is the
+ *     input that matters, because the defect is a scanner that trusts a zero.
+ *
+ * `cpusubtype` is 2 (`CPU_SUBTYPE_ARM64E`), so this is also the only fixture that
+ * can catch `arm64e` being reported as plain `arm64` — they share a `cputype` and
+ * differ only here, which is exactly why the type alone cannot name the slice.
+ *
+ * The `encryption` range is stated in the fixture rather than computed, and
+ * deliberately covers the whole of `__text`, because that is what the loader
+ * records on a real encrypted binary: the code section is what gets encrypted.
+ */
+function iosFixture() {
+  const c = codeFixture(CPU_ARM64, { extraLoadcmds: 48 });
+  const textBytes = c.text.length;
+  // A real encrypted binary still has a `__cstring` — it is inside the encrypted
+  // `__TEXT` segment, which is the whole reason a string scan over one returns
+  // zero. A fixture without one would exercise the encryption path only up to
+  // the "no string sections at all" early return, and would pass whether or not
+  // the ciphertext check worked.
+  const strings = ['ios-fixture-alpha', 'ios-fixture-beta', 'CFBundleIdentifier'];
+  const blob = Buffer.concat([
+    ...strings.map((s) => Buffer.concat([Buffer.from(s, 'latin1'), Buffer.from([0])])),
+    Buffer.alloc(4, 0),
+  ]);
+  const buf = thinMachO({
+      cputype: CPU_ARM64,
+      cpusubtype: 2,                    // CPU_SUBTYPE_ARM64E
+      text: c.text,
+      data: blob,
+      symbols: c.symbols,
+      platform: { platform: 2, minos: '13.2.1', sdk: '17.0.0' }, // PLATFORM_IOS
+      encryption: 'all',                // the whole __TEXT segment, as FairPlay does
+    });
+
+  // Rename the second section to `__cstring`, as `stringsFixture` does and for
+  // the same reason: `thinMachO` writes a fixed two-section layout that many
+  // assertions depend on, and renaming changes no offset, address or length. The
+  // section table lives in the load commands, so the entry is at
+  // `header + segment header + one section entry` — not after the text it
+  // describes, which is the mistake `stringsFixture` records making.
+  const dataSectEntry = 32 + 72 + 80;
+  buf.fill(0, dataSectEntry, dataSectEntry + 16);
+  buf.write('__cstring', dataSectEntry, 'latin1');
+
+  // Actually encrypt the bytes, rather than only declaring that they are.
+  //
+  // A fixture that set `cryptid` while leaving plaintext behind would let a
+  // reviewer run `--strings` on it, see three strings come back, and reasonably
+  // conclude the encryption handling is broken. Worse, it would exercise only
+  // the *declaration*: the case that matters is a scanner reading ciphertext and
+  // getting zero, which is the input that used to be reported as "no strings"
+  // and "nothing calls this".
+  //
+  // XOR with a fixed key, because it is reversible and deterministic. The range
+  // is `__text` and `__cstring` — the encrypted `__TEXT` segment — and it
+  // deliberately stops short of the symbol table, so `symlookup` still resolves
+  // names. That asymmetry is the real situation and the one worth pinning: on an
+  // App Store binary you can look up a symbol but you cannot read its code.
+  //
+  // The start is read back out of the `__text` section entry rather than
+  // recomputed. The first attempt recomputed it as `header + segment + symtab +
+  // build_version` and came out 24 bytes short, because it forgot the encryption
+  // command that had just been added — so the XOR ran over the load commands
+  // themselves and erased the very declaration it was meant to sit behind. The
+  // section table records the offset, so reading it cannot drift when a command
+  // is added.
+  const ENC_KEY = 0xa5;
+  const textSectEntry = 32 + 72;                   // first section_64, 64-bit form
+  const encStart = buf.readUInt32LE(textSectEntry + 48);  // section.offset
+  const textSize = buf.readUInt32LE(textSectEntry + 40);  // section.size
+  const encEnd = encStart + textSize + blob.length;
+  for (let i = encStart; i < encEnd; i++) buf[i] ^= ENC_KEY;
+
+  return {
+    buf,
+    addresses: c.addresses,
+    strings,
+    expect: {
+      arch: 'arm64e',
+      bits: 64,
+      filetypeName: 'MH_EXECUTE',
+      platformName: 'ios',
+      platform: 2,
+      minos: '13.2.1',
+      sdk: '17.0.0',
+      cryptid: 1,
+      encrypted: true,
+      loadCommands: [
+        'LC_SEGMENT_64', 'LC_SYMTAB', 'LC_BUILD_VERSION', 'LC_ENCRYPTION_INFO_64',
+      ],
+      target: c.addresses.target,
     },
   };
 }
@@ -1697,8 +1866,8 @@ function damagedFixture() {
  * it here means a green suite means what it says.
  */
 async function verify(files) {
-  const { describe, findCalls, listCallTargets, findLiteral, mapLiteral, lookupAddress, listFunctionStarts } =
-    await import('../src/api.mjs');
+  const { describe, findCalls, listCallTargets, findLiteral, mapLiteral, lookupAddress,
+    listFunctionStarts, findStrings } = await import('../src/api.mjs');
 
   // `--arch` matching. `describe` itself does not narrow by architecture — the
   // flag is applied by the CLI on top of the result — so the matching rule under
@@ -1848,6 +2017,79 @@ async function verify(files) {
     lookupAddress(files.universal, targetU).function === 'target_fn',
     'universal: the target resolves to its own symbol',
   );
+
+  // The iOS fixture: the four facts that make a binary an iOS binary, each
+  // checked against the value the generator wrote rather than against the
+  // reader's own output.
+  {
+    const ios = iosFixture();
+    const e = ios.expect;
+    const d = describe(files.ios);
+    const s = d.slices[0];
+
+    expect(s.arch === e.arch, `ios: arm64e is not reported as arm64 (got ${s.arch})`);
+    expect(
+      s.cpusubtype === 2,
+      `ios: cpusubtype is read (got ${s.cpusubtype}) — arm64e differs from arm64 only here`,
+    );
+    expect(s.filetypeName === e.filetypeName, `ios: filetype is MH_EXECUTE (got ${s.filetypeName})`);
+    expect(s.platformName === e.platformName, `ios: platform is ios (got ${s.platformName})`);
+    expect(s.platform === e.platform, `ios: platform number is 2 (got ${s.platform})`);
+    expect(s.minos === e.minos, `ios: minos unpacks 13.2.1 (got ${s.minos})`);
+    expect(s.sdk === e.sdk, `ios: sdk unpacks 17.0.0 (got ${s.sdk})`);
+    expect(s.cryptid === e.cryptid, `ios: cryptid is 1 (got ${s.cryptid})`);
+    expect(s.encrypted === true, `ios: encrypted is true (got ${s.encrypted})`);
+    expect(
+      s.loadCommands.map((c) => c.name).join(',') === e.loadCommands.join(','),
+      `ios: names all four commands (got ${s.loadCommands.map((c) => c.name).join(',')})`,
+    );
+
+    // The symbol table survives encryption, and the code does not. This is the
+    // asymmetry that makes the fixture realistic: on an App Store binary the
+    // names are readable and the instructions are not.
+    const sym = lookupAddress(files.ios, ios.addresses.target);
+    expect(
+      sym.function === 'target_fn',
+      `ios: the symbol table is not encrypted, so names still resolve (got ${sym.function})`,
+    );
+
+    // And the scanners refuse rather than report zero. Each is a separate call
+    // because each reaches the encryption check by a different path.
+    const calls = findCalls(files.ios, ios.addresses.target);
+    expect(
+      calls.unreadable === true && calls.hits.length === 0,
+      `ios: findcall reports the slice as unreadable rather than as having no callers (got unreadable=${calls.unreadable}, hits=${calls.hits.length})`,
+    );
+    expect(
+      calls.slices.some((x) => x.skipped && /encrypted/.test(x.skipped)),
+      'ios: findcall says why it could not scan',
+    );
+
+    const lit = findLiteral(files.ios, 'ios-fixture-alpha');
+    expect(
+      lit.searchedCiphertext.length > 0 && lit.count === 0,
+      `ios: findliteral reports the searched range as ciphertext (got count=${lit.count}, ciphertext=${JSON.stringify(lit.searchedCiphertext)})`,
+    );
+    expect(
+      lit.count === 0,
+      'ios: and the literal really is unreadable — the fixture encrypts its bytes, not just declares it',
+    );
+
+    const strs = findStrings(files.ios);
+    expect(
+      strs.count === 0 && strs.encryptedSections.includes('__TEXT,__cstring'),
+      `ios: findStrings names __cstring as ciphertext rather than reporting no strings (got ${JSON.stringify(strs.encryptedSections)})`,
+    );
+
+    // A macOS binary must not be affected by any of this: no platform command
+    // means no platform, and no encryption command means `encrypted: null`
+    // rather than `false` — "never encrypted" and "not encrypted" are different.
+    const mac = describe(files.populated).slices[0];
+    expect(
+      mac.encrypted === null && mac.platformName === null,
+      `populated: a binary with no LC_ENCRYPTION_INFO and no LC_BUILD_VERSION reports neither (got ${mac.encrypted}/${mac.platformName})`,
+    );
+  }
 
   // The 32-bit fixture. Checked here as well as in the suite, and against the
   // generator's own arithmetic rather than against the reader's output — a
@@ -2762,6 +3004,7 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
   // that can prove the "rebuilt" branch of the comparison, which needs two present
   // UUIDs that differ — one UUID is not enough, and saying so is half the point.
   const rebuilt2 = rebuiltFixture({ uuid: 'aabbccdd-eeff-4011-8223-445566778899' });
+  const ios = iosFixture();
 
   const BUILT = {
     'universal.macho': universal(),
@@ -2817,6 +3060,7 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     // Same program and same base again, differing only in UUID — the only input
     // that can prove a rebuild happened rather than merely allow it.
     'rebuilt2.macho': rebuilt2.buf,
+    'ios.macho': ios.buf,
   };
 
 // Addresses are written alongside the binaries, because the suite's assertions
@@ -2841,6 +3085,7 @@ export async function buildFixtures({ out = OUT, check = false } = {}) {
     meta: BUILT['meta.macho'].length,
     damaged: BUILT['damaged.macho'].length,
     bent: BUILT['bent.macho'].length,
+    ios: BUILT['ios.macho'].length,
     fixtureUuid: FIXTURE_UUID,
     // What the header-metadata fixture declares, so the assertions read the
     // generator's intent rather than a copy of the reader's output.

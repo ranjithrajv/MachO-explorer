@@ -173,6 +173,67 @@ export const LC_FUNCTION_STARTS_CMD = 0x26;
 
 /** `LC_DATA_IN_CODE`: file ranges that are data rather than instructions. */
 export const LC_DATA_IN_CODE_CMD = 0x29;
+export const LC_ENCRYPTION_INFO = 0x21;
+export const LC_ENCRYPTION_INFO_64 = 0x2d;
+export const LC_BUILD_VERSION = 0x32;
+
+/**
+ * `LC_VERSION_MIN_*`, the pre-`LC_BUILD_VERSION` way of naming a platform.
+ *
+ * Mapped to the same `PLATFORM_*` numbers so the two forms produce one shape —
+ * iOS binaries from before Xcode 10 carry these instead, and a caller should not
+ * have to know which spelling it got to find out the binary is for iOS.
+ */
+export const VERSION_MIN_CMDS = {
+  0x24: 1,  // LC_VERSION_MIN_MACOSX  -> PLATFORM_MACOS
+  0x25: 2,  // LC_VERSION_MIN_IPHONEOS -> PLATFORM_IOS
+  0x2f: 3,  // LC_VERSION_MIN_TVOS     -> PLATFORM_TVOS
+  0x30: 4,  // LC_VERSION_MIN_WATCHOS  -> PLATFORM_WATCHOS
+};
+
+/*
+ * `PLATFORMS` is defined once, below, beside `decodePlatform`. The `ios-coverage`
+ * and mainline branches each carried a copy of the table and the merge kept both,
+ * which is a redeclaration rather than a merge; the copy kept is the superset, so
+ * every name this file is asked for is still present. `platformName` below reads
+ * it, and because that function is only called after the module has finished
+ * evaluating, the definition order is not a problem.
+ */
+
+/** `MH_*` filetypes from `<mach-o/loader.h>`, by value. */
+export const FILETYPES = {
+  0x1: 'MH_OBJECT', 0x2: 'MH_EXECUTE', 0x3: 'MH_FVMLIB', 0x4: 'MH_CORE',
+  0x5: 'MH_PRELOAD', 0x6: 'MH_DYLIB', 0x7: 'MH_DYLINKER', 0x8: 'MH_BUNDLE',
+  0x9: 'MH_DYLIB_STUB', 0xa: 'MH_DSYM', 0xb: 'MH_KEXT_BUNDLE', 0xc: 'MH_FILESET',
+};
+
+/** A filetype's `MH_*` name, or the raw number when it is not one we know. */
+export function filetypeName(n) {
+  if (n == null) return null;
+  return FILETYPES[n] ?? `filetype=${n}`;
+}
+
+/** A platform number's name, or the raw number when it is not one we know. */
+export function platformName(n) {
+  if (n == null) return null;
+  return PLATFORMS[n] ?? `platform=${n}`;
+}
+
+/**
+ * Unpack the `xxxx.yy.zz` nibble encoding used by `minos` and `sdk`.
+ *
+ * The three fields are not a decimal fraction and not a bitfield; they are
+ * fixed-width nibble groups, so `0x0d0300` is 13.3.0 and string concatenation
+ * would produce 13.30. `minor` and `patch` are two nibbles each, which is why
+ * this cannot be done by dividing.
+ */
+export function unpackVersion(v) {
+  if (v == null) return null;
+  const major = (v >> 16) & 0xffff;
+  const minor = (v >> 8) & 0xff;
+  const patch = v & 0xff;
+  return `${major}.${minor}.${patch}`;
+}
 
 /**
  * Load-command names, for `describe --loads`.
@@ -567,15 +628,6 @@ export const PLATFORMS = {
   0xffffffff: 'any',
 };
 
-/**
- * `filetype`, from `<mach-o/loader.h>`.
- *
- * Transcribed from the installed SDK, and *fourteen* values rather than the twelve
- * this project's README used to claim. The two it was missing are `MH_GPU_EXECUTE`
- * and `MH_GPU_DYLIB` at 13 and 14, which is the interesting failure: they are the
- * *last* two, so a reader that covered 1..12 looked complete. A count in prose is a
- * claim about a table, and it drifts the moment the table is not read from the header.
- */
 export const MH_TYPES = {
   0x1: 'MH_OBJECT',
   0x2: 'MH_EXECUTE',
@@ -730,6 +782,14 @@ export function sliceName(cputype) {
   return `cputype=0x${cputype.toString(16)}`;
 }
 
+/*
+ * The `arm64e` constants and `sliceArchName` are defined once, below. Both merged
+ * branches added them; the copy kept is the one that also knows
+ * `CPU_SUBTYPE_ARM64E_V8` and masks the full 24-bit subtype, which is the more
+ * correct of the two — the discarded copy compared only the low byte and would
+ * miss the v8 subtype.
+ */
+
 /**
  * The subtypes that distinguish an architecture without changing its cputype.
  *
@@ -826,6 +886,10 @@ export function parseFat(f) {
       // is the shape of most gaps here: the subtype is only meaningful for a few
       // architectures, but a reader that does not carry it cannot name them at
       // all, and naming is what `--arch` matches on.
+      // Read so a fat slice's architecture can be named without opening it —
+      // `arm64e` is a subtype, so the fat header's own record is enough to say
+      // it. A thin file has no fat header and takes the subtype from its own
+      // `mach_header` instead.
       cpusubtype: o.readUInt32BE(4),
       offset: o.readUInt32BE(8),
       size: o.readUInt32BE(12),
@@ -848,6 +912,11 @@ export function parseThin(f, base = 0) {
   if (!is64 && magic !== MH_MAGIC_32) return null;
 
   const cputype = hdr.readUInt32LE(4);
+  // Read for one reason: `arm64e` is `CPU_TYPE_ARM64` with a different *subtype*,
+  // not a different type, so the type alone cannot tell a pointer-authenticated
+  // slice from a plain one. On iOS that distinction is the whole question for
+  // anything PAC-related, and reporting `arm64` for an `arm64e` binary is a
+  // confident answer to a question nobody asked.
   const cpusubtype = hdr.readUInt32LE(8);
   const filetype = hdr.readUInt32LE(12);
   const ncmds = hdr.readUInt32LE(16);
@@ -868,6 +937,7 @@ export function parseThin(f, base = 0) {
   let entryPoint = null;
   let sourceVersion = null;
   let buildVersion = null;
+  let platform = null;
   let encryption = null;
   const rpaths = [];
   const dylibs = [];
@@ -1177,9 +1247,14 @@ export function parseThin(f, base = 0) {
   }
   return {
     is64, cputype, cpusubtype, filetype: decodeFiletype(filetype), ncmds, sizeofcmds, flags,
+    // `filetypeName` is computed here so every consumer names MH_EXECUTE,
+    // MH_DYLIB and MH_BUNDLE the same way. On macOS those are usually one binary
+    // each; an iOS `.app` contains all three, and "which one is this" is the
+    // first question a bundle raises.
+    filetypeName: filetypeName(filetype),
     segments, sections, loadCommands, symtab, uuid,
     entryPoint, sourceVersion, buildVersion, encryption, rpaths, dylibs, installName,
-    functionStarts,
+    functionStarts, platform,
   };
 }
 

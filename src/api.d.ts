@@ -81,9 +81,13 @@ export declare function sliceName(cputype: number | null): string;
 /**
  * A slice's architecture name, including the `arm64e` distinction.
  *
- * `arm64e` shares `CPU_TYPE_ARM64` with `arm64` and differs only in subtype, so
- * {@link sliceName} cannot see it. When `cpusubtype` is null or unread, this
- * falls back to the plain cputype name.
+ * `arm64e` is `CPU_TYPE_ARM64` with a different *subtype*, so `sliceName` cannot
+ * see it and every arm64e slice would be reported as plain `arm64`. On iOS that
+ * is the difference between a binary that uses pointer authentication and one
+ * that does not.
+ *
+ * `cpusubtype` may be null when a fat slice's record has not been read; the
+ * result is then `arm64`, which is a coarser answer rather than a fabricated one.
  */
 export declare function sliceArchName(
   cputype: number | null,
@@ -94,6 +98,19 @@ export declare function sliceArchName(
 export declare const CPU_SUBTYPE_ARM64E: number;
 /** `CPU_SUBTYPE_ARM64E_V8` — arm64e advertising the v8 ISA. */
 export declare const CPU_SUBTYPE_ARM64E_V8: number;
+/** A `PLATFORM_*` constant's name, or `platform=<n>` when unknown. */
+export declare function platformName(n: number | null): string | null;
+
+/** An `MH_*` filetype's name, or `filetype=<n>` when unknown. */
+export declare function filetypeName(n: number | null): string | null;
+
+/**
+ * Unpack the `xxxx.yy.zz` nibble encoding used by `minos` and `sdk`.
+ *
+ * The groups are fixed-width nibbles rather than a decimal fraction, so
+ * `0x0d0300` is `13.3.0` — string concatenation would produce `13.30`.
+ */
+export declare function unpackVersion(v: number | null): string | null;
 
 /** One entry of a fat header. */
 export interface FatSlice {
@@ -404,6 +421,26 @@ export interface CorpusSearch {
   note: string | null;
 }
 
+/**
+ * One load command, as a fact about the file rather than an interpretation of it.
+ *
+ * Recorded before any decoding, so a command this reader does not understand
+ * still appears — with `name` null and its `cmd` number intact — rather than
+ * being dropped. A reader that silently discarded the ones it could not decode
+ * would make an unfamiliar binary look simpler than it is, which is the shape of
+ * a wrong answer rather than a partial one.
+ *
+ * `offset` is relative to the start of the containing slice, not the file.
+ */
+export interface LoadCommand {
+  /** The raw `LC_*` constant. */
+  cmd: number;
+  /** Its symbolic name, or null when this reader has no name for it. */
+  name: string | null;
+  cmdsize: number;
+  offset: number;
+}
+
 /** A parsed `LC_SYMTAB`. */
 export interface Symtab {
   symoff: number;
@@ -421,6 +458,26 @@ export interface LoadCommand {
   offset: number;
 }
 
+/** A parsed `LC_VERSION_MIN_IPHONEOS` or `LC_BUILD_VERSION`, as OS and SDK strings. */
+export interface Platform {
+  /** The raw `PLATFORM_*` constant. */
+  platform: number;
+  /** Its symbolic name, e.g. `ios`, `macos`. */
+  name: string;
+  /** `major.minor.patch`, from whichever command supplied it. */
+  minos: string;
+  /** `major.minor.patch`; null for a `LC_VERSION_MIN_IPHONEOS`-only header. */
+  sdk: string | null;
+}
+
+/** A parsed `LC_ENCRYPTION_INFO` / `LC_ENCRYPTION_INFO_64`. */
+export interface EncryptionInfo {
+  cryptoff: number;
+  cryptsize: number;
+  /** 0 when the binary was never encrypted; 1 for an App Store build. */
+  cryptid: number;
+}
+
 /** A parsed thin Mach-O header plus its load-command tables. */
 export interface Thin {
   is64: boolean;
@@ -428,6 +485,8 @@ export interface Thin {
   /** The subtype from the header, byte 8. See {@link FatSlice.cpusubtype}. */
   cpusubtype: number;
   filetype: number;
+  /** Computed here so every consumer names `MH_EXECUTE`/`MH_DYLIB`/`MH_BUNDLE` alike. */
+  filetypeName: string;
   ncmds: number;
   sizeofcmds: number;
   /** The raw header `flags` word, byte 24. See {@link decodeHeaderFlags}. */
@@ -437,6 +496,8 @@ export interface Thin {
   loadCommands: LoadCommand[];
   symtab: Symtab | null;
   uuid: string | null;
+  /** Null when the header carries no version/build command, as on macOS. */
+  platform: Platform | null;
   /** The raw `LC_MAIN` command, or null. See {@link resolveEntryPoint}. */
   entryPoint: {
     entryoff: bigint;
@@ -592,6 +653,12 @@ export interface DylibRef {
   timestamp: number;
   currentVersion: number;
   compatVersion: number;
+  /** The `LC_UUID` of this slice, lowercased, or null when it carries none. */
+  uuid: string | null;
+  /** Null when the header carries no version/build command, as on macOS. */
+  platform: Platform | null;
+  /** Null when the header carries no encryption command, as on a simulator build. */
+  encryption: EncryptionInfo | null;
 }
 
 /** One symbol-table entry. */
@@ -908,7 +975,20 @@ export declare function findInSection(
 /** Open a binary, hand it to `fn`, close it afterwards. */
 export declare function withFile<T>(path: string, fn: (f: Opener) => T): T;
 
-/** What is in this file: every slice, with architecture, extent and symbol counts. */
+/**
+ * What is in this file: every slice, with architecture, extent and symbol counts.
+ *
+ * The three lists the reader had already parsed and nothing surfaced —
+ * `segments`, `sections` and `loadCommands` — are always present rather than
+ * behind a flag, because the data is already read and asking costs nothing.
+ * `codeSections` is a count of how many are code; the `sections` list is the
+ * answer to "what is in this file", which is a different question.
+ *
+ * A slice whose header does not parse is still reported, with `readable: false`,
+ * a `note` saying why, and the three lists empty. It is not omitted, so the
+ * slice count is a fact about the fat header rather than about this reader's
+ * luck.
+ */
 export declare function describe(path: string): {
   path: string;
   size: number;
@@ -920,7 +1000,34 @@ export declare function describe(path: string): {
     size: number;
     thin: boolean;
     readable: boolean;
+    /** Absent on a slice that did not parse, which is why it is not optional here. */
     bits: 64 | 32 | undefined;
+    /**
+     * The iOS-facing header facts. A Mach-O from an iPhone and one from a Mac
+     * are byte-compatible everywhere the reader used to look, so without these
+     * nothing here could tell you which you were holding.
+     */
+    /** The raw `MH_*` filetype constant. */
+    filetype: number | null;
+    /** Its symbolic name, or null when the slice did not parse. */
+    filetypeName: string | null;
+    /** The raw `PLATFORM_*` constant, or null when the header carries no platform command. */
+    platform: number | null;
+    platformName: string | null;
+    /** Minimum OS version as `major.minor.patch`, or null with no platform command. */
+    minos: string | null;
+    /** SDK version as `major.minor.patch`, or null with no platform command. */
+    sdk: string | null;
+    cpusubtype: number | null;
+    /**
+     * `LC_ENCRYPTION_INFO`'s `cryptid`: 0 on a binary that was never encrypted,
+     * and null when the file carries no such command at all. Those are different
+     * facts — a simulator build has no encryption command, an App Store build
+     * has one saying 1 — so they stay distinct rather than collapsing.
+     */
+    cryptid: number | null;
+    /** `cryptid !== 0`, or null when there is no `cryptid` to interpret. */
+    encrypted: boolean | null;
     nsyms: number;
     defined: number;
     note: string | null;
@@ -963,6 +1070,11 @@ export declare function describe(path: string): {
     sourceVersion: SourceVersion | null;
     /** Structural problems. Empty on a healthy binary. */
     abnormalities: Abnormality[];
+    segments: Segment[];
+    sections: Section[];
+    loadCommands: LoadCommand[];
+    /** The slice's `LC_UUID`, lowercased, or null when it carries none. */
+    uuid: string | null;
   }>;
   /**
    * Problems with the fat table itself — overlapping slices, a slice past the end
@@ -1376,6 +1488,14 @@ export declare function findCalls(
   slices: CallSliceReport[];
   /** Architectures whose call encoding is not implemented. */
   unsupported: string[];
+  /** Architectures skipped because their code is ciphertext. */
+  encryptedSlices: string[];
+  /**
+   * True when every slice that could have held an answer was encrypted, so a
+   * zero count is "could not look" rather than "found nothing". The two must not
+   * share an exit code — see the note on `REASON_CODES`.
+   */
+  unreadable: boolean;
   typed: boolean;
 };
 
@@ -1412,6 +1532,79 @@ export interface Context {
   hit: string;
 }
 
+/** One string read out of a C-string section. */
+export interface StringHit {
+  /** Absolute file offset. */
+  off: number;
+  slice: string;
+  vaddr: bigint | null;
+  /** `"<segname>,<sectname>"`, or null where the section could not be named. */
+  section: string | null;
+  /** Byte length, excluding the terminating NUL. */
+  length: number;
+  text: string;
+}
+
+/**
+ * List the NUL-terminated strings a binary already contains.
+ *
+ * Reads only the C-string sections: `__cstring`, `__objc_methname`,
+ * `__swift5_reflstr` and `__objc_classname`. `__cfstring` is deliberately
+ * excluded — those are 32-byte structures rather than text, so including it
+ * would report addresses as if they were strings.
+ *
+ * A Go binary can legitimately return zero hits: Go keeps its strings
+ * length-prefixed in `__gopclntab` rather than NUL-terminated, so an empty result
+ * is a fact about the format rather than a failure to read.
+ *
+ * `min` is the shortest string reported. `max: 0` means no cap.
+ */
+export declare function findStrings(
+  path: string,
+  opts?: {
+    /** Restrict to one architecture. A preference, not a filter. */
+    arch?: string;
+    min?: number;
+    /** Cap on returned strings; 0 for no cap. */
+    max?: number;
+    /** Keep only strings this returns true for. */
+    filter?: ((text: string) => boolean) | null;
+  },
+): {
+  /** The architecture asked for, or null when none was. */
+  arch: string | null;
+  /**
+   * `arch` when a slice satisfied it, else null — so a caller can tell "you got
+   * the architecture you asked for" from "you got one anyway, and it was not this
+   * one" without re-deriving it. Same pair, same meaning as `findLiteral`.
+   */
+  archHonoured: string | null;
+  /** Ground truth: the architectures that actually answered. */
+  archRead: string[];
+  min: number;
+  count: number;
+  truncated: boolean;
+  strings: StringHit[];
+  /** Bytes examined. */
+  scanned: number;
+  slices: Array<{
+    arch: string; offset: number; size: number; scanned: number; strings: number;
+  }>;
+  /** The C-string sections found, as `"<segname>,<sectname>"`. */
+  sections: string[];
+  /**
+   * String sections whose bytes were ciphertext on this binary, as
+   * `"<segname>,<sectname>"`.
+   *
+   * Stated per *section*, not as a boolean, because "the binary is encrypted"
+   * and "these particular strings were unreadable" are different claims — and
+   * only the second explains a zero. `--strings` on an encrypted App Store
+   * binary must not read as "this binary has no strings", which is exactly what a
+   * bare zero would say.
+   */
+  encryptedSections: string[];
+};
+
 /**
  * Find a byte literal.
  *
@@ -1421,7 +1614,7 @@ export interface Context {
 export declare function findLiteral(
   path: string,
   literal: string | Buffer,
-  opts?: { textOnly?: boolean; max?: number },
+  opts?: { arch?: string; textOnly?: boolean; max?: number },
 ): {
   literal: string;
   hex: string;
@@ -1439,8 +1632,22 @@ export declare function findLiteral(
   slices: Array<{
     arch: string; offset: number; size: number;
     from: number; to: number; hits: number;
+    /** True when this slice carries ciphertext, null when it carries no encryption command. */
+    encrypted: boolean | null;
   }>;
   textOnly: boolean;
+  /**
+   * Architectures carrying a non-zero `cryptid` — an App Store build's encrypted
+   * `__TEXT`. A miss over these is not evidence the literal is absent.
+   */
+  encryptedSlices: string[];
+  /**
+   * The subset of `encryptedSlices` whose ciphertext actually overlaps the range
+   * searched. Kept separate because "this slice is encrypted" and "the bytes I
+   * read were ciphertext" are different facts, and only the second qualifies a
+   * zero result.
+   */
+  searchedCiphertext: string[];
 };
 
 /**

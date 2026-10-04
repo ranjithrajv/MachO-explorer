@@ -355,6 +355,187 @@ closing the gap would make this package *worse at the thing it is for*. A
 package that answers 40% of a question is useful; one that answers all of a
 question it was never built for is not.
 
+## Limits
+
+- **One format, on purpose.** Mach-O is what this package is for, not the only
+  format it has not got round to yet. Android APKs, iOS bundles and Windows PE
+  need a different reader, and always will.
+- **Direct calls only.** Indirect calls, register calls and jumps through a PLT
+  stub do not encode their target in the instruction, so they do not appear in
+  `findcall`. Every hit is a site *worth disassembling*, not a proven call-graph
+  edge.
+- **The x86_64 scan is typed by *section*, not by instruction.** It restricts
+  itself to sections the linker flagged as code, which removes data false
+  positives, but it will still match a byte inside a multi-byte instruction
+  rather than at an instruction boundary. Alignment is not something the file
+  format records, so this cannot be fixed without a disassembler. The arm64 path
+  steps 4 bytes at a time and does see only aligned `BL`s.
+- **Stripped binaries have no defined symbols** to grep. `sym` and `symlookup` report
+  nothing rather than guess; `findcall` and `findliteral` read bytes rather than
+  names and are unaffected. There is no dSYM support, so a shipped build with
+  its symbols in a sidecar is out of reach.
+- **Not a general Mach-O parser.** `describe --loads` names every load command but
+  interprets none of them: no code signing, no fixups, no export trie, no
+  ObjC/Swift metadata, no FAT32, and no following a `LC_LOAD_DYLIB` to the library
+  it names.
+- **Verified on macOS and Linux.** The reader is portable buffer arithmetic; on
+  Windows only the generated half of the suite runs.
+
+## Scripting it
+
+Every tool takes `--json`, with two guarantees so a consumer does not have to
+learn one dialect: **stdout is JSON only** (progress lines, per-slice narration
+and "none found" prose all go to stderr), and **one envelope, always** —
+`{ tool, ok, binary, errors, messages?, notes?, data }`, where `errors` holds
+machine-readable reason codes (`bad-arguments`, `bad-address`, `bad-pattern`,
+`no-match`, `no-call-sites`, `no-symbols`, `unknown-encoding`, `io`) rather than
+prose.
+
+`io` and `unknown-encoding` are deliberately distinct, because the two are
+different problems: one is a file that cannot be read, the other a file that
+reads fine and is not a Mach-O. Told "not a Mach-O binary" about a path that
+does not exist, a caller goes looking for the wrong file entirely.
+
+Addresses are emitted as `"0x..."` strings, never JSON numbers: a 64-bit vaddr
+does not survive a `Number`, and a silent precision loss would be
+indistinguishable from a correct answer.
+
+| Code | Meaning |
+|---|---|
+| 0 | Ran, found something |
+| 1 | **Ran, found nothing.** Deliberately distinct from an error |
+| 2 | Usage error — bad or missing arguments |
+| 3 | Could not do the job — unreadable file, unparseable Mach-O |
+
+A caller that cannot tell "found nothing" from "could not look" has the problem
+this project keeps fixing, so it is encoded in the exit status. The status is
+the same with and without `--json`: the flag changes the format of the answer,
+not the answer, and a tool whose text mode and JSON mode disagree about whether
+something was found is worse than one with no contract at all. The suite asserts
+that parity across tools rather than listing expected values per tool, so a tool
+added later fails the same check.
+
+### For coding agents
+
+Two doorways, and they are not redundant.
+
+**An MCP server**, so an agent that speaks the protocol finds these tools at
+all:
+
+```sh
+claude mcp add macho -- node /absolute/path/to/src/mcp.mjs
+```
+
+```json
+{ "mcpServers": { "macho": {
+    "command": "node",
+    "args": ["/absolute/path/to/src/mcp.mjs"],
+    "env": { "MACHO_BINARY": "/path/to/a/binary" } } } }
+```
+
+Eight tools — `macho-describe`, `macho-sym`, `macho-symlookup`,
+`macho-findcall`, `macho-findliteral`, `macho-mapliteral`, `macho-a2o`,
+`macho-o2a` — each returning the **same envelope** the CLIs emit under `--json`,
+plus a short text block. Nothing new to learn depending on how you arrived.
+
+It speaks both protocol eras, because clients in the wild still use both: the
+modern `2026-07-28` revision (per-request `_meta`, no handshake) and the legacy
+`initialize` handshake back to `2024-11-05`.
+
+**An [Agent Skill](skill/)**, for agents that drive the CLI or the library
+instead. It carries the three things that produce confidently wrong answers —
+addresses are hex *strings*, an empty result is not an error, `findcall` sees
+direct calls only — plus the workflow and the fallbacks. It is plain
+`SKILL.md` in an open format, so it works in Claude Code, Codex, Cursor, VS Code,
+Copilot and Gemini CLI by copying one directory.
+
+```sh
+mkdir -p .claude/skills && cp -r skill/macho-explorer .claude/skills/
+```
+
+Be clear-eyed about what this is: Hopper, Binary Ninja and `ipsw` all ship an MCP
+server, so **this is distribution, not differentiation**. An MCP server is how an
+agent discovers a capability exists; without one this package is invisible to
+every agent-driven workflow while being well suited to it. See
+[`COMPETITIVE-LANDSCAPE.md`](COMPETITIVE-LANDSCAPE.md).
+
+```js
+import { describe, findCalls, lookupAddress, mapLiteral } from 'macho-explorer';
+
+const { slices } = describe('/path/to/binary');
+const fn = lookupAddress('/path/to/binary', 0x100085c30n);
+const callers = findCalls('/path/to/binary', fn.start);
+const tables = mapLiteral('/path/to/binary', 'LZ4');
+```
+
+The specifier is `macho-explorer`, exactly as `"name"` spells it in `package.json` —
+package names are case-sensitive when Node resolves them.
+
+The name is lowercase because npm will not accept a capital letter in a name
+published for the first time. That was not a style choice: this package shipped
+as `MachO-Tools`, and `npm publish --dry-run` reported `+ MachO-Tools@0.1.0` and
+exited 0 on it, because a dry run never asks the registry whether a name is
+acceptable. `npm view` returned E404 with the reason spelled out — *"name can no
+longer contain capital letters"* — and npm's own validator reported
+`validForNewPackages: false`. The command that looks like the check was not one.
+
+| Export | Returns |
+|---|---|
+| `describe(path)` | Every slice: architecture, extent, symbol counts, `__TEXT` bounds, **`uuid`**, and the full `segments` / `sections` / `loadCommands` lists |
+| `searchSymbols(path, pattern, opts)` | Symbol search. `mode: 'substring'` (default) or `'regex'`; `definedOnly` and `dedupe` default true |
+| `lookupAddress(path, vaddr, opts)` | The function containing an address |
+| `findCalls(path, vaddr, opts)` | Direct call/jmp sites targeting an address |
+| `listCallTargets(path, opts)` | The distinct addresses a binary calls |
+| `findLiteral(path, lit, opts)` | Byte-literal occurrences, per slice, with context |
+| `mapLiteral(path, lit, opts)` | Literal → vaddr → the pointers to it |
+| `addressToOffset(path, vaddr, opts)` | vaddr → file offset, both bases, or `zerofill` |
+| `offsetToAddress(path, offsets, opts)` | File offset → vaddr, one row per slice |
+| `withFile(path, fn)` | Open, hand to a callback, close |
+| `coversAddress(thin, vaddr)` | Is this address mapped by this slice? |
+
+Two conventions worth knowing: **a negative answer is a value, not an
+exception** (`{ matches: [] }`, `{ function: null }` — genuine I/O failures still
+throw, so "no result" and "could not look" stay distinguishable), and
+**addresses are `bigint`** in, `"0x…"` out.
+
+`lookupAddress` returns `{ function: null }` for an address the slice does not
+map, rather than for the last symbol below it. A symbol table records where code
+*starts*, not where the slice *ends*, so without that check every address above
+the last symbol would resolve to that symbol with an offset of billions of bytes
+— a wrong answer shaped like a measurement. A symbol's own entry point still
+resolves even where it sits one past the last mapped byte, which is where a BSS
+symbol can land. `findCalls` and `mapLiteral` have always asked the same
+question, so the three agree about any address in any binary.
+
+`aliases` carries a second caveat: when several symbols start at the same
+address, the answer names the alternatives rather than implying it is the only
+one. This is ordinary, not exotic — Go's linker writes zero-size region markers
+beside real symbols, so in `go` both `_go:buildid` and `_runtime.text` sit at
+`0x100001000`. `nlist_64` has no size field, so nothing in the table separates a
+marker from a function, and a `size` derived from the next unrelated symbol is a
+bound rather than a measurement. `aliases: null` means the answer stands alone.
+
+`addressToOffset` and `offsetToAddress` report `query` and `vaddr` as `"0x…"`
+strings for the same reason every other address here is: a 64-bit position does not
+survive a JSON number. Offsets stay numeric — they are arithmetic, and a file
+position is far below 2^53 in practice.
+
+`src/macho.mjs` — the raw reader — is also importable and is where new format
+support lands first. It is stable within a major version but lower-level and more
+likely to grow than `api.mjs`.
+
+## Configuration
+
+`config.json` holds the two things that are facts about the world rather than
+about the format: the bundle convention (`.app`, `Contents/MacOS`) and the scan
+chunking. Both are overridable with `$MACHO_CONFIG`, and a malformed override
+falls back to the shipped values rather than failing — a typo should not stop a
+tool you handed an explicit binary.
+
+```sh
+echo '{"bundle":{"ext":".bundle","macosDir":["bin","exec"]}}' > /tmp/alt.json
+MACHO_CONFIG=/tmp/alt.json node src/sym.mjs 'someSymbol'
+```
 ## Verify it yourself, in about five seconds
 
 Every correctness claim in this README is reproducible on a clean checkout,
