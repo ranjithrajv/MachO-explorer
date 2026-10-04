@@ -11,7 +11,7 @@
  *
  * ## One tool per question
  *
- * Eight tools, matching the eight CLIs, because a model picks a tool by reading a
+ * One tool per question, because a model picks a tool by reading a
  * description and a tool that answers two questions answers neither one well.
  * There is deliberately no combined "inspect this binary" tool: an agent that
  * wants the slice list, an address lookup and its callers is three calls, and
@@ -466,6 +466,22 @@ function lines(tool, env) {
       }
       break;
 
+    case 'starts': {
+      if (!d.present) {
+        L.push('no LC_FUNCTION_STARTS — the linker recorded no function starts in this file');
+        L.push('an object file or a hand-built binary usually has none; this is an answer, not an empty list');
+        break;
+      }
+      L.push(`${n(d.count)} function start(s) from ${d.base}${d.named !== null ? `, ${n(d.named)} named` : ''}`);
+      for (const fn of d.functions.slice(0, 30)) {
+        L.push(`  ${fn.address}  ${fn.label}${fn.symbol ? `  ${fn.symbol}` : ''}`);
+      }
+      if (d.functions.length > 30) L.push(`  ...and ${n(d.count - 30)} more, all in structuredContent`);
+      if (d.blobTruncated) L.push('  the blob ends mid-value; the last delta was dropped — the file is damaged or was clipped');
+      L.push('  a start address is where the linker says a function begins; it is not a boundary derived from disassembly');
+      break;
+    }
+
     case 'findcall':
       if (d.listing) {
         L.push(`${n(d.total)} distinct direct call target(s) from ${n(d.scanned)} bytes of code in ${d.slices.map((s) => s.arch).join(', ')} (${d.slices[0]?.encoding || 'unknown encoding'})`);
@@ -552,6 +568,19 @@ function lines(tool, env) {
       L.push('  offsets are absolute positions in the file; each slice reports its own relative offset too');
       break;
 
+    case 'dump': {
+      if (!d.found) {
+        L.push(`${d.vaddr} → no bytes`);
+        if (!d.mapped) L.push('  the address is in no slice of this file — check the address, and arch if it is universal');
+        else if (d.zerofill) L.push(`  ${d.section} is zero-fill: mapped in memory, but no byte of it exists in the file`);
+        break;
+      }
+      L.push(`${d.vaddr}  ${d.section}  ${n(d.bytes)} byte(s)${d.truncated ? ` of ${n(d.requestedBytes)} requested (stopped at the section end)` : ''}`);
+      L.push(`  file offset ${hex(d.offset)} (absolute ${hex(d.absoluteOffset)})`);
+      for (const l of d.lines) L.push(`  ${l.vaddr}  ${l.hex}  ${l.ascii}`);
+      break;
+    }
+
     case 'audit': {
       L.push(`${d.path} — ${String(d.verdict).toUpperCase()}  ${n(d.counts.errors)} error(s), ${n(d.counts.warnings)} warning(s)`);
       for (const s of d.slices ?? []) {
@@ -601,16 +630,25 @@ function lines(tool, env) {
     case 'diff': {
       L.push(`${d.a.path}`);
       L.push(`${d.b.path}`);
-      L.push(`  ${d.verdict}  —  ${n(d.counts.differences)} structural difference(s), ${n(d.counts.buildMetadata)} build-metadata change(s), ${n(d.counts.sizeChanges)} size change(s)`);
+      L.push(`  ${d.verdict}  —  ${n(d.counts.differences)} difference(s), ${n(d.counts.buildMetadata)} build-metadata change(s), ${n(d.counts.sizeChanges)} size change(s)`);
       for (const row of d.perArch ?? []) {
-        L.push(`  ${row.arch}  symbols ${n(row.symbols.a)} -> ${n(row.symbols.b)} (+${row.symbols.added}/-${row.symbols.removed}), sections ${n(row.sections.a)} -> ${n(row.sections.b)}`);
+        L.push(`  ${row.arch}  symbols ${n(row.symbols.a)} -> ${n(row.symbols.b)} (+${row.symbols.added}/-${row.symbols.removed}), sections ${n(row.sections.a)} -> ${n(row.sections.b)}, strings ${n(row.literals.a)} -> ${n(row.literals.b)} (+${row.literals.added}/-${row.literals.removed})`);
       }
       for (const x of (d.differences ?? []).slice(0, 12)) L.push(`    [${x.category}] ${x.detail}`);
       if ((d.differences ?? []).length > 12) L.push(`    ... and ${d.differences.length - 12} more`);
-      if (!(d.differences ?? []).length) L.push('    no structural differences');
+      if (!(d.differences ?? []).length) L.push('    no differences');
       for (const m of d.buildMetadata ?? []) L.push(`    build metadata: ${m.detail}`);
       if (d.sizeChanges?.length) L.push(`    ${n(d.sizeChanges.length)} section size change(s), reported but not counted as differences`);
       L.push('  Sizes and UUIDs are excluded on purpose: a rebuild moves both without changing the program.');
+      break;
+    }
+
+    case 'assert': {
+      L.push(`${d.passed ? 'PASS' : 'FAIL'} — ${n(d.count - d.failed)} of ${n(d.count)} assertion(s) held`);
+      for (const a of d.assertions) {
+        L.push(`  ${a.pass ? 'PASS' : 'FAIL'}  ${a.kind} ${JSON.stringify(a.value)}${a.detail ? `  — ${a.detail}` : ''}`);
+      }
+      L.push('  A failed assertion is an answer, not an error: errors stays empty and data.passed is the verdict.');
       break;
     }
 
@@ -749,6 +787,55 @@ export const TOOLS = [
         const { lookupAddress } = await import('./api.mjs');
         const queries = args.addresses.map((a) => lookupAddress(b.binary, parseAddress(a), { arch: args.arch }));
         return { data: { queries } };
+      });
+    },
+  },
+
+  {
+    name: 'starts',
+    title: 'List the function entry addresses a binary records',
+    description:
+      'Every function entry the linker recorded, read from LC_FUNCTION_STARTS. This is the only such list a *stripped* ' +
+      'binary carries: the symbol table is gone, but the command survives because the unwinder needs it at runtime.\n\n' +
+      'Each address is labeled sub_<hex> — a name for the address, not a claim about what the function does — and where a ' +
+      'defined symbol sits exactly on one, that symbol is named too.\n\n' +
+      'present:false means the file carries no LC_FUNCTION_STARTS at all (an object file, a hand-built binary), which is ' +
+      'an answer rather than an empty list. blobTruncated means the blob ends mid-value and the last delta was dropped.',
+    inputSchema: obj(
+      {
+        binary: BINARY,
+        symbols: {
+          type: 'boolean',
+          description: 'Annotate each start with the defined symbol sitting on it, when there is one.',
+        },
+        max: {
+          type: 'integer',
+          minimum: 0,
+          description: 'Cap the returned list (0 means all). The count stays exact.',
+        },
+        arch: ARCH,
+      },
+      ['binary'],
+    ),
+    outputSchema: ENVELOPE,
+    async run(args) {
+      const b = binaryOf(args);
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      return guard('starts', b.binary, async () => {
+        const { listFunctionStarts } = await import('./api.mjs');
+        const r = listFunctionStarts(b.binary, { arch: args.arch, symbols: args.symbols === true, max: args.max ?? 0 });
+        return {
+          data: r,
+          errors: [],
+          notes: [
+            'a start address is where the linker says a function begins; it is not a boundary derived from disassembly',
+            ...(!r.present ? ['this file carries no LC_FUNCTION_STARTS — an object file or a hand-built binary usually has none'] : []),
+            ...(r.count === 0 && r.present ? ['LC_FUNCTION_STARTS is present but empty'] : []),
+            ...(r.blobTruncated ? ['the blob ends mid-value, so the last delta was dropped — the file is damaged or was clipped'] : []),
+            ...(r.capped ? [`showing ${r.functions.length} of ${r.count} function start(s); the count is exact`] : []),
+            ...(r.named !== null && r.present ? [`${r.named} of ${r.count} start(s) carry a defined symbol; the rest are labeled sub_<hex>`] : []),
+          ],
+        };
       });
     },
   },
@@ -1062,6 +1149,52 @@ export const TOOLS = [
   },
 
   {
+    name: 'dump',
+    title: 'Read the bytes at a virtual address',
+    description:
+      'The bytes at an address, resolved through the section that maps it. `a2o` says which file offset an address ' +
+      'lands at; this says what is stored there.\n\n' +
+      'The dump is bounded by the section, not by `length` alone: it starts at the address and stops at the end of ' +
+      'the section it landed in, so it never blends __cstring into __const or the tail of __text into whatever the ' +
+      'linker packed after it. `truncated:true` means the request outran the section. Length is capped at 1 MiB.\n\n' +
+      'Three outcomes, matching a2o: bytes (mapped), `zerofill:true` (mapped in memory, no byte in the file — __bss, ' +
+      '__PAGEZERO), and `mapped:false` (in no slice). The last two are answers, not errors; `found` is false for both.',
+    inputSchema: obj(
+      {
+        binary: BINARY,
+        address: ADDRESS,
+        length: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 1048576,
+          description: 'How many bytes to read at most (default 64). The section end clamps below this, so a short result is normal.',
+        },
+        arch: ARCH,
+      },
+      ['binary', 'address'],
+    ),
+    outputSchema: ENVELOPE,
+    async run(args) {
+      const b = binaryOf(args);
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      return guard('dump', b.binary, async () => {
+        const { dumpBytes } = await import('./api.mjs');
+        const r = dumpBytes(b.binary, parseAddress(args.address), { arch: args.arch, length: args.length ?? 64 });
+        return {
+          data: r,
+          errors: [],
+          notes: [
+            'the dump is bounded by the section that maps the address, so it never blends into the next section',
+            ...(!r.mapped ? ['this address is in no slice of the file — check the address, and arch if it is universal'] : []),
+            ...(r.zerofill ? [`${r.section} is zero-fill: mapped in memory, but no byte of it exists in the file`] : []),
+            ...(r.found && r.truncated ? [`stopped at the end of ${r.section} after ${r.bytes} of ${r.requestedBytes} requested byte(s)`] : []),
+          ],
+        };
+      });
+    },
+  },
+
+  {
     name: 'audit',
     title: 'Check a Mach-O for internal consistency',
     description:
@@ -1158,18 +1291,19 @@ export const TOOLS = [
     name: 'diff',
     title: 'What changed between two Mach-O binaries',
     description:
-      'Structural differences only: architectures, header flags, load commands, sections, symbols.\n\n' +
+      'Differences in structure and literal content: architectures, header flags, load commands, sections, symbols, and strings.\n\n' +
       'Addresses, sizes, offsets and the UUID are NOT counted as differences — otherwise every rebuilt pair ' +
-      'would read as changed, which is what `cmp` already tells you and does not improve on.\n\n' +
+      'would read as changed, which is what `cmp` already tells you and does not improve on. A literal string that ' +
+      'appears or disappears IS counted: it does not move on a rebuild, so it is a change to the program.\n\n' +
       'Build-metadata changes (UUIDs, signing) and section size changes are reported in their own fields and ' +
       'excluded from the verdict, because a recompiled dependency moves a size without changing the program.\n\n' +
-      'Use `max_names` to cap how many symbol names are listed; counts are always exact.',
+      'Use `max_names` to cap how many symbol or string names are listed; counts are always exact.',
     inputSchema: obj(
       {
         binary: BINARY,
         other: { type: 'string', minLength: 1, description: 'The binary to compare against.' },
         arch: ARCH,
-        max_names: { type: 'integer', minimum: 1, description: 'Cap on symbol names listed per direction. Default 20.' },
+        max_names: { type: 'integer', minimum: 1, description: 'Cap on symbol and string names listed per direction. Default 20.' },
       },
       ['binary', 'other'],
     ),
@@ -1188,8 +1322,61 @@ export const TOOLS = [
           errors: [],
           notes: [
             r.verdict,
-            `${r.counts.differences} structural difference(s); ${r.counts.buildMetadata} build-metadata change(s) reported but not counted`,
+            `${r.counts.differences} difference(s); ${r.counts.buildMetadata} build-metadata change(s) reported but not counted`,
             'a UUID difference is build metadata, never a structural difference',
+          ],
+        };
+      });
+    },
+  },
+
+  {
+    name: 'assert',
+    title: 'Check a policy of must-be-here and must-not-be claims',
+    description:
+      'Evaluate a set of assertions about one binary and report whether they all held. A CI gate: "fail if symbol X is ' +
+      'present, or string Y is missing".\n\n' +
+      'Four predicates, two matching rules. has-symbol/no-symbol match the WHOLE name — a policy names a symbol, and a ' +
+      'substring would pass on _main_helper when asked about _main. has-string/no-string match a SUBSTRING — the useful ' +
+      'claim is that a URL or an error message is present, and the string around it is not the point.\n\n' +
+      'A failed assertion is an answer, not an error: errors stays empty and data.passed is the verdict, the same shape ' +
+      'audit returns. Only an unreadable file is an error.',
+    inputSchema: obj(
+      {
+        binary: BINARY,
+        assertions: {
+          type: 'array',
+          minItems: 1,
+          items: obj(
+            {
+              kind: { type: 'string', enum: ['has-symbol', 'no-symbol', 'has-string', 'no-string'] },
+              value: { type: 'string', minLength: 1 },
+            },
+            ['kind', 'value'],
+          ),
+          description: 'The claims to check. At least one.',
+        },
+        arch: ARCH,
+      },
+      ['binary', 'assertions'],
+    ),
+    outputSchema: ENVELOPE,
+    async run(args) {
+      const b = binaryOf(args);
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (!Array.isArray(args.assertions) || args.assertions.length === 0) {
+        throw Object.assign(new Error('assertions: at least one is required — a policy with no claims is true of everything and gates nothing'), { code: 'bad-arguments' });
+      }
+      return guard('assert', b.binary, async () => {
+        const { assertBinary } = await import('./api.mjs');
+        const r = assertBinary(b.binary, args.assertions, { arch: args.arch });
+        return {
+          data: r,
+          errors: [],
+          notes: [
+            'a failed assertion is an answer, not an error: pass is in data.passed and in each assertion',
+            '--has-symbol/--no-symbol match the whole name; --has-string/--no-string match a substring',
+            ...(r.passed ? [] : [`${r.failed} of ${r.count} assertion(s) failed`]),
           ],
         };
       });

@@ -51,6 +51,7 @@ import {
   decodeHeaderFlags, decodeSectionFlags, decodeSourceVersion, detectAbnormalities,
   detectContainerAbnormalities, resolveEntryPoint, sliceShape, fileShape,
   decodeFiletype, decodePlatform, decodePackedVersion, filetypeKey,
+  functionStartAddresses,
 } from './macho.mjs';
 
 /* ------------------------------------------------------------------ *
@@ -667,6 +668,170 @@ export function offsetToAddress(path, offsets, { arch } = {}) {
     });
 
     return { path, queries, slices: candidates.map((s) => ({ arch: s.arch, offset: s.offset })) };
+  });
+}
+
+/**
+ * The bytes at an address, resolved through the section that maps it.
+ *
+ * `a2o` answers "which byte of the file is this address"; this answers "what are
+ * the bytes there", and it is deliberately not a `dd` window. The *section* is
+ * the unit: an address resolves to a section, the dump starts at the address and
+ * stops at that section's own end, and the section is named in the answer.
+ * Reading past the boundary would silently blend two sections — `__cstring` into
+ * `__const`, or the tail of `__text` into whatever the linker packed after it —
+ * and a reader comparing those bytes with a hex editor's window would be looking
+ * at two different things without being told.
+ *
+ * ## Three answers, not two
+ *
+ * An address can be mapped to a byte, mapped with no byte (`__bss`,
+ * `__PAGEZERO`), or in no slice at all. All three come back as values:
+ * `mapped` and `zerofill` tell them apart, which is the same three-valued shape
+ * `addressToOffset` returns and exists for the same reason. A caller that wants
+ * "no bytes here" to be distinguishable from "wrong address" needs both fields.
+ *
+ * ## Why the length is clamped twice
+ *
+ * `length` is a request, not an override. The dump stops at the section's end
+ * and at the slice's own extent, because on a universal binary the bytes after a
+ * slice belong to the *next* slice and reading them would report another
+ * architecture's data as this one's. `truncated` says the request was not met in
+ * full, so a short answer cannot be mistaken for the whole one.
+ *
+ * @param {string} path
+ * @param {bigint|string} vaddr  the address to start at
+ * @param {object} [opts]
+ * @param {string} [opts.arch]    preferred architecture; falls through if absent
+ * @param {number} [opts.length=64] how many bytes to read, at most
+ */
+export function dumpBytes(path, vaddr, { arch = null, length = 64 } = {}) {
+  const want = typeof vaddr === 'bigint' ? vaddr : BigInt(vaddr);
+  // A cap, because a mis-typed `--len` should not ask this tool to materialise a
+  // gigabyte of hex into a JSON envelope. The section end clamps far below this
+  // for nearly every real call; this is the backstop for the ones where it does
+  // not.
+  const capped = Math.max(1, Math.min(Number(length) || 0, 1 << 20));
+  return withFile(path, (f) => {
+    const slice = layoutSlice(f, arch);
+    const thin = slice.thin;
+    const m = toFileOffset(thin, want);
+    if (!m) {
+      return {
+        path, arch: slice.arch, mode: 'address', vaddr: hex(want),
+        section: null, offset: null, absoluteOffset: null,
+        mapped: false, zerofill: false, found: false,
+        requestedBytes: capped, bytes: 0, truncated: false, lines: [],
+      };
+    }
+    if (m.zerofill) {
+      return {
+        path, arch: slice.arch, mode: 'address', vaddr: hex(want),
+        section: m.section, offset: null, absoluteOffset: null,
+        mapped: true, zerofill: true, found: false,
+        requestedBytes: capped, bytes: 0, truncated: false, lines: [],
+      };
+    }
+    // The tighter of the two bounds. `sectionOf` is null when the address landed
+    // in a segment's padding rather than a section, in which case the slice's own
+    // extent is the only honest limit.
+    const sec = sectionOf(thin, m.offset);
+    const startRel = m.offset;
+    const startAbs = slice.offset + startRel;
+    const endRel = sec ? sec.offset + sec.size : slice.size;
+    const hi = Math.min(slice.offset + endRel, slice.offset + slice.size, f.size, startAbs + capped);
+    const buf = f.read(startAbs, Math.max(0, hi - startAbs));
+    const lines = [];
+    for (let i = 0; i < buf.length; i += 16) {
+      const chunk = buf.subarray(i, i + 16);
+      lines.push({
+        offset: startRel + i,
+        absoluteOffset: startAbs + i,
+        // The address is derived from the request rather than the section, so an
+        // address in a segment's padding still reports the addresses it asked
+        // about rather than snapping to a section start that is not there.
+        vaddr: hex(want + BigInt(i)),
+        hex: chunk.toString('hex').replace(/(..)(?=.)/g, '$1 '),
+        ascii: chunk.toString('latin1').replace(/[^\x20-\x7e]/g, '.'),
+      });
+    }
+    return {
+      path, arch: slice.arch, mode: 'address', vaddr: hex(want),
+      section: m.section, offset: startRel, absoluteOffset: startAbs,
+      mapped: true, zerofill: false, found: true,
+      requestedBytes: capped, bytes: buf.length,
+      truncated: buf.length < capped,
+      lines,
+    };
+  });
+}
+
+/**
+ * The function start addresses a slice declares, with optional symbol names.
+ *
+ * `LC_FUNCTION_STARTS` is the linker's own list of where functions begin, and it
+ * is the only such list a *stripped* binary carries: the symbol table is gone,
+ * but the command survives because the unwinder needs it at runtime. That makes
+ * it the difference between a list of addresses and no structure at all on a
+ * shipped build, and a cross-check on the symbol values of a symballed one.
+ *
+ * ## Labels, not names
+ *
+ * A function start is an address first. Where a defined symbol sits exactly on
+ * one, the symbol's name is reported beside it; where none does, the row carries
+ * a synthetic `sub_<hex>` label — a *name for the address*, not a claim about
+ * what the function does. Naming every address is what turns a column of numbers
+ * into something a person can scan and a pipeline can key on.
+ *
+ * ## The list can be absent, and that is an answer
+ *
+ * An object file, a hand-built binary or a very old one can carry no
+ * `LC_FUNCTION_STARTS` at all. `present: false` says so, rather than returning an
+ * empty list: "the linker recorded no function starts" and "the linker recorded
+ * a list that happens to be empty" are different facts.
+ *
+ * @param {string} path
+ * @param {object} [opts]
+ * @param {string} [opts.arch]      preferred architecture; falls through if absent
+ * @param {boolean} [opts.symbols]  annotate each start with the symbol on it
+ * @param {number} [opts.max=0]     cap the returned list (0 means all)
+ */
+export function listFunctionStarts(path, { arch = null, symbols = false, max = 0 } = {}) {
+  return withFile(path, (f) => {
+    const slice = layoutSlice(f, arch);
+    const thin = slice.thin;
+    const decoded = functionStartAddresses(f, thin, slice.offset);
+    let byAddr = null;
+    if (symbols) {
+      byAddr = new Map();
+      for (const e of readSymbols(f, slice.offset, thin).entries) {
+        // Imports carry `n_value` 0, so including them would make an unnamed start
+        // at a low address resolve to an import's name. A function start is a
+        // defined address or it is unnamed.
+        if (!e.defined || e.addr === 0n) continue;
+        const k = e.addr.toString(16);
+        if (!byAddr.has(k)) byAddr.set(k, e.name);
+      }
+    }
+    const rows = decoded.addresses.map((a, i) => {
+      const row = { index: i, address: hex(a), label: `sub_${a.toString(16)}` };
+      if (byAddr) row.symbol = byAddr.get(a.toString(16)) ?? null;
+      return row;
+    });
+    const capped = max > 0 && max < rows.length;
+    return {
+      path,
+      arch: slice.arch,
+      present: decoded.present,
+      base: decoded.base === null ? null : hex(decoded.base),
+      count: rows.length,
+      // Two truncations, kept apart: the linker's blob was clipped, or this
+      // tool's own `max` cut the list short. Only one is a fact about the file.
+      blobTruncated: decoded.truncated,
+      capped,
+      functions: capped ? rows.slice(0, max) : rows,
+      named: byAddr ? rows.filter((r) => r.symbol).length : null,
+    };
   });
 }
 
@@ -1598,6 +1763,121 @@ function mapOne(best, abs, f) {
 }
 
 /* ------------------------------------------------------------------ *
+ * assert
+ * ------------------------------------------------------------------ */
+
+/**
+ * Evaluate a policy of "this must be here" and "this must not be" claims.
+ *
+ * `audit` gates a file on its *internal* consistency; this gates it on facts a
+ * caller supplies. They answer different questions and a build usually wants
+ * both: audit says the file is well-formed, and an assertion says it still
+ * exports `_main` and still refuses to contain `__debugSummary`.
+ *
+ * ## Four predicates, one shape
+ *
+ *   has-symbol  a symbol with exactly this name is present (defined or imported)
+ *   no-symbol   no symbol has this name
+ *   has-string  some NUL-terminated string contains this text
+ *   no-string   no NUL-terminated string contains this text
+ *
+ * `has-symbol`/`no-symbol` match the *whole* name, because a CI policy names a
+ * symbol rather than a fragment of one, and a substring there would pass on
+ * `_main_helper` when it was asked about `_main`. `has-string`/`no-string` match a
+ * *substring*, because the useful claim is that a URL, an error message or a
+ * format marker is present, and its surrounding string is not the point. Both
+ * reads are the same ones `findliteral --strings` performs, over the same
+ * sections, so a string the listing shows is a string this can assert.
+ *
+ * ## A failed assertion is an answer, not an error
+ *
+ * Every assertion returns pass/fail and the result carries `passed`. Nothing here
+ * throws for a claim that did not hold: "the symbol is absent" is the answer the
+ * caller asked for, and it belongs in `data`, not in `errors`. Only an unreadable
+ * file is an error.
+ *
+ * @param {string} path
+ * @param {Array<{kind: 'has-symbol'|'no-symbol'|'has-string'|'no-string', value: string}>} assertions
+ * @param {object} [opts]
+ * @param {string} [opts.arch]  evaluate only this slice of a universal binary
+ */
+export function assertBinary(path, assertions, { arch = null } = {}) {
+  return withFile(path, (f) => {
+    const slice = layoutSlice(f, arch);
+    const thin = slice.thin;
+    const wantsSymbols = assertions.some((a) => a.kind === 'has-symbol' || a.kind === 'no-symbol');
+    const wantsStrings = assertions.some((a) => a.kind === 'has-string' || a.kind === 'no-string');
+
+    // Each source is read only when something asks about it. A policy made only
+    // of string checks should not parse a symbol table, and on a large binary that
+    // is the difference between a fast check and a slow one.
+    let entries = null;
+    if (wantsSymbols) entries = readSymbols(f, slice.offset, thin).entries;
+
+    let strings = null;
+    if (wantsStrings) {
+      strings = [];
+      for (const sec of thin.sections) {
+        if (!CSTRING_SECTIONS.includes(sec.sectname) || sec.size === 0) continue;
+        const lo = slice.offset + sec.offset;
+        // A declared section can run past the file; clamped as in `findStrings`,
+        // because reading past the end would throw in the middle of an otherwise
+        // good answer.
+        const hi = Math.min(lo + sec.size, f.size);
+        if (hi <= lo) continue;
+        const buf = f.read(lo, hi - lo);
+        let start = 0;
+        while (start < buf.length) {
+          const end = buf.indexOf(0, start);
+          const stop = end === -1 ? buf.length : end;
+          if (stop > start) {
+            const raw = buf.subarray(start, stop);
+            if (printable(raw)) strings.push(raw.toString('latin1'));
+          }
+          if (end === -1) break;
+          start = end + 1;
+        }
+      }
+    }
+
+    const results = assertions.map((a) => {
+      if (a.kind === 'has-symbol' || a.kind === 'no-symbol') {
+        const hit = entries.find((e) => e.name === a.value) ?? null;
+        const pass = a.kind === 'has-symbol' ? hit !== null : hit === null;
+        return {
+          kind: a.kind,
+          value: a.value,
+          pass,
+          detail: hit
+            ? `${a.value} is ${hit.defined ? 'defined' : 'imported'}`
+            : `${a.value} is not in the symbol table`,
+        };
+      }
+      const hits = strings.filter((s) => s.includes(a.value));
+      const pass = a.kind === 'has-string' ? hits.length > 0 : hits.length === 0;
+      return {
+        kind: a.kind,
+        value: a.value,
+        pass,
+        detail: hits.length
+          ? `found in ${hits.length} string(s)`
+          : 'not found in any NUL-terminated string',
+      };
+    });
+
+    const failed = results.filter((r) => !r.pass);
+    return {
+      path,
+      arch: slice.arch,
+      passed: failed.length === 0,
+      count: results.length,
+      failed: failed.length,
+      assertions: results,
+    };
+  });
+}
+
+/* ------------------------------------------------------------------ *
  * audit
  * ------------------------------------------------------------------ */
 
@@ -2291,7 +2571,7 @@ export function diffBinaries(a, b, { arch = null, maxNames = 20 } = {}) {
     // *declaration* — LC_MAIN is the entry point and LC_RPATH a search path, and
     // describing either as something the binary "loads" is a small falsehood in a
     // tool whose whole claim is that it reports facts.
-    const phrased = (name) => (DYLIB_COMMANDS.has(name)
+    const phrased = (name) => (DYLIB_COMMAND_NAMES.has(name)
       ? `loads ${name.slice('LC_'.length)}`
       : `declares ${name}`);
     for (const name of na) {
@@ -2446,8 +2726,15 @@ const PROVENANCE = new Set([
   'LC_SOURCE_VERSION',
 ]);
 
-/** The commands that genuinely mean "this binary needs something at link time". */
-const DYLIB_COMMANDS = new Set([
+/**
+ * The commands that genuinely mean "this binary needs something at link time".
+ *
+ * Named `..._NAMES` rather than `DYLIB_COMMANDS` because `macho.mjs` exports a
+ * `DYLIB_COMMANDS` map of the same commands to their decoded payloads, and the
+ * browser bundle in `demo/` links these three modules into one scope — where two
+ * top-level `const`s sharing a name is a redeclaration error, not a shadow.
+ */
+const DYLIB_COMMAND_NAMES = new Set([
   'LC_LOAD_DYLIB',
   'LC_LOAD_WEAK_DYLIB',
   'LC_REEXPORT_DYLIB',

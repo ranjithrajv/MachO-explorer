@@ -1,0 +1,142 @@
+.TH DUMP 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.SH NAME
+dump \- read the bytes at a virtual address, resolved through their section
+.SH SYNOPSIS
+.B dump
+.I hex-vaddr
+.RI [ binary | bundle ]
+.RB [ \-\-len= n ]
+.RB [ \-\-arch= name ]
+.RB [ \-\-json ]
+.RB [ \-b | \-\-binary
+.IR path ]
+.RB [ \-h | \-\-help ]
+.SH DESCRIPTION
+Reports the bytes stored at a virtual address, together with the section that maps
+it and the file offset the bytes begin at.
+.PP
+.B a2o
+answers which byte of the file an address lands at and stops there. The next
+question is always what is stored in it, and the answer is not a plain
+.BR dd (1)
+window. An address resolves to a
+.I section
+, and the dump starts at the address and stops at that section's own end. Reading
+past the boundary would silently blend two sections \- 
+.B __cstring
+into
+.B __const
+, or the tail of
+.B __text
+into whatever the linker packed after it \- and a reader comparing those bytes
+against a hex editor's window would be looking at two different things without
+being told.
+.SH THREE ANSWERS
+An address can reach a byte, be mapped with no byte, or be in no slice at all.
+All three are answers, and the exit status follows the taxonomy every tool here
+uses.
+.B zerofill
+(addresses in
+.BR __bss ,
+.B __noptrbss
+or
+.BR __PAGEZERO ,
+and the tail of a segment past its
+.BR filesize )
+means the address is mapped in memory and no byte of it exists in the file.
+.B mapped
+false means no slice maps the address at all. Both exit 1, because the tool
+answered the question and the answer was no.
+.PP
+.B __bss
+is the case that makes this a separate tool rather than an option on
+.BR a2o :
+converting such an address to an offset must refuse, and printing the two refused
+cases as one would send a patch script to
+.B __TEXT
+for a byte that lives in zeroed memory.
+.SH OPTIONS
+.TP
+.BI \-\-len= n
+How many bytes to read, at most. Default 64, and capped at 1048576. This is a
+request, not an override: the dump also stops at the section's end and at the
+slice's own extent, because on a universal binary the bytes after a slice belong
+to the next architecture. The
+.B truncated
+field says when the request was not met in full.
+.TP
+.BI \-\-arch= name
+Read one architecture by name:
+.BR x86_64 ,
+.BR arm64 ,
+.BR arm64e ,
+.BR arm64_32 ,
+.BR ppc ,
+.BR ppc64 ,
+.BR arm
+or
+.BR i386 .
+A universal binary maps
+.B __TEXT
+at 0x100000000 in
+.I every
+slice, so without this flag the first slice is read.
+.TP
+.BR \-b ", " \-\-binary " " \fIpath\fR
+The binary to read. May also be given as the second positional argument, because
+the first is unambiguously an address.
+.TP
+.B \-\-json
+Write one JSON object to standard output and send all prose to standard error.
+Each row carries its address as a
+.B "0x..."
+string: a 64\-bit virtual address does not survive a JSON number.
+.TP
+.B \-h ", " \-\-help
+Print usage and exit 0.
+.SH ENVIRONMENT
+.TP
+.B MACHO_EXPLORER_BINARY
+The binary to read when none is given.
+.TP
+.B MACHO_EXPLORER_APP
+An application bundle to read, tried after
+.BR MACHO_EXPLORER_BINARY .
+.TP
+.B MACHO_EXPLORER_CONFIG
+Path to a replacement
+.IR config.json .
+.SH EXIT STATUS
+.TP
+.B 0
+Bytes were read.
+.TP
+.B 1
+The address was mapped with no byte, or in no slice. A negative result, not a
+failure.
+.TP
+.B 2
+Usage error, including an address that is not hexadecimal with an
+.B 0x
+prefix or a
+.B \-\-len
+that is not a positive whole number.
+.TP
+.B 3
+The file could not be read or parsed.
+.SH EXAMPLES
+.PP
+.RS
+.nf
+dump 0x100001000 \-b /usr/local/go/bin/go
+dump \-\-len=32 0x100085c30 /usr/local/go/bin/go
+dump \-\-json 0x100001000 \-b /usr/local/go/bin/go | jq '.data.lines[0].hex'
+.fi
+.RE
+.SH SEE ALSO
+.BR a2o (1),
+.BR o2a (1),
+.BR findliteral (1),
+.BR mapliteral (1),
+.BR describe (1),
+.BR xxd (1)

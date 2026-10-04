@@ -266,6 +266,23 @@ for (const name of SKILLS) {
         if (flag === 'matched-only') return [src, ...sub, `--${flag}`, 'pop', '--in', path.join(HERE, 'fixtures')];
         break;
       }
+      case 'dump':
+        // `dump` takes the address as its first positional and the binary as its
+        // second, so a valued flag has to be given its value *before* the address —
+        // `--len 16 <binary>` would otherwise put the path in the address slot and
+        // fail the hex check, making a working flag look rejected.
+        // `...sub` is load-bearing: without it the dispatcher sees `--len` as the
+        // subcommand and answers "unknown subcommand" with exit 2 — a working flag
+        // reported as rejected, which is the false positive this whole loop exists
+        // to avoid.
+        return flag === 'len'
+          ? [src, ...sub, '--len', '16', '0x100000000', probeBin]
+          : flag === 'arch'
+            ? [src, ...sub, '--arch', 'x86_64', '0x100000000', probeBin]
+            : [src, ...sub, `--${flag}`, '0x100000000', probeBin];
+      case 'starts':
+        // `--max` takes a number; `--symbols` is a bare flag.
+        return flag === 'max' ? [src, ...sub, '--max', '5', probeBin] : [src, ...sub, `--${flag}`, probeBin];
       default:
         break;
     }

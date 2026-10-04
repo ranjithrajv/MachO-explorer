@@ -49,7 +49,8 @@ const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 
 
 const SUBCOMMANDS = [
   'describe', 'overview', 'sym', 'symlookup', 'findcall', 'findliteral',
-  'mapliteral', 'a2o', 'o2a', 'disasm', 'audit', 'fingerprint', 'diff', 'mcp',
+  'mapliteral', 'a2o', 'o2a', 'dump', 'starts', 'assert', 'disasm', 'audit',
+  'fingerprint', 'diff', 'mcp',
 ];
 
 const HELP = [

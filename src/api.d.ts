@@ -330,9 +330,9 @@ export interface FingerprintComparison {
   caveat: string | null;
 }
 
-/** One structural difference between two binaries. */
+/** One difference between two binaries — a structural fact, or a literal string. */
 export interface BinaryDifference {
-  category: 'slices' | 'header' | 'flags' | 'load-commands' | 'sections' | 'symbols';
+  category: 'slices' | 'header' | 'flags' | 'load-commands' | 'sections' | 'symbols' | 'literals';
   arch: string | null;
   kind: string;
   detail: string;
@@ -349,8 +349,9 @@ export interface BinaryDiff {
     differenceCount: number;
     symbols: { a: number; b: number; added: number; removed: number };
     sections: { a: number; b: number };
+    literals: { a: number; b: number; added: number; removed: number };
   }>;
-  /** Structural changes. The verdict is computed from these alone. */
+  /** Structural and content changes. The verdict is computed from these alone. */
   differences: BinaryDifference[];
   /** UUID and provenance-command changes — reported, never counted. */
   buildMetadata: Array<{ arch: string | null; kind: string; detail: string; name: string | null }>;
@@ -474,6 +475,12 @@ export interface Thin {
    * link against. `null` on an executable, which has no install name.
    */
   installName: DylibRef | null;
+  /**
+   * The raw `LC_FUNCTION_STARTS` command, or null. Decoded lazily by
+   * `functionStartAddresses`, because a slice never asked about its function
+   * starts should not pay to read them.
+   */
+  functionStarts: { dataoff: number; datasize: number; cmdsize: number } | null;
 }
 
 /**
@@ -687,6 +694,43 @@ export declare function diffBinaries(
   b: string,
   opts?: { arch?: string | null; maxNames?: number },
 ): BinaryDiff;
+
+/** One assertion and whether it held. */
+export interface AssertionResult {
+  kind: 'has-symbol' | 'no-symbol' | 'has-string' | 'no-string';
+  value: string;
+  pass: boolean;
+  /** What was found, in the caller's own terms. */
+  detail: string;
+}
+
+/**
+ * The result of evaluating a policy of must-be-here and must-not-be claims.
+ *
+ * `passed` is the gate: true only when every assertion held. A failed assertion is
+ * an answer, not an error, so nothing here throws for a claim that did not hold.
+ */
+export interface AssertResult {
+  path: string;
+  arch: string | null;
+  passed: boolean;
+  count: number;
+  failed: number;
+  assertions: AssertionResult[];
+}
+
+/**
+ * Evaluate a policy of "this must be here" and "this must not be" claims.
+ *
+ * `has-symbol`/`no-symbol` match the whole symbol name; `has-string`/`no-string`
+ * match a substring of any NUL-terminated string. Both string reads are the ones
+ * `findStrings` performs, over the same sections.
+ */
+export declare function assertBinary(
+  path: string,
+  assertions: Array<{ kind: 'has-symbol' | 'no-symbol' | 'has-string' | 'no-string'; value: string }>,
+  opts?: { arch?: string },
+): AssertResult;
 
 /**
  * Search the symbol tables of many binaries in one call, through the same envelope
@@ -1110,6 +1154,111 @@ export declare function offsetToAddress(
   }>;
   slices: Array<{ arch: string; offset: number }>;
 };
+
+/** One row of a `dump`, normally sixteen bytes. Addresses are hex, offsets numeric. */
+export interface DumpLine {
+  /** Slice-relative file offset of the row's first byte. */
+  offset: number;
+  /** The same position in the whole file, with the slice's offset added. */
+  absoluteOffset: number;
+  /** `0x…`, the address of the row's first byte. */
+  vaddr: string;
+  /** The bytes as space-separated hex pairs — sixteen pairs, or fewer on the last row. */
+  hex: string;
+  /** The same bytes as printable ASCII, with everything else as `.`. */
+  ascii: string;
+}
+
+/**
+ * The bytes at a virtual address, resolved through the section that maps it.
+ *
+ * `found` is false in the two cases where an address is a real answer but has
+ * no byte: `zerofill` (mapped, absent from the file) and `mapped: false` (in no
+ * slice). `truncated` means the request outran the section's own end.
+ */
+export interface DumpResult {
+  path: string;
+  arch: string | null;
+  mode: 'address';
+  /** The address asked about, as `0x…`. */
+  vaddr: string;
+  /** `__TEXT,__text`, or `__DATA (segment)` for a range no section covers. */
+  section: string | null;
+  /** Slice-relative offset of the first byte. Null when there is no byte. */
+  offset: number | null;
+  /** The first byte's position in the whole file. Null when there is no byte. */
+  absoluteOffset: number | null;
+  mapped: boolean;
+  zerofill: boolean;
+  found: boolean;
+  /** The `length` asked for, after the 1 MiB cap. */
+  requestedBytes: number;
+  /** How many bytes were actually read. */
+  bytes: number;
+  /** True when the section (or the slice) ended before `requestedBytes` did. */
+  truncated: boolean;
+  lines: DumpLine[];
+}
+
+/**
+ * The bytes at an address, bounded by the section that maps it.
+ *
+ * This is `addressToOffset` followed by a read. The address resolves to a
+ * section, the dump starts there and stops at that section's own end so it
+ * never blends `__cstring` into `__const`, and the slice's extent is a second
+ * bound because the bytes after a slice belong to the next architecture.
+ */
+export declare function dumpBytes(
+  path: string,
+  vaddr: Vaddr,
+  opts?: { arch?: string; length?: number },
+): DumpResult;
+
+/** One function start: an address, its synthetic label, and the symbol on it if any. */
+export interface FunctionStart {
+  index: number;
+  /** `0x…`, the address the linker recorded. */
+  address: string;
+  /** `sub_<hex>` — a name for the address, not a claim about what the function does. */
+  label: string;
+  /** The defined symbol sitting exactly on this start, or null. */
+  symbol?: string | null;
+}
+
+/**
+ * The function start addresses a slice declares, with optional symbol names.
+ *
+ * `present` is false when the file carries no `LC_FUNCTION_STARTS` at all, which is
+ * an answer rather than an empty list. `blobTruncated` means the blob ends
+ * mid-value and the last delta was dropped. `capped` means `max` cut the list
+ * short; `count` stays exact either way. `named` is null unless `symbols` was
+ * requested.
+ */
+export interface FunctionStartsResult {
+  path: string;
+  arch: string | null;
+  present: boolean;
+  /** The image base the deltas are relative to, as `0x…`. */
+  base: string | null;
+  /** How many starts were decoded, before any `max` cap. */
+  count: number;
+  blobTruncated: boolean;
+  capped: boolean;
+  functions: FunctionStart[];
+  /** How many starts carry a defined symbol; null when `symbols` was not requested. */
+  named: number | null;
+}
+
+/**
+ * The function entry addresses the linker recorded, read from `LC_FUNCTION_STARTS`.
+ *
+ * This is the only such list a stripped binary carries: the symbol table is gone,
+ * but the command survives because the unwinder needs it at runtime.
+ */
+export declare function listFunctionStarts(
+  path: string,
+  opts?: { arch?: string; symbols?: boolean; max?: number },
+): FunctionStartsResult;
 
 /**
  * Search a symbol table by substring or regex, with one coherent set of rules.

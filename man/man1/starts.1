@@ -1,0 +1,146 @@
+.TH STARTS 1 "October 4, 2026" "MachO-explorer 0.1.0" "User Commands"
+.SH NAME
+starts \- list the function entry addresses a binary records
+.SH SYNOPSIS
+.B starts
+.RI [ binary | bundle ]
+.RB [ \-\-symbols ]
+.RB [ \-\-max= n ]
+.RB [ \-\-arch= name ]
+.RB [ \-\-json ]
+.RB [ \-b | \-\-binary
+.IR path ]
+.RB [ \-h | \-\-help ]
+.SH DESCRIPTION
+Lists every function entry the linker recorded, read from
+.BR LC_FUNCTION_STARTS .
+.PP
+That command is the linker's own list of where functions begin, and it is the
+.I only
+such list a stripped binary carries: the symbol table is gone, but the command
+survives because the unwinder needs it at runtime. On a shipped build it is the
+difference between a column of addresses and no structure at all; on a symballed
+one it is a cross\-check on the symbol values.
+.PP
+Each address is labeled
+.BR sub_<hex> .
+That is a name for the address, not a claim about what the function does, but it
+is what turns a list of numbers into something a person can scan and a pipeline
+can key on.
+.SH PRESENT, EMPTY, AND ABSENT
+Three outcomes, kept apart because they are three different facts:
+.TP
+.B present
+the file carries an
+.B LC_FUNCTION_STARTS
+blob, and
+.B count
+says how many entries it decoded.
+.TP
+.B count 0
+the blob is present but empty: the linker recorded no functions.
+.TP
+.B present false
+the file carries no
+.B LC_FUNCTION_STARTS
+at all. An object file and a hand\-built binary usually have none.
+.PP
+The last two exit 1, because the tool answered the question and the answer was
+no. A caller that reads "nothing" as a crash will not look again.
+.SH OPTIONS
+.TP
+.B \-\-symbols
+Add the defined symbol sitting on each start, when there is one. A start with no
+symbol on it keeps its
+.B sub_<hex>
+label.
+.TP
+.BI \-\-max= n
+Cap the list. Default 0, meaning all. The
+.B count
+field stays exact, so a capped list is distinguishable from a short one.
+.TP
+.BI \-\-arch= name
+Read one architecture by name:
+.BR x86_64 ,
+.BR arm64 ,
+.BR arm64e ,
+.BR arm64_32 ,
+.BR ppc ,
+.BR ppc64 ,
+.BR arm
+or
+.BR i386 .
+A universal binary maps
+.B __TEXT
+at 0x100000000 in
+.I every
+slice, so without this flag the first slice is read.
+.TP
+.BR \-b ", " \-\-binary " " \fIpath\fR
+The binary to read. May also be given as the first positional argument.
+.TP
+.B \-\-json
+Write one JSON object to standard output and send all prose to standard error.
+Addresses are rendered as
+.B "0x..."
+strings: a 64\-bit virtual address does not survive a JSON number.
+.TP
+.B \-h ", " \-\-help
+Print usage and exit 0.
+.SH ENVIRONMENT
+.TP
+.B MACHO_EXPLORER_BINARY
+The binary to read when none is given.
+.TP
+.B MACHO_EXPLORER_APP
+An application bundle to read, tried after
+.BR MACHO_EXPLORER_BINARY .
+.TP
+.B MACHO_EXPLORER_CONFIG
+Path to a replacement
+.IR config.json .
+.SH EXIT STATUS
+.TP
+.B 0
+The linker recorded function starts.
+.TP
+.B 1
+There are none: the blob is empty, or the file carries no
+.B LC_FUNCTION_STARTS
+at all. A negative result, not a failure.
+.TP
+.B 2
+Usage error, including a
+.B \-\-max
+that is not a whole number >= 0.
+.TP
+.B 3
+The file could not be read or parsed.
+.SH EXAMPLES
+.PP
+.RS
+.nf
+starts /usr/local/go/bin/go
+starts \-\-symbols \-\-max=20 /usr/local/go/bin/go
+starts \-\-json /usr/local/go/bin/go | jq '.data.count'
+.fi
+.RE
+.SH NOTES
+A start address is where the linker says a function begins. It is not a boundary
+derived from disassembly, and it is not the same as a symbol: a symbol can sit
+mid\-function, and a function can have no symbol at all. Where the two disagree,
+the symbol table is the one to distrust first.
+.PP
+The blob is a sequence of ULEB128 deltas from the image base, terminated by a
+zero. A blob whose last value still has its continuation bit set is damaged or
+was clipped; the partial value is dropped and
+.B blobTruncated
+is true, because a silently dropped value turns "the list ends here" into a
+complete\-looking list that is one short.
+.SH SEE ALSO
+.BR symlookup (1),
+.BR sym (1),
+.BR disasm (1),
+.BR describe (1),
+.BR nm (1)

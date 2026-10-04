@@ -33,6 +33,130 @@ macho-explorer findcall --json 0x100085c30 /usr/local/go/bin/go | jq '.count'
 
 No dependencies, no build step, no install, no network. Node ≥ 22.15.
 
+## What it covers
+
+Mach-O, on every platform Apple ships it — which is the whole reason one reader
+is enough:
+
+| Platform | Architectures |
+|---|---|
+| **macOS** | `x86_64`, `arm64`, `i386` |
+| **iOS / iPadOS** | `arm64`, `arm64e`, `armv7` |
+| **tvOS** | `arm64` |
+| **watchOS** | `arm64_32`, `armv7k` |
+| **visionOS** | `arm64` |
+
+| | |
+|---|---|
+| **Format** | thin and fat (universal), 32-bit and 64-bit, little-endian |
+| **Filetypes** | all twelve `MH_*` values named — executable, dylib, bundle, dylinker, kext, fileset, dSYM, core, object |
+| **Also reported** | the target platform and SDK (`LC_BUILD_VERSION`), and `ppc` / `ppc64` by name |
+| **Not covered** | big-endian Mach-O, ELF, PE, the dyld shared cache, firmware images |
+| **Hosts** | Linux, macOS and Windows — one Node runtime, no dependencies, no build step |
+
+Five things about that table are worth stating rather than leaving to be
+discovered:
+
+- **visionOS needs nothing new.** A Vision Pro binary is arm64 Mach-O — the M2 —
+  so the same reader handles it and only the platform constant distinguishes it.
+  `LC_BUILD_VERSION` reports `visionos` and `visionos-simulator` separately.
+- **iPadOS is reported as `ios`**, and that is the file's doing, not the tool's.
+  Apple defines `PLATFORM_IOS` and no separate iPadOS constant, so an iPadOS
+  binary says `ios` and reporting anything else would be a fabrication.
+- **watchOS is the awkward one.** `arm64_32` is a 32-bit ABI on the arm64
+  instruction set, so it uses the *64-bit* Mach-O header with 32-bit pointers —
+  `bits: 64` is right about the file and wrong about the pointer. And `armv7k`
+  reports as `arm`: the subtype is what makes it a watch, so it is the platform
+  command, not the architecture name, that identifies one.
+- **Big-endian is refused, not misread.** A PowerPC or 68k slice is named and
+  listed in the slice table, but reports `readable: false` with
+  `unknown-encoding` rather than being parsed as if its bytes were little-endian
+  — so a NeXTSTEP or classic Mac OS binary is visibly unsupported instead of
+  quietly wrong.
+- **All twelve `MH_*` filetypes are named; four are read with a caveat.** The
+  eight loaded-image shapes — `MH_EXECUTE`, `MH_DYLIB`, `MH_BUNDLE`,
+  `MH_DYLINKER`, `MH_KEXT_BUNDLE`, `MH_FVMLIB`, `MH_PRELOAD`, `MH_DYLIB_STUB` —
+  are what the tools are built for. The other four parse and are named, but the
+  address model does not carry over: `MH_OBJECT` is relocatable, so it has no
+  load address (`textAddr` is `0x0` and symbol values are section-relative
+  offsets, making `symlookup`/`a2o` answers meaningful only relative to the
+  object); `MH_FILESET` is named but **not traversed**, so the nested Mach-Os
+  inside a kernelcache are not walked; `MH_DSYM` carries only `__DWARF`, which
+  this does not read; and `MH_CORE` keeps its state in `LC_THREAD`, not `__text`.
+
+An App Store binary's `__TEXT` is ciphertext, which changes what a zero result
+means. That is not a footnote: see
+[iOS binaries, and what an encrypted one means](#ios-binaries-and-what-an-encrypted-one-means).
+
+## The tools
+
+| | |
+|---|---|
+| `describe.mjs` | What is in this file? Every slice, architecture, extent, **platform** (ios / macos / tvos…), **filetype**, symbol counts, where `__TEXT` starts, the build's **UUID**, the header's **flags** (`MH_PIE`, `MH_TWOLEVEL`, …), each section's **type** and **attributes**, the **entry point**, **rpaths** and **source version** — plus, with `--sections`, `--segments` or `--loads`, every section, segment and load command by name. Reports **abnormalities** when a header disagrees with the file |
+| `sym.mjs` | Search a symbol table by substring, or by regex with `--regex`. Imports marked rather than shown as `0x0` |
+| `symlookup.mjs` | Which function contains this vaddr? Reads symbols directly, because `nm` on a large universal binary is unusable |
+| `starts.mjs` | Where do functions begin? The linker's own `LC_FUNCTION_STARTS` list — the only one a stripped binary carries, each address labeled `sub_<hex>` |
+| `findcall.mjs` | Direct `call`/`jmp` xrefs to an address — or `--list` for the distinct targets a binary calls |
+| `findliteral.mjs` | Find a byte literal anywhere in a file, per slice, with context — or `--strings` to list what the binary already contains |
+| `mapliteral.mjs` | Map a literal to vaddrs, then find the pointers to them — which is how you find the code that handles a format |
+| `a2o.mjs` | Which byte of the file is this vaddr? Both the slice-relative and the absolute offset, and zero-fill as its own answer |
+| `o2a.mjs` | Which vaddr does this file offset have? Every slice's answer, since one offset means a different address in each |
+| `dump.mjs` | The bytes at a vaddr, resolved through its section — bounded by that section, so it never blends into the next one |
+| `disasm.mjs` | Where do instructions start and end at this address, and where do they branch? Instruction lengths plus resolved **direct** branch edges for `arm64`, `arm64e` and `x86_64` — bytes, not mnemonics |
+| `audit.mjs` | Is this file internally consistent? Every structural claim it makes about itself, checked, with a verdict and an exit status a build can gate on |
+| `fingerprint.mjs` | Is this the same **program** as that one? A digest that survives a rebuild, which a byte comparison cannot |
+| `diff.mjs` | What changed between two binaries — structure and literal content, so a rebuilt pair does not read as a different program |
+| `assert.mjs` | A CI policy: `--has-symbol`, `--no-symbol`, `--has-string`, `--no-string`, repeatable. Exit 0 only when every assertion holds |
+
+Fifteen tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
+`sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, eight
+until `disasm.mjs` added the boundary decoder, nine until `audit`, `fingerprint`
+and `diff` answered the three questions a build or a reviewer asks about *two*
+binaries at once, and twelve until `dump`, `starts` and `assert` added the byte
+read, the function list and the policy gate.
+
+### Three questions about two binaries
+
+The last three tools exist because one question — "is this the same thing?" — has
+three different answers, and every existing tool gives you the wrong one:
+
+| | |
+|---|---|
+| **same build** | the `LC_UUID`. Exact, and useless the moment anything is relinked |
+| **same program** | a `fingerprint`. Survives a rebuild; changes if a symbol or a section does |
+| **what changed** | a `diff`. Structure and literal content, so a rebuilt pair is not a changed one |
+
+Byte comparison gets both directions wrong. Two builds of one source differ in every
+address — PIE and ASLR move them — in the dylib version fields, and in any
+timestamp, so `cmp` calls them different. Two *different* programs built from one
+template with a function renamed differ in almost nothing structural, so a loose
+structural diff calls them the same.
+
+```sh
+$ fingerprint v1.0/libthing.dylib v1.1/libthing.dylib
+  same program, rebuilt
+$ diff v1.0/libthing.dylib v1.1/libthing.dylib
+  same program, rebuilt  —  0 difference(s), 1 build-metadata change(s)
+  exit 0
+```
+
+`audit` is the fourth thing in this family, and the one aimed at a build rather than
+a person: it checks every structural claim a file makes about itself and exits
+non-zero when it does not hold up. Findings carry a **severity** — `error` means the
+file disagrees with itself, `warning` means it parsed and something is merely
+unfamiliar — so `--strict` can widen the gate without failing every build produced
+by a newer Xcode:
+
+```sh
+$ audit --strict build/Contents/MacOS/app
+app — FAILED  2 error(s), 1 warning(s)
+exit 1
+```
+
+It also checks the fat table itself, which no per-slice check can: two slices
+claiming the same file bytes are *each* internally consistent, and the damage only
+exists between them.
+
 ## Install
 
 ```sh

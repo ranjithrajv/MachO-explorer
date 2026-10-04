@@ -864,6 +864,7 @@ export function parseThin(f, base = 0) {
   const loadCommands = [];
   let symtab = null;
   let uuid = null;
+  let functionStarts = null;
   let entryPoint = null;
   let sourceVersion = null;
   let buildVersion = null;
@@ -905,6 +906,17 @@ export function parseThin(f, base = 0) {
           stroff: s.readUInt32LE(16),
           strsize: s.readUInt32LE(20),
         };
+      }
+    } else if (cmd === LC_FUNCTION_STARTS_CMD) {
+      // `struct linkedit_data_command`: two `uint32_t`s after the header.
+      // `dataoff` is a file offset into `__LINKEDIT` — relative to the slice, the
+      // same basis every other offset in a load command uses — and `datasize` is
+      // how many bytes the blob occupies, terminator and any padding included.
+      // The bytes are decoded lazily by `functionStartAddresses`, because a slice
+      // that is never asked about function starts should not pay to read them.
+      const s = f.read(off, 16);
+      if (s.length >= 16) {
+        functionStarts = { dataoff: s.readUInt32LE(8), datasize: s.readUInt32LE(12), cmdsize };
       }
     } else if (cmd === LC_MAIN_CMD || cmd === LC_MAIN) {
       // `struct entry_point_command`: `cmdsize` 24, with `entryoff` and
@@ -1167,6 +1179,7 @@ export function parseThin(f, base = 0) {
     is64, cputype, cpusubtype, filetype: decodeFiletype(filetype), ncmds, sizeofcmds, flags,
     segments, sections, loadCommands, symtab, uuid,
     entryPoint, sourceVersion, buildVersion, encryption, rpaths, dylibs, installName,
+    functionStarts,
   };
 }
 
@@ -1304,6 +1317,71 @@ export function readSymbols(f, base, thin) {
     }
   }
   return { names, entries, defined, total: symtab.nsyms, note: null };
+}
+
+/**
+ * The function start addresses of a slice, decoded from `LC_FUNCTION_STARTS`.
+ *
+ * ## The format
+ *
+ * `LC_FUNCTION_STARTS` names a blob in `__LINKEDIT`: a sequence of ULEB128
+ * values. The first is a delta from the image base — the `__TEXT` segment's
+ * `vmaddr`, which is also the address of the Mach header — and every later one is
+ * a delta from the address before it. A zero value ends the list; anything after
+ * it is alignment padding.
+ *
+ * ## Why the base is `__TEXT.vmaddr` and not zero
+ *
+ * Every measured binary puts its first function a little after `__TEXT.vmaddr`,
+ * and the deltas are small. Treating them as absolute would report that function
+ * at `0x1f8` rather than `0x1000001f8` — an address plausible enough to be passed
+ * to another tool and looked up, which is why the base is read rather than
+ * assumed. This is the same reasoning that keeps `entryoff` a raw offset: a
+ * derived address that is wrong is worse than an offset that is honest.
+ *
+ * ## Truncation is reported, not hidden
+ *
+ * A blob whose last value still has its continuation bit set is damaged or
+ * clipped. The partial value is dropped and `truncated` is true, because a
+ * silently dropped value turns "the list ends here" into a complete-looking list
+ * that is one short.
+ *
+ * @param {Opener} f
+ * @param {Thin} thin
+ * @param {number} [sliceOffset=0] the slice's position in the file
+ */
+export function functionStartAddresses(f, thin, sliceOffset = 0) {
+  const fs = thin.functionStarts;
+  if (!fs || fs.datasize === 0) {
+    return { base: null, addresses: [], truncated: false, present: false };
+  }
+  const text = thin.segments.find((s) => s.segname === '__TEXT');
+  const base = text ? text.vmaddr : thin.segments[0]?.vmaddr ?? 0n;
+  const buf = f.read(sliceOffset + fs.dataoff, fs.datasize);
+  const addresses = [];
+  let addr = base;
+  let i = 0;
+  let truncated = false;
+  while (i < buf.length) {
+    let value = 0n;
+    let shift = 0n;
+    let more = true;
+    while (more) {
+      if (i >= buf.length) {
+        truncated = true;
+        break;
+      }
+      const byte = buf[i++];
+      value |= BigInt(byte & 0x7f) << shift;
+      more = (byte & 0x80) !== 0;
+      shift += 7n;
+    }
+    if (truncated) break;
+    if (value === 0n) break; // the terminator
+    addr += value;
+    addresses.push(addr);
+  }
+  return { base, addresses, truncated, present: true };
 }
 
 /**
