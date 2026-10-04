@@ -87,7 +87,7 @@ try {
 
 const notes = [];
 if (r.locations.length === 0) {
-  notes.push(`no ${JSON.stringify(literal)} literal in __TEXT — pass file offsets explicitly if the magic is assembled at runtime rather than stored`);
+  notes.push(`no ${JSON.stringify(literal)} literal found — it may be assembled at runtime from parts rather than stored as a contiguous byte sequence`);
 }
 if (r.locations.every((l) => l.pointerCount === 0)) {
   notes.push('no pointers to any of these addresses — this magic has no descriptor table pointing at it, so nothing dispatches on it by reference');
@@ -102,7 +102,7 @@ if (flags.has('json')) {
 
 console.log(
   `slice ${r.arch} at file offset 0x${r.sliceOffset.toString(16)}` +
-    (r.explicit ? ' (offsets given explicitly)' : `, ${r.locations.length} literal location(s) found in __TEXT`),
+    (r.explicit ? ' (offsets given explicitly)' : `, ${r.locations.length} literal location(s) found`),
 );
 
 for (const m of r.locations) {

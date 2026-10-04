@@ -1501,10 +1501,19 @@ export function mapLiteral(path, literal, { arch, offsets = null, maxPointers = 
       const inText = text
         ? searchRange(f, needle, s.offset + text.offset, s.offset + text.offset + text.size)
         : [];
+      // Search all sections, not just __TEXT — a literal in __cstring is still a
+      // literal, and the pointers to it are what the caller wants. The section
+      // name is reported per hit so the caller can tell a code immediate from
+      // a string in __cstring.
+      const inAllSections = [];
+      for (const sec of thin.sections || []) {
+        const hits = searchRange(f, needle, s.offset + sec.offset, s.offset + sec.offset + sec.size);
+        for (const hit of hits) inAllSections.push({ offset: hit, section: `${sec.segname},${sec.sectname}` });
+      }
       const syms = readSymbols(f, s.offset, thin);
       parsed.push({
-        name, s, thin, text, nsyms: syms.total, inText,
-        report: { arch: name, offset: s.offset, size: s.size, inText: inText.length, nsyms: syms.total },
+        name, s, thin, text, nsyms: syms.total, inText, inAllSections,
+        report: { arch: name, offset: s.offset, size: s.size, inText: inText.length, inAllSections: inAllSections.length, nsyms: syms.total },
       });
     }
     if (parsed.length === 0) throw new Error('no Mach-O slice could be parsed');
@@ -1519,11 +1528,14 @@ export function mapLiteral(path, literal, { arch, offsets = null, maxPointers = 
       // `findliteral` output has an absolute offset, and normalising a relative
       // one here would be a guess about which they meant.
       abs = given;
-    } else if (best.text) {
-      const lo = best.s.offset + best.text.offset;
-      abs = searchRange(f, needle, lo, lo + best.text.size);
     } else {
+      // Search all sections, not just __TEXT. A literal in __cstring is still a
+      // literal, and the pointers to it are what the caller wants.
       abs = [];
+      for (const sec of best.thin.sections || []) {
+        const hits = searchRange(f, needle, best.s.offset + sec.offset, best.s.offset + sec.offset + sec.size);
+        abs.push(...hits);
+      }
     }
 
     const locations = abs.map((o) => mapOne(best, o, f));

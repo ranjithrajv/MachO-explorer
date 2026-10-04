@@ -919,8 +919,8 @@ export const TOOLS = [
     title: 'Map a literal to addresses, then find what points at it',
     description:
       'The tool that answers "where is this format magic, which addresses does it map to, and what code handles it". ' +
-      'Finds each occurrence of the literal, maps it to the virtual address it loads at, then finds the pointers in the ' +
-      'binary that reference those addresses — which is the set of sites worth disassembling.\n\n' +
+      'Finds each occurrence of the literal across all sections (not just __TEXT), maps it to the virtual address it loads at, ' +
+      'then finds the pointers in the binary that reference those addresses — which is the set of sites worth disassembling.\n\n' +
       'Pass `offsets` to skip the first pass and map specific file offsets, as reported by findliteral.\n\n' +
       'An empty pointer list means nothing references that literal by address, which usually means it is matched inline ' +
       'or built at runtime rather than through a table.',

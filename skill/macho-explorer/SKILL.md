@@ -245,7 +245,10 @@ return structured answers:
 ```
 describe  sym  symlookup  findcall
 findliteral  mapliteral  a2o  o2a
+audit  fingerprint  diff
 ```
+
+**Not on the MCP server:** `overview`, `disasm` — use the CLI for these.
 
 **2. The CLI**, which needs nothing configured:
 
@@ -292,7 +295,9 @@ end up reading addresses that were never in that slice.
    make sense of an address from a crash log.
 4. **`findcall`** for who calls it.
 5. **`findliteral`** for where a format magic sits, then
-   **`mapliteral`** for which code points at it. This pair is the one with
+   **`mapliteral`** for which code points at it. `mapliteral` searches all
+   sections (not just `__TEXT`), so it finds literals in `__cstring` too —
+   the section name is reported per hit. This pair is the one with
    no equivalent in `ipsw`, Ghidra or `otool`.
 
 To go the other way — from an address to the file position to read bytes —
@@ -321,11 +326,14 @@ On x86_64 the scan is typed by section rather than by instruction, so it can als
 match a byte inside the middle of a multi-byte instruction. On arm64 it steps 4
 bytes and sees only aligned `BL`s.
 
-**A stripped binary has no symbols.** `sym` and `symlookup` return
+**A stripped binary has no defined symbols.** `sym` and `symlookup` return
 nothing at all rather than guessing — which means a missing `.dSYM` makes those
 two useless, while `findcall` and `findliteral` keep working, because
-they read bytes rather than names. When symbols are missing, go straight to
-`findliteral`/`mapliteral` or to the byte-oriented tools.
+they read bytes rather than names. A binary with only undefined imports (like
+`/bin/ls`) is not fully stripped — `sym --regex '.'` will still find the one
+defined symbol (`__mh_execute_header`), and `symlookup` will work on it.
+When symbols are missing, go straight to `findliteral`/`mapliteral` or to the
+byte-oriented tools.
 
 **System dylibs are not on disk any more.** Since macOS 11 there is no
 `/usr/lib/libSystem.B.dylib` to point at; the real libraries live inside the dyld
