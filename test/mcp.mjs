@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isMachOFile } from '../src/macho.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SERVER = path.join(HERE, '..', 'src', 'mcp.mjs');
@@ -570,7 +571,7 @@ console.log('\nmcp: the protocol\n');
   // is none — the same rule the rest of the suite follows.
   const REAL = ['/usr/local/go/bin/go', '/bin/ls', '/usr/bin/ls'].find((p) => {
     try {
-      return fs.statSync(p).isFile();
+      return fs.statSync(p).isFile() && isMachOFile(p);
     } catch {
       return false;
     }

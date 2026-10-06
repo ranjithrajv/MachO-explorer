@@ -1815,8 +1815,14 @@ console.log('\na2o / o2a: address and file offset');
         );
 
         // --- and it must not invent findings on real binaries
+        //
+        // `isMachOFile`, not `existsSync`: /bin/ls and /usr/bin/true are Mach-O
+        // on macOS and ELF on Linux, and an ELF system binary is an *unavailable
+        // input*, not a finding. `test/disasm.mjs` already guards this way; this
+        // loop checked only for existence, so it threw `unknown-encoding` on every
+        // non-Darwin runner instead of skipping.
         for (const p of ['/bin/ls', '/usr/bin/true']) {
-          if (!fs.existsSync(p)) continue;
+          if (!fs.existsSync(p) || !isMachOFile(p)) continue;
           const a = auditFn(p);
           check(
             a.counts.total === 0,
@@ -2402,8 +2408,16 @@ console.log('\na2o / o2a: address and file offset');
         );
 
         // And it must work on real binaries, not only fixtures.
-        if (fs.existsSync('/bin/ls')) {
-          const real = run('diff', ['/bin/ls', '/bin/ls']);
+        //
+        // `isMachOFile`, not `existsSync`: /bin/ls is Mach-O on macOS and ELF on
+        // Linux, so `existsSync` let an ELF file through and `diff` then failed
+        // with `unknown-encoding` — an unavailable input reported as a failure,
+        // which is the same mistake `discover()` above and `test/disasm.mjs` do
+        // not make. A universal binary is the point of the check, so the guard
+        // is the format rather than the path.
+        const REAL_DIFF = '/bin/ls';
+        if (fs.existsSync(REAL_DIFF) && isMachOFile(REAL_DIFF)) {
+          const real = run('diff', [REAL_DIFF, REAL_DIFF]);
           check(real.code === 0, 'diff: a real universal binary against itself reports no differences', `exit ${real.code}`);
         }
       }
