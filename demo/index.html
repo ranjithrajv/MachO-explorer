@@ -43,6 +43,19 @@
   #pick:hover { filter: brightness(1.06); }
   input[type=file] { display: none; }
 
+  /* The sample picker. A visitor who has no Mach-O to hand should not have to
+     leave to find one, so the page carries two that are already in this
+     repository. They are the *same* fixtures the CLI test suite asserts on,
+     fetched from this origin — nothing is uploaded, and the "read here in your
+     browser" claim stays exactly as true for a sample as for a dropped file. */
+  #samples { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+  #samples p { color: var(--faint); font-size: 13px; margin: 0 0 10px; }
+  #samples button { font: inherit; font-size: 13px; cursor: pointer; padding: 8px 14px; margin: 0 8px 8px 0;
+    border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); }
+  #samples button:hover { border-color: var(--accent); color: var(--accent); }
+  #samples button code { font-family: var(--mono); font-size: 12.5px; }
+  #samples .why { color: var(--faint); font-size: 12.5px; margin: 2px 0 0; }
+
   .err { margin-top: 20px; padding: 14px 16px; border: 1px solid #5b2a2a; background: #241314;
     border-radius: 10px; color: #f3b0b0; font-family: var(--mono); font-size: 13px; }
 
@@ -133,6 +146,12 @@
     <p>thin or universal · arm64, arm64e, x86_64, i386, armv7, ppc · macOS, iOS, watchOS, tvOS, visionOS</p>
     <label id="pick" for="file">Choose a file…</label>
     <input id="file" type="file">
+
+    <div id="samples">
+      <p>No binary to hand? These two are already in this repository — the same fixtures the test
+        suite asserts on — fetched from this origin and read in this tab, exactly as a dropped file would be.</p>
+      <div id="sample-buttons"></div>
+    </div>
   </section>
 
   <div id="error" hidden></div>

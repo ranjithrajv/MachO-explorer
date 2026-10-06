@@ -45,6 +45,67 @@ drop.addEventListener('drop', (e) => {
 });
 input.addEventListener('change', () => { if (input.files?.[0]) read(input.files[0]); });
 
+/* ------------------------------------------------------------------ *
+ * samples — the page must be able to show itself
+ * ------------------------------------------------------------------ *
+ *
+ * A demo that renders nothing until the visitor produces a binary is a demo most
+ * visitors never see working: finding a Mach-O means owning a Mac, or a download,
+ * and "drop a file" is not an instruction anyone can follow from a phone. These
+ * two samples remove that dead end.
+ *
+ * They are fetched from `../test/fixtures/` — files this repository already
+ * tracks and already serves, and which `test/fixtures.mjs --check` compares
+ * byte-for-byte. Nothing new is committed to hold them, and they are the same
+ * inputs the CLI suite runs on, so a sample cannot drift from what is tested.
+ *
+ * Two, deliberately, and picked to contrast rather than to impress: `universal`
+ * is fat with two slices, `bulk` is thin with one and over a thousand imported
+ * symbols. Fat versus thin is the first thing the format does and the thing a
+ * new reader most needs to see, so the page can show both sides of it without a
+ * second upload.
+ *
+ * Fetched only on a click, never at load. The page's central claim is that the
+ * bytes never leave the machine; a silent fetch of a sample would be true but
+ * would look like the opposite of what it is, and the cost of being visibly
+ * clickable is one extra click.
+ */
+
+const SAMPLES = [
+  { file: 'universal.macho', label: 'Universal (fat)', why: 'two slices — x86_64 and arm64' },
+  { file: 'bulk.macho', label: 'Thin', why: 'one slice, 1,102 imported symbols' },
+];
+
+async function loadSample({ file }) {
+  const buttons = document.getElementById('sample-buttons');
+  buttons.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    const res = await fetch(`../test/fixtures/${file}`);
+    if (!res.ok) throw new Error(`fetch failed: ${res.status} ${res.statusText}`);
+    const buf = await res.arrayBuffer();
+    // A real File, so a sample takes the identical path a dropped file takes —
+    // same `read()`, same render. The alternative, passing bytes directly, would
+    // be a second code path through the page and the two would drift.
+    await read(new File([buf], file));
+  } catch (err) {
+    $('error').innerHTML =
+      `<div class="err">could not load the sample — ${esc(err && err.message ? err.message : String(err))}` +
+      ` (serve the repository root, e.g. <code>npm run demo</code>)</div>`;
+    $('error').hidden = false;
+  } finally {
+    buttons.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+  }
+}
+
+$('sample-buttons').innerHTML = SAMPLES
+  .map((s) => `<button type="button" data-file="${esc(s.file)}"><code>${esc(s.label)}</code> — ${esc(s.why)}</button>`)
+  .join('');
+$('sample-buttons').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-file]');
+  if (!btn) return;
+  loadSample(SAMPLES.find((s) => s.file === btn.dataset.file));
+});
+
 async function read(file) {
   $('error').hidden = true;
   $('result').hidden = true;
