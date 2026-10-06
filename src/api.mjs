@@ -91,8 +91,14 @@ export { readTbd, findSymbol, findInSdk, parseTbd } from './stub.mjs';
  * sentence means anything. The message describes the file; the caller supplies
  * the name.
  *
+ * The path travels on the error as `.path` for the one caller that cannot simply
+ * prefix it: `compareFingerprints` reads two files, and a tool that catches the
+ * error has no other way to say *which* of them was the problem. It used to guess
+ * by testing whether the message contained the second path, which only worked
+ * because the message happened to embed it.
+ *
  * @param {string} path
- * @returns {Error & { code: string }}
+ * @returns {Error & { code: string, path: string }}
  */
 function readerError(path) {
   // Known Apple ecosystem containers — an `.ipa`, a `.dmg`, a `.pkg` and the rest —

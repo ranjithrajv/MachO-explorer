@@ -152,8 +152,12 @@ if (isMain) {
       process.exit(0);
     }
     console.error('link: demo/macho.browser.mjs is stale or missing.');
-    console.error('      The bundle is generated from src/macho.mjs, src/instruction.mjs,');
-    console.error('      src/api.mjs and demo/runtime.mjs. Re-run: node demo/link.mjs');
+    // Derived from MODULES rather than restated. This was a hand-written sentence
+    // naming four modules, and it went stale the moment a fifth was added — a
+    // diagnostic that lists the wrong inputs is worse than one that lists none,
+    // because it sends the reader to check files that are not involved.
+    console.error(`      The bundle is generated from ${MODULES.map((m) => m.file).join(', ')}.`);
+    console.error('      Re-run: node demo/link.mjs');
     process.exit(1);
   }
 

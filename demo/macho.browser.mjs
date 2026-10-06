@@ -536,6 +536,12 @@ function containerFor(path, bundleExt) {
  * The message for a file that is packaging rather than a binary, or null when the
  * path names nothing this module recognises.
  *
+ * The path is an input, not part of the output. Every caller already prints the path
+ * it asked about — the CLIs as `${binary}: ${e.message}`, and the envelope carries it
+ * as `binary` — so a message that named it too produced a doubled prefix on the text
+ * door, which is worse than either arrangement alone: the reader has to work out
+ * which of the two paths is the file before the sentence means anything.
+ *
  * The reason code is `unknown-encoding` throughout, because the file *is* readable —
  * it just is not what this reader parses. Reporting `io` would send a caller looking
  * for a permissions problem with a file it can open perfectly well.
@@ -553,7 +559,7 @@ function containerMessage(path, bundleExt) {
       : 'Extract the Mach-O executable and pass that file to this tool.'
     : 'Nothing inside it is a Mach-O, so extracting it will not help.';
   return (
-    `${path}: this is ${c.hint}. ${action}\n` +
+    `this is ${c.hint}. ${action}\n` +
     `  accepted instead:\n${acceptedBlock('    ')}`
   );
 }
@@ -3819,8 +3825,28 @@ function disassemble(path, { addr = null, arch = null, count = 32, bytes = 0 } =
  * binary" — two unrelated problems reported as one, sending a caller looking in
  * the wrong place.
  *
+ * ## Why the message does not name the path
+ *
+ * Every caller already prints the path it asked about: the CLIs as
+ * `${binary}: ${e.message}`, and `audit.mjs` and friends as the message alone
+ * because their envelope carries `binary` separately. Putting the path in the
+ * message as well made the text door print it twice —
+ *
+ *     /tmp/F.dmg: /tmp/F.dmg: this is a disk image …
+ *
+ * — which is worse than either arrangement alone, because the reader has to work
+ * out which of the two paths is the file and which is the sentence before the
+ * sentence means anything. The message describes the file; the caller supplies
+ * the name.
+ *
+ * The path travels on the error as `.path` for the one caller that cannot simply
+ * prefix it: `compareFingerprints` reads two files, and a tool that catches the
+ * error has no other way to say *which* of them was the problem. It used to guess
+ * by testing whether the message contained the second path, which only worked
+ * because the message happened to embed it.
+ *
  * @param {string} path
- * @returns {Error & { code: string }}
+ * @returns {Error & { code: string, path: string }}
  */
 function readerError(path) {
   // Known Apple ecosystem containers — an `.ipa`, a `.dmg`, a `.pkg` and the rest —
@@ -3832,6 +3858,7 @@ function readerError(path) {
   // resolves a bundle to the executable inside before it gets here; a deployment
   // with a non-default bundle layout therefore cannot produce a message that
   // contradicts its own convention.
+  // `containerMessage` names no path, so the caller supplies one. See the header.
   const container = containerMessage(path);
   if (container) return Object.assign(new Error(container), { code: 'unknown-encoding' });
 
@@ -3849,8 +3876,8 @@ function readerError(path) {
   return Object.assign(
     new Error(
       readable
-        ? `${path}: not a Mach-O binary`
-        : `${path}: cannot be read (no such file, not a regular file, or not permitted)`,
+        ? 'not a Mach-O binary'
+        : 'cannot be read (no such file, not a regular file, or not permitted)',
     ),
     { code: readable ? 'unknown-encoding' : 'io' },
   );
