@@ -142,6 +142,34 @@ macho-explorer sym 'someSymbol' /path/to/binary
 MACHO_EXPLORER_APP="/Applications/Some App.app" macho-explorer sym 'someSymbol'
 ```
 
+### Building a sample `.app` to try the browser demo on
+
+The demo accepts a whole `.app` bundle, not just a bare executable, so exercising
+the bundle path needs a bundle. Any real application works; to build a throwaway
+one from the fixtures already in this repository:
+
+```sh
+mkdir -p SampleApp.app/Contents/MacOS
+cp test/fixtures/bulk.macho SampleApp.app/Contents/MacOS/SampleApp
+chmod +x SampleApp.app/Contents/MacOS/SampleApp
+```
+
+The executable name should match the bundle name (`SampleApp.app` →
+`Contents/MacOS/SampleApp`) so `executableIn()` finds it by name rather than by
+its size heuristic. Pick a fixture **larger than 1 kB** — anything under that is
+skipped by the search, and the bundle is then reported as containing no binary at
+all rather than as too small.
+
+Then drop `SampleApp.app` onto the demo at the project's GitHub Pages site, or
+serve it locally:
+
+```sh
+npm run demo     # then open http://localhost:8788/demo/
+```
+
+`SampleApp.app/` is gitignored: it is a local convenience, not part of the
+fixture corpus, which `fixtures.mjs --check` verifies byte-for-byte.
+
 Some subcommands (`symlookup`, `a2o`, `o2a`) take only addresses or offsets as positionals, so their binary **must** come from `-b` or the environment — a path cannot be told apart from a query by position.
 
 ## JSON Output

@@ -5,6 +5,17 @@
 node_modules/
 npm-debug.log*
 
+# Locally built sample bundles for trying the demo by hand.
+#
+# Deliberately untracked rather than committed as a fixture. A committed `.app`
+# would be a zip-shaped thing in a repository whose corpus argument is that
+# `test/fixtures/*.macho` are byte-exact and checkable — and a bundle's contents
+# are opaque to `fixtures.mjs --check`, so it would add an unverifiable blob while
+# looking like part of the audited corpus. The demo it exists to exercise is
+# reachable at the project's GitHub Pages site, and the fixtures it is assembled
+# from are already tracked. Rebuild it with the recipe in docs/user-manual.md.
+SampleApp.app/
+
 # Pack artefacts. `npm pack` writes `<name>-<version>.tgz` into the repository
 # root — verified, not assumed — and it is a build product with a version in its
 # name, so it goes stale the moment the version moves and would otherwise sit in
