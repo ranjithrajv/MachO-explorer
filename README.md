@@ -81,8 +81,8 @@ No dependencies, no build step, no install, no network. Node ≥ 22.15.
 
 ## Standalone binaries
 
-Every tool is available as a standalone binary — no Node.js install required.
-Download from [GitHub Releases](https://github.com/ranjithrajv/MachO-explorer/releases):
+Every individual tool is available as a standalone binary — no Node.js install
+required. Download from [GitHub Releases](https://github.com/ranjithrajv/MachO-explorer/releases):
 
 | Platform | Architectures |
 |---|---|
@@ -92,15 +92,20 @@ Download from [GitHub Releases](https://github.com/ranjithrajv/MachO-explorer/re
 
 ```sh
 # macOS / Linux
-chmod +x macho-explorer-darwin-arm64
-./macho-explorer-darwin-arm64 describe /usr/local/go/bin/go
+chmod +x describe-darwin-arm64
+./describe-darwin-arm64 /usr/local/go/bin/go          # same flags as `describe`
 
 # Windows
-.\macho-explorer-win-x64.exe describe C:\Windows\System32\notepad.exe
+.\describe-win-x64.exe C:\Windows\System32\notepad.exe
 ```
 
-Binaries are built with Node's built-in SEA (Single Executable Application) support —
-the same zero-dependency property, now in a single file.
+Binaries are built with Node's built-in SEA (Single Executable Application)
+support — the same zero-dependency property, in a single file. Verify a
+download against the `checksums.txt` attached to each release.
+
+The unified `macho-explorer <subcommand>` dispatcher is **not** among them: it
+loads subcommands with dynamic imports, which cannot be bundled into one file.
+Use `npx macho-explorer` for that.
 
 ## What it covers
 

@@ -32,9 +32,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `macos-latest` is Apple Silicon; the Intel runner is labelled
+          # separately. `macos-13` was retired, so a tag pointing at it queues
+          # forever with an "unsupported label" message rather than failing.
           - os: macos-latest
             arch: arm64
-          - os: macos-13
+          - os: macos-15-intel
             arch: x64
           - os: ubuntu-latest
             arch: x64
@@ -47,14 +50,44 @@ jobs:
         with:
           node-version: '22'
 
-      # postject is the standard tool for injecting the SEA blob into the
-      # node binary. It is a build-time tool only — the shipped binaries have
-      # zero runtime dependencies.
-      - name: Install postject
-        run: npm install --no-save postject
+      # postject is the standard tool for injecting the SEA blob into the node
+      # binary. It is a build-time tool only — the shipped binaries have zero
+      # runtime dependencies. `npx` runs it on demand rather than `npm install`,
+      # so this repository keeps no `node_modules` and no lockfile to satisfy a
+      # tool that is not part of the package.
+      - name: Confirm postject is reachable
+        run: npx --yes postject --version
 
       - name: Build SEA binaries
         run: node scripts/build-sea.mjs --output-dir dist
+
+      # Injecting a blob leaves the Mach-O unsigned, and an unsigned binary
+      # downloaded from a release is quarantined and SIGKILLed by Gatekeeper on
+      # first run — verified locally, where it exits 137 before printing
+      # anything. An ad-hoc signature is enough for the ad-hoc assessment that
+      # quarantine triggers, so `xattr -d com.apple.quarantine` is not needed
+      # by the person who downloads it.
+      - name: Ad-hoc sign the macOS binaries
+        if: runner.os == 'macOS'
+        run: |
+          for f in dist/*; do
+            codesign --sign - --force --timestamp=none "$f"
+          done
+
+      # Runs the binary, so a broken build cannot reach the release. `shell:
+      # bash` is explicit because the default on a Windows runner is PowerShell,
+      # where this `case` would be a syntax error rather than a test.
+      - name: Smoke-test a built binary
+        shell: bash
+        run: |
+          case "${{ runner.os }}" in
+            macOS)   bin="describe-darwin-${{ matrix.arch }}" ;;
+            Linux)   bin="describe-linux-x64" ;;
+            Windows) bin="describe-win-x64.exe" ;;
+          esac
+          chmod +x "dist/$bin" 2>/dev/null || true
+          "dist/$bin" --help
+          echo "::notice::built and ran $bin"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -78,10 +111,30 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Checksums
+        run: sha256sum dist/* > dist/checksums.txt
+
       - name: Generate release notes
         id: notes
+        env:
+          # Via `env`, not `${{ }}` inside the script: a `${{ }}` is substituted
+          # into the shell text before it runs, so a crafted input would be
+          # executed as shell rather than treated as a tag.
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
-          tag="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          # On a tag push GITHUB_REF_NAME is the tag; on workflow_dispatch it is
+          # the branch that was selected, which is never a valid release tag.
+          # Testing the input first keeps a manual run from publishing a release
+          # named after `main`.
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "refusing to release: '$tag' is not a v<version> tag" >&2; exit 1 ;;
+          esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           # Generate a simple changelog from the tag
           echo "## MachO-explorer $tag" > release-notes.md
@@ -92,9 +145,13 @@ jobs:
           echo "" >> release-notes.md
           echo "Each tool is available as a standalone binary for macOS (arm64, x64), Linux (x64), and Windows (x64)." >> release-notes.md
           echo "" >> release-notes.md
+          echo "The unified \`macho-explorer <subcommand>\` dispatcher is **not** among them:" >> release-notes.md
+          echo "it loads subcommands with dynamic imports, which cannot be bundled into a" >> release-notes.md
+          echo "single file. Use \`npx macho-explorer\` for the dispatcher, or the per-tool" >> release-notes.md
+          echo "binaries below — each one takes the same flags as its subcommand." >> release-notes.md
+          echo "" >> release-notes.md
           echo "| Tool | Description |" >> release-notes.md
           echo "|---|---|" >> release-notes.md
-          echo "| \`macho-explorer\` | Unified CLI dispatcher (all subcommands) |" >> release-notes.md
           echo "| \`describe\` | What is in this binary? |" >> release-notes.md
           echo "| \`overview\` | Whole structural picture in one call |" >> release-notes.md
           echo "| \`sym\` | Search symbol table |" >> release-notes.md
@@ -113,13 +170,15 @@ jobs:
           echo "### Usage" >> release-notes.md
           echo "" >> release-notes.md
           echo '```sh' >> release-notes.md
-          echo '# macOS / Linux' >> release-notes.md
-          echo 'chmod +x macho-explorer-darwin-arm64' >> release-notes.md
-          echo './macho-explorer-darwin-arm64 describe /usr/local/go/bin/go' >> release-notes.md
+          echo '# macOS / Linux — pick the binary for your platform' >> release-notes.md
+          echo 'chmod +x describe-darwin-arm64' >> release-notes.md
+          echo './describe-darwin-arm64 /usr/local/go/bin/go' >> release-notes.md
           echo '' >> release-notes.md
           echo '# Windows' >> release-notes.md
-          echo '.\\macho-explorer-win-x64.exe describe C:\\Windows\\System32\\notepad.exe' >> release-notes.md
+          echo '.\\describe-win-x64.exe C:\\Windows\\System32\\notepad.exe' >> release-notes.md
           echo '```' >> release-notes.md
+          echo "" >> release-notes.md
+          echo "Verify a download against the published \`checksums.txt\`." >> release-notes.md
 
       - name: Create draft release
         uses: softprops/action-gh-release@v2

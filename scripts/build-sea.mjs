@@ -117,7 +117,7 @@ function buildSEA(tool) {
   // Step 3: Inject the blob using postject
   console.log(`  injecting blob into ${tool}...`);
   try {
-    execFileSync('npx', ['postject', outPath, 'NODE_SEA_BLOB', blobPath, '--sentinel-fuse', 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'], {
+    execFileSync('npx', ['--yes', 'postject', outPath, 'NODE_SEA_BLOB', blobPath, '--sentinel-fuse', 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'], {
       stdio: 'pipe',
       cwd: ROOT,
     });

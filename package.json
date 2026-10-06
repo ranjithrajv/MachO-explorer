@@ -38,6 +38,7 @@
   "types": "src/api.d.ts",
   "files": [
     "src",
+    "scripts/build-sea.mjs",
     "conformance",
     "demo",
     "docs",
