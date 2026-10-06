@@ -124,7 +124,7 @@ corpus and a client-side browser demo.
   vaddr does not survive a JSON number.
 - **Four exit codes**: `0` found something, `1` found nothing, `2` usage error,
   `3` could not look. A negative answer is a value, not an exception.
-- **Licence**: LGPL-3.0-or-later. It does not extend to any binary the reader is
+- **Licence**: MPL-2.0. It does not extend to any binary the reader is
   pointed at.
 
 [0.1.0]: https://github.com/ranjithrajv/MachO-explorer/releases/tag/v0.1.0

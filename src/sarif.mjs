@@ -54,7 +54,7 @@
  * the `ruleId` match, which is the behaviour without it.
  */
 
-import { createRequire } from 'node:module';
+import { version } from './version.mjs';
 
 /** The one SARIF schema URI. Required by every consumer; it is not negotiable. */
 const SARIF_SCHEMA = 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json';
@@ -72,11 +72,12 @@ const INFO_URI = 'https://github.com/ranjithrajv/MachO-explorer';
  * failure this project exists to avoid, and a consumer records it permanently in
  * an alert's history where nothing will ever correct it.
  *
- * `createRequire` rather than a JSON import assertion because the rest of the
- * package reads this exact file that way; one mechanism to keep working is
- * better than two.
+ * `version()` rather than a JSON import assertion, and rather than reading
+ * `package.json` directly: one mechanism to keep working is better than two,
+ * and this is the one that also works inside a released binary. See
+ * `version.mjs`.
  */
-const { version: TOOL_VERSION } = createRequire(import.meta.url)('../package.json');
+const TOOL_VERSION = version();
 
 /**
  * Severity to SARIF level.

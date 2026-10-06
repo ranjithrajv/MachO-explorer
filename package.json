@@ -26,7 +26,7 @@
   },
   "homepage": "https://github.com/ranjithrajv/MachO-explorer#readme",
   "author": "ranjithrajv",
-  "license": "LGPL-3.0-or-later",
+  "license": "MPL-2.0",
   "main": "src/api.mjs",
   "exports": {
     ".": "./src/api.mjs",
@@ -48,7 +48,6 @@
     "completions",
     "skill",
     "action.yml",
-    "COPYING",
     "pages",
     "config.json",
     "LICENSE",
@@ -113,6 +112,8 @@
     "test:pages": "node test/pages.mjs",
     "demo": "node demo/serve.mjs",
     "demo:link": "node demo/link.mjs",
+    "build:sea": "node scripts/build-sea.mjs",
+    "build:sea:tool": "node scripts/build-sea.mjs --tool",
     "test:all": "npm run test:fixtures && npm run schema && npm run schema:check && npm test && npm run test:disasm && npm run test:browser && npm run test:pages && npm run test:conformance && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:schemas && npm run test:sarif && npm run test:action && npm run test:mutation"
   },
   "engines": {

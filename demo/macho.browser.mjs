@@ -3578,7 +3578,7 @@ function disassemble(path, { addr = null, arch = null, count = 32, bytes = 0 } =
  *     sharing it.
  *
  * The README has always said this reader is meant to be imported or vendored,
- * and LGPL-3.0 §4d1 exists so that embedding it does not infect the embedding
+ * and MPL-2.0's file-level copyleft exists so that embedding it does not infect the embedding
  * application. None of that is usable while the only way in is to spawn a
  * subprocess and parse English. This module makes the licence rationale and the
  * "it is a reader, not a script" claim the same thing.
@@ -3609,6 +3609,28 @@ function disassemble(path, { addr = null, arch = null, count = 32, bytes = 0 } =
  * ------------------------------------------------------------------ */
 
 /**
+ * Known Apple ecosystem container formats that wrap a Mach-O inside an archive
+ * or disk image. These are the files a user is most likely to have on disk and
+ * most likely to mistake for a binary.
+ */
+const APPLE_CONTAINERS = [
+  { ext: '.dmg',  hint: 'a disk image — mount it (or use `hdiutil attach`) and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.pkg',  hint: 'an installer package — extract it (or use `pkgutil --expand`) and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.mpkg', hint: 'a multi-package installer — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.zip',  hint: 'a ZIP archive — unzip it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.tar',  hint: 'a tar archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.gz',   hint: 'a gzip archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.bz2',  hint: 'a bzip2 archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.xz',   hint: 'an xz archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.ipsw', hint: 'an iOS firmware image — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.xcarchive', hint: 'an Xcode archive — the Mach-O is under Products/ or the .app bundle inside', containsMachO: true },
+  { ext: '.dSYM', hint: 'a debug-symbol bundle — the Mach-O is under Contents/Resources/DWARF/', containsMachO: true },
+  { ext: '.car',  hint: 'a compiled asset catalog — not a Mach-O; extract the assets with `assetutil` instead', containsMachO: false },
+  { ext: '.xcresult', hint: 'an Xcode result bundle — not a Mach-O; use `xcrun xcresulttool` to read it', containsMachO: false },
+  { ext: '.simruntime', hint: 'a simulator runtime — the Mach-O files are under the platform library directories', containsMachO: true },
+];
+
+/**
  * An error that names its reason code, so a caller does not have to read it.
  *
  * These are the same codes the JSON envelope publishes as `errors`, which is
@@ -3622,6 +3644,21 @@ function disassemble(path, { addr = null, arch = null, count = 32, bytes = 0 } =
  * @returns {Error & { code: string }}
  */
 function readerError(path) {
+  // Detect known Apple ecosystem container formats and give a specific,
+  // actionable message instead of the generic "not a Mach-O binary".
+  // This fires on any path (file or directory) whose extension matches.
+  const lower = path.toLowerCase();
+  const container = APPLE_CONTAINERS.find((c) => lower.endsWith(c.ext));
+  if (container) {
+    const action = container.containsMachO
+      ? `Extract the Mach-O executable and pass that file to this tool.`
+      : `This tool reads Mach-O binaries, not ${container.ext} files.`;
+    return Object.assign(
+      new Error(`${path}: this is ${container.hint}. ${action}`),
+      { code: 'unknown-encoding' },
+    );
+  }
+
   // `statSync` rather than `existsSync` because the interesting case is a path
   // that is *there* and still unreadable — a directory, a dangling symlink, a
   // permissions problem — which `existsSync` reports as simply absent and so
@@ -3632,6 +3669,7 @@ function readerError(path) {
   } catch {
     readable = false;
   }
+
   return Object.assign(
     new Error(
       readable

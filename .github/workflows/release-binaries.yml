@@ -1,0 +1,133 @@
+# Build and release standalone binaries via GitHub Releases.
+#
+# Node 22's built-in SEA (Single Executable Application) support bundles the
+# JS source and a Node runtime into one native binary — no external build
+# dependencies, no cross-compilation. Each platform builds on its own runner.
+#
+# Triggered by pushing a version tag (v*). Creates a draft GitHub Release
+# with all binaries attached. The release is created as a draft so a human
+# can review before publishing.
+#
+# Binaries are named: <tool>-<platform>-<arch>[.exe]
+#   macho-explorer-darwin-arm64, describe-linux-x64, sym-win-x64.exe, ...
+name: release-binaries
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.os }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-13
+            arch: x64
+          - os: ubuntu-latest
+            arch: x64
+          - os: windows-latest
+            arch: x64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # postject is the standard tool for injecting the SEA blob into the
+      # node binary. It is a build-time tool only — the shipped binaries have
+      # zero runtime dependencies.
+      - name: Install postject
+        run: npm install --no-save postject
+
+      - name: Build SEA binaries
+        run: node scripts/build-sea.mjs --output-dir dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          retention-days: 1
+
+  release:
+    name: create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          tag="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # Generate a simple changelog from the tag
+          echo "## MachO-explorer $tag" > release-notes.md
+          echo "" >> release-notes.md
+          echo "Standalone binaries — no Node.js install required." >> release-notes.md
+          echo "" >> release-notes.md
+          echo "### Available tools" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "Each tool is available as a standalone binary for macOS (arm64, x64), Linux (x64), and Windows (x64)." >> release-notes.md
+          echo "" >> release-notes.md
+          echo "| Tool | Description |" >> release-notes.md
+          echo "|---|---|" >> release-notes.md
+          echo "| \`macho-explorer\` | Unified CLI dispatcher (all subcommands) |" >> release-notes.md
+          echo "| \`describe\` | What is in this binary? |" >> release-notes.md
+          echo "| \`overview\` | Whole structural picture in one call |" >> release-notes.md
+          echo "| \`sym\` | Search symbol table |" >> release-notes.md
+          echo "| \`symlookup\` | vaddr-to-function lookup |" >> release-notes.md
+          echo "| \`findcall\` | Direct call/jmp xrefs |" >> release-notes.md
+          echo "| \`findliteral\` | Byte literal search / string listing |" >> release-notes.md
+          echo "| \`mapliteral\` | Literal-to-address-to-pointers mapping |" >> release-notes.md
+          echo "| \`a2o\` | Address-to-file-offset |" >> release-notes.md
+          echo "| \`o2a\` | File-offset-to-address |" >> release-notes.md
+          echo "| \`disasm\` | Instruction boundary/branch decoding |" >> release-notes.md
+          echo "| \`audit\` | Structural consistency check |" >> release-notes.md
+          echo "| \`fingerprint\` | Program identity fingerprinting |" >> release-notes.md
+          echo "| \`diff\` | Structural diff between two binaries |" >> release-notes.md
+          echo "| \`mcp\` | MCP server (JSON-RPC over stdin/stdout) |" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "### Usage" >> release-notes.md
+          echo "" >> release-notes.md
+          echo '```sh' >> release-notes.md
+          echo '# macOS / Linux' >> release-notes.md
+          echo 'chmod +x macho-explorer-darwin-arm64' >> release-notes.md
+          echo './macho-explorer-darwin-arm64 describe /usr/local/go/bin/go' >> release-notes.md
+          echo '' >> release-notes.md
+          echo '# Windows' >> release-notes.md
+          echo '.\\macho-explorer-win-x64.exe describe C:\\Windows\\System32\\notepad.exe' >> release-notes.md
+          echo '```' >> release-notes.md
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.notes.outputs.tag }}
+          name: MachO-explorer ${{ steps.notes.outputs.tag }}
+          body_path: release-notes.md
+          draft: true
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

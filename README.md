@@ -79,6 +79,29 @@ macho-explorer findcall --json 0x100085c30 /usr/local/go/bin/go | jq '.count'
 
 No dependencies, no build step, no install, no network. Node ≥ 22.15.
 
+## Standalone binaries
+
+Every tool is available as a standalone binary — no Node.js install required.
+Download from [GitHub Releases](https://github.com/ranjithrajv/MachO-explorer/releases):
+
+| Platform | Architectures |
+|---|---|
+| **macOS** | `arm64`, `x64` |
+| **Linux** | `x64` |
+| **Windows** | `x64` |
+
+```sh
+# macOS / Linux
+chmod +x macho-explorer-darwin-arm64
+./macho-explorer-darwin-arm64 describe /usr/local/go/bin/go
+
+# Windows
+.\macho-explorer-win-x64.exe describe C:\Windows\System32\notepad.exe
+```
+
+Binaries are built with Node's built-in SEA (Single Executable Application) support —
+the same zero-dependency property, now in a single file.
+
 ## What it covers
 
 Mach-O, on every platform Apple ships it — which is the whole reason one reader
@@ -741,9 +764,9 @@ package.
 
 ## Licence
 
-**LGPL-3.0-or-later.** See [`LICENSE`](LICENSE) for the GNU Lesser General Public
-License v3, and [`COPYING`](COPYING) for the GNU General Public License v3 that it
-incorporates — both are required, since LGPLv3 is defined in terms of GPLv3.
+**MPL-2.0.** See [`LICENSE`](LICENSE) for the Mozilla Public License 2.0.
+
+It has no opinion about, and no access to, the contents of the files it is
 pointed at.
 
 ### Provenance
@@ -758,6 +781,6 @@ user points it at. That is enforced rather than reviewed — four `boundary:` ch
 `test/` and the published tarball and fail on a publisher, a title or its
 container format appearing in any of them.
 
-**The licence does not extend to that product.** LGPL covers this code. It does
+**The licence does not extend to that product.** MPL-2.0 covers this code. It does
 not license anyone else's intellectual property, and reading a file format out of
 a binary does not make the binary yours to redistribute.

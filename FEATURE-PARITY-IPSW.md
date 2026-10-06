@@ -363,7 +363,7 @@ scripted at all.
 | | `ipsw` | MachO-explorer |
 |---|---|---|
 | Stars | **3,771** (313 forks) | 0 |
-| Licence | **MIT** | LGPL-3.0 |
+| Licence | **MIT** | MPL-2.0 |
 | Latest release | **v3.1.730**, 2026-10-01 | — |
 | Install | Homebrew (own tap + core), snap, scoop, releases | `npm i -g` → **valid name, not yet published** |
 | Language runtime | Go 1.26.0 | Node ≥ 22.15 |

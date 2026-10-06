@@ -126,7 +126,7 @@ node test/pages.mjs       # 31 checks: every fetch resolves, no external origin
 - **It is not a guarantee about the build you get from npm.** npm is a supply
   chain too. The point is that the alternative — vendoring the one file — is
   always available, and the file is small enough that vendoring is reasonable.
-- **The licence is not a warranty.** LGPL-3.0-or-later covers this code and
+- **The licence is not a warranty.** MPL-2.0 covers this code and
   nothing else. It does not license anyone else's intellectual property, and
   reading a file format out of a binary does not make that binary yours.
 

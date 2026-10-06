@@ -58,6 +58,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isMachOFile } from './macho.mjs';
 import { bundleLayout, BUNDLE_EXT, isBundle, fallbackTarget } from './bundle.mjs';
+import { isIpa, resolveIpa, cleanupIpa } from './ipa.mjs';
+
+/** Temp files created by .ipa extraction, cleaned up on exit. */
+const ipaTempFiles = new Set();
+
+// Clean up temp files on exit — best effort, never throws.
+process.on('exit', () => {
+  for (const f of ipaTempFiles) {
+    try { fs.unlinkSync(f); } catch { /* best effort */ }
+  }
+});
 
 /**
  * The last-resort target for a bare invocation: a Mach-O that exists on every
@@ -142,12 +153,32 @@ export function resolveBinary({ argv, fallback } = {}) {
   if (argv) {
     // An explicit argument may name the bundle rather than the executable.
     if (isBundle(argv)) return executableIn(argv) || null;
+    // An .ipa is a ZIP archive containing a .app bundle — extract the executable.
+    if (isIpa(argv)) {
+      const tmp = resolveIpa(argv);
+      if (tmp) ipaTempFiles.add(tmp);
+      return tmp;
+    }
     return argv;
   }
   const binary = process.env.MACHO_EXPLORER_BINARY;
-  if (binary) return binary;
+  if (binary) {
+    if (isIpa(binary)) {
+      const tmp = resolveIpa(binary);
+      if (tmp) ipaTempFiles.add(tmp);
+      return tmp;
+    }
+    return binary;
+  }
   const app = process.env.MACHO_EXPLORER_APP;
-  if (app) return executableIn(app) || null;
+  if (app) {
+    if (isIpa(app)) {
+      const tmp = resolveIpa(app);
+      if (tmp) ipaTempFiles.add(tmp);
+      return tmp;
+    }
+    return executableIn(app) || null;
+  }
   return resolveTarget(fallback) || resolveTarget(FALLBACK_TARGET);
 }
 
@@ -182,6 +213,11 @@ function resolveTarget(t) {
 export function binaryAt(arg) {
   if (!arg) return null;
   if (isBundle(arg)) return executableIn(arg);
+  if (isIpa(arg)) {
+    const tmp = resolveIpa(arg);
+    if (tmp) ipaTempFiles.add(tmp);
+    return tmp;
+  }
   let st;
   try {
     st = fs.statSync(arg);

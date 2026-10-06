@@ -28,7 +28,7 @@ const facts = describe('/Applications/Some.app/Contents/MacOS/Some');
 - The **fixture corpus** is exported as `macho-explorer/fixtures`: a
   deterministic Mach-O corpus with known answers, usable in another project's
   parser tests without importing the reader.
-- LGPL-3.0 §4d1 exists so that embedding the reader does not infect the embedding
+- MPL-2.0's file-level copyleft exists so that embedding the reader does not infect the embedding
   application. See the licence note in [AUDITABILITY.md](../AUDITABILITY.md).
 
 This is the job the package is *for*. The remaining four are tool-shaped uses of

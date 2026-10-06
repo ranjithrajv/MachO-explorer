@@ -1,7 +1,7 @@
 ---
 name: macho-explorer
 description: Reads Apple Mach-O binaries without otool, nm or a disassembler. Answers what is in a binary, which function contains an address, what directly calls a given address, where a byte literal or file-format magic lives in the file, and which code points at it. Works on macOS, Linux and Windows, including universal binaries and stripped ones. Use when inspecting a Mach-O, a .app bundle, an iOS binary, a dylib, a Go/Rust/Swift/ObjC executable, or when handed a crash-log address, a "what is this binary" question, or a magic number to trace back to its handler — even when MachO-explorer is not named.
-license: LGPL-3.0-or-later
+license: MPL-2.0
 metadata:
   version: "1.0.0"
   macho-explorer-version: "0.1.0"
@@ -652,5 +652,5 @@ or in `.mcp.json`:
 
 ## Licence
 
-LGPL-3.0-or-later. It has no opinion about, and no access to, the contents of the
+MPL-2.0. It has no opinion about, and no access to, the contents of the
 files it is pointed at.

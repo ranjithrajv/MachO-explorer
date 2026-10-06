@@ -3169,7 +3169,7 @@ console.log('\nfindcall: typed vs untyped');
 console.log('\napi.mjs (importable, no subprocess):');
 {
   // The package claims to be a library you can embed. If the entry point does not
-  // load, or a call site throws on a negative answer, the LGPL rationale and the
+  // load, or a call site throws on a negative answer, the MPL-2.0 rationale and the
   // README's "imported or vendored" line are both untrue.
   let api = null;
   try {

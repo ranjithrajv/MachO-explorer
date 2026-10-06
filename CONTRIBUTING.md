@@ -446,11 +446,11 @@ and they are the ones that only a second, unrelated binary will ever surface.
 
 ## Licence
 
-**LGPL-3.0-or-later.** Contributions are accepted under the same terms; there is
+**MPL-2.0.** Contributions are accepted under the same terms; there is
 no CLA and none is needed.
 
 Read `README.md` § *Provenance* before contributing: the code is clean of the
 commercial product it was written while reversing, that cleanliness is enforced
-by the boundary checks above, and LGPL covers this code without licensing anyone
+by the boundary checks above, and MPL-2.0 covers this code without licensing anyone
 else's intellectual property. Do not paste third-party code in; a fact about the
 Mach-O format is not anyone's property, but an implementation of it can be.

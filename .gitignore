@@ -45,6 +45,9 @@ mutcheck-*
 .idea/
 .vscode/
 
+# Internal strategy documents.
+strategy/
+
 # Scratch directories the CI-surface suites create.
 #
 # `test/action.mjs` builds a shell step's environment and `test/pages.mjs`

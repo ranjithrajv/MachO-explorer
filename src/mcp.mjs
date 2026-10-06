@@ -63,7 +63,7 @@
  * `test/mcp.mjs` asserts the count is zero, which is the only way to know the
  * guard is not itself the thing that is broken.
  */
-import { createRequire } from 'node:module';
+import { version } from './version.mjs';
 import { realpathSync } from 'node:fs';
 import process from 'node:process';
 import { toolDefinitions, callTool, INSTRUCTIONS, findTool } from './mcp-tools.mjs';
@@ -88,7 +88,7 @@ const LEGACY = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const SUPPORTED = [MODERN, ...LEGACY];
 
 const SERVER_NAME = 'MachO-explorer';
-const { version: SERVER_VERSION } = createRequire(import.meta.url)('../package.json');
+const SERVER_VERSION = version();
 
 /* ------------------------------------------------------------------ *
  * JSON-RPC
