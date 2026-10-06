@@ -276,6 +276,53 @@ const DATA = {
     },
   },
 
+overview: {
+    type: 'object',
+    // `notRead` is required, and that is the point. It is the reason this tool
+    // exists on the agent surface in this shape: an agent that gets structure and
+    // two inventories in one call must learn, in that same call, what it did not
+    // get. Making it optional would let a consumer read its absence as "this
+    // package parses everything" — which is the one inference this project exists
+    // to prevent.
+    required: ['path', 'size', 'fat', 'slices', 'containerAbnormalities', 'notRead'],
+    properties: {
+      path: { type: 'string' },
+      size: COUNT,
+      fat: { type: 'boolean' },
+      slices: { type: 'array', items: { $ref: '#/$defs/slice' } },
+      containerAbnormalities: { type: 'array', items: FINDING },
+      notRead: {
+        type: 'array',
+        items: { type: 'string', minLength: 1 },
+        minItems: 1,
+        description: 'What this package does not parse. Present in every answer, not only on request, so an absent field is evidence rather than silence.',
+      },
+      symbols: { type: 'object', properties: {
+        arch: ARCH,
+        count: COUNT,
+        defined: COUNT,
+        imports: COUNT,
+        truncated: { type: 'boolean', description: 'More matched than `max` allowed. The count stays exact.' },
+        max: COUNT,
+        symbols: { type: 'array', items: { type: 'object', required: ['name', 'addr'], properties: { name: { type: 'string' }, addr: ADDRESS } } },
+        note: { type: ['string', 'null'] },
+      } },
+      strings: { type: 'object', properties: {
+        arch: ARCH,
+        min: { type: 'integer', minimum: 0 },
+        count: COUNT,
+        scanned: COUNT,
+        truncated: { type: 'boolean' },
+        max: COUNT,
+        sections: { type: 'array', items: { type: 'string' } },
+        strings: { type: 'array', items: { type: 'object', required: ['vaddr'], properties: {
+          vaddr: ADDRESS, section: { type: 'string' }, text: { type: 'string' },
+        } } },
+        note: { type: ['string', 'null'] },
+      } },
+    },
+  },
+
   sym: {
     type: 'object',
     required: ['matches', 'count', 'arch', 'mode', 'pattern'],

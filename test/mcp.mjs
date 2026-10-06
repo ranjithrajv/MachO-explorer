@@ -21,7 +21,7 @@
  * any code path — including the ones a test does not think to reach — turns a
  * test red rather than a user's session green.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -537,9 +537,29 @@ console.log('\nmcp: the protocol\n');
     'tool names are unprefixed, matching the CLI verbs',
   );
 
-  // The validator must actually reject things, or it is decoration.
-  const schema = TOOLS[2].inputSchema;
+// The validator must actually reject things, or it is decoration.
+  //
+  // The tool is chosen by *capability* — "whichever tool takes a list of
+  // addresses" — rather than by index. It used to be `TOOLS[2]`, which was
+  // `symlookup` only by position, and adding `overview` to the table shifted it
+  // onto `sym`, whose schema has no `addresses` property and which therefore
+  // rejected the good input for a reason that has nothing to do with validation.
+  //
+  // That is the same failure this project keeps recording elsewhere: a check
+  // coupled to something incidental (an index, a line number, a count) rather
+  // than to the property it is meant to hold. It passes until the thing it did not
+  // mean to depend on moves, and then it fails for a reason that misdirects the
+  // reader. Deriving the subject from a property of the subject is the fix.
+  const addrSchema = TOOLS.find((t) => t.inputSchema.properties?.addresses)?.inputSchema;
+  check(!!addrSchema, 'some tool takes a list of addresses, so there is a validator to test');
+  const schema = addrSchema || { properties: {} };
   check(validate(schema, { binary: '/x', addresses: ['0x10'] }).error === undefined, 'the validator accepts good input');
+  check(
+    /pattern/.test(validate(schema, { binary: '/x', addresses: ['nope'] }).error || '') ||
+    /\^0x/.test(validate(schema, { binary: '/x', addresses: ['nope'] }).error || ''),
+    'and rejects a bad address with a message that states the rule',
+    validate(schema, { binary: '/x', addresses: ['nope'] }).error,
+  );
   check(
     /pattern/.test(validate(schema, { binary: '/x', addresses: ['nope'] }).error || '') ||
     /\^0x/.test(validate(schema, { binary: '/x', addresses: ['nope'] }).error || ''),
@@ -1170,6 +1190,181 @@ console.log('\nmcp: a large response\n');
 /* ------------------------------------------------------------------ *
  * summary
  * ------------------------------------------------------------------ */
+
+/* ---- 14. overview and disasm, and the parity that binds them ---------- */
+/*
+ * Two tools that were CLI-only are now on the agent surface, and the property
+ * worth asserting is not that they work — it is that they answer *identically* to
+ * the CLI on the same file.
+ *
+ * The reason parity is the assertion rather than a nicety: the MCP layer and the
+ * CLI are two doors onto one reader, and a divergence between them is the worst
+ * class of bug this package can ship. A model that gets `disasm` over MCP and a
+ * person running `disasm` in a shell get different instruction boundaries on the
+ * same binary, and there is no error anywhere — both answers are well-formed and
+ * one of them is wrong.
+ *
+ * So each case below runs both doors and compares `data` exactly. A difference in
+ * one instruction's bytes fails the run.
+ */
+{
+  const cliData = (args) => {
+    const r = spawnSync(process.execPath, [path.join(HERE, '..', 'src', 'macho-explorer.mjs'), ...args], { encoding: 'utf8' });
+    try {
+      return JSON.parse(r.stdout).data;
+    } catch {
+      return { __unparseable: (r.stdout || r.stderr || '').slice(0, 120) };
+    }
+  };
+
+  const CASES = [
+    {
+      tool: 'overview',
+      label: 'overview, structure only',
+      cli: ['overview', '--json', path.join(FIXTURES, 'universal.macho')],
+      args: { binary: path.join(FIXTURES, 'universal.macho') },
+    },
+    {
+      tool: 'overview',
+      label: 'overview, with both inventories',
+      cli: ['overview', '--json', '--symbols', '--strings', path.join(FIXTURES, 'strings.macho')],
+      args: { binary: path.join(FIXTURES, 'strings.macho'), symbols: true, strings: true },
+    },
+    {
+      tool: 'overview',
+      label: 'overview, damaged file, so the findings path is exercised',
+      cli: ['overview', '--json', path.join(FIXTURES, 'bent.macho')],
+      args: { binary: path.join(FIXTURES, 'bent.macho') },
+    },
+    {
+      tool: 'disasm',
+      label: 'disasm, arm64e — an arch the old MCP enum rejected',
+      cli: ['disasm', '--json', '--count=6', '--arch=arm64e', path.join(FIXTURES, 'thin-arm64e.macho')],
+      args: { binary: path.join(FIXTURES, 'thin-arm64e.macho'), count: 6, arch: 'arm64e' },
+    },
+    {
+      tool: 'disasm',
+      label: 'disasm, x86_64',
+      cli: ['disasm', '--json', '--count=6', '--arch=x86_64', path.join(FIXTURES, 'thin-x86_64.macho')],
+      args: { binary: path.join(FIXTURES, 'thin-x86_64.macho'), count: 6, arch: 'x86_64' },
+    },
+    {
+      tool: 'disasm',
+      label: 'disasm, branches only',
+      cli: ['disasm', '--json', '--branches', '--count=40', path.join(FIXTURES, 'functions.macho')],
+      args: { binary: path.join(FIXTURES, 'functions.macho'), branches: true, count: 40 },
+    },
+  ];
+
+  const lines = CASES.map((c, i) => ({
+    jsonrpc: '2.0',
+    id: i + 1,
+    method: 'tools/call',
+    params: { name: c.tool, arguments: c.args, _meta: meta() },
+  }));
+
+  const { out } = await session(lines, { expectLines: CASES.length });
+  const { msgs, bad } = parseStream(out);
+  check(bad.length === 0, 'overview/disasm: every stdout line is a JSON-RPC message', bad[0] && bad[0].slice(0, 100));
+
+  CASES.forEach((c, i) => {
+    const sc = byId(msgs, i + 1)?.result?.structuredContent;
+    check(!!sc, `${c.label}: MCP answered`);
+    if (!sc) return;
+    check(sc.tool === c.tool, `${c.label}: the envelope names the tool`, sc.tool);
+    check(sc.ok === true, `${c.label}: ok`, `errors=[${sc.errors}] ${(sc.messages || []).join('; ')}`);
+
+    const cli = cliData(c.cli);
+    check(
+      JSON.stringify(sc.data) === JSON.stringify(cli),
+      `${c.label}: MCP data is byte-identical to the CLI's`,
+      cli.__unparseable || `mcp ${JSON.stringify(sc.data)?.slice(0, 110)}\n            cli ${JSON.stringify(cli)?.slice(0, 110)}`,
+    );
+  });
+
+  // The two properties that make `overview` worth having on this surface, rather
+  // than just another name for `describe`.
+  {
+    const sc = byId(msgs, 2)?.result?.structuredContent;
+    check(Array.isArray(sc?.data?.symbols?.symbols) && sc.data.symbols.symbols.length > 0, 'overview: symbols:true returns the table');
+    // `strings.macho` and not `populated.macho`, because that fixture has 64 symbols
+    // and **zero** strings: it carries no C-string section contents, so the assertion
+    // would be checking that an empty list is an empty list. The fixture is chosen
+    // for what it contains, and the comment says so because a reader who later swaps
+    // it back would otherwise see the test still pass on the populated case.
+    check(Array.isArray(sc?.data?.strings?.strings) && sc.data.strings.strings.length > 0, 'overview: strings:true returns the strings');
+  }
+  {
+    // `notRead` is the whole justification for this tool's shape, so it is
+    // asserted as present-and-non-empty rather than merely present. A tool that
+    // returns an empty gap list has told the agent it parses everything, which is
+    // the one thing it must never say.
+    const sc = byId(msgs, 1)?.result?.structuredContent;
+    check(Array.isArray(sc?.data?.notRead) && sc.data.notRead.length > 0, 'overview: notRead is present and non-empty', `${sc?.data?.notRead?.length} entries`);
+    const text = byId(msgs, 1)?.result?.content?.[0]?.text || '';
+    check(/not read by this package/.test(text), 'overview: the text block prints the gap list too', 'an agent that reads prose must learn what it did not get');
+  }
+  {
+    // Structure only: the inventories are absent, and the text says so rather
+    // than staying silent. A silent omission reads as "there are none".
+    const sc = byId(msgs, 1)?.result?.structuredContent;
+    check(!sc?.data?.symbols && !sc?.data?.strings, 'overview: the inventories are absent when not requested');
+    const text = byId(msgs, 1)?.result?.content?.[0]?.text || '';
+    check(/symbols not requested/.test(text), 'overview: the text says the inventories were not requested');
+  }
+
+  // `disasm` must refuse an architecture it cannot decode rather than reporting
+  // zero instructions. Zero is an answer about the file; this is a limitation of
+  // the tool, and conflating them is the confident-wrong-answer shape.
+  {
+    const { out: o } = await session(
+      [{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'disasm', arguments: { binary: path.join(FIXTURES, 'thin-arm64.macho'), arch: 'ppc' }, _meta: meta() } }],
+      { expectLines: 1 },
+    );
+    const r = byId(parseStream(o).msgs, 1)?.result;
+    check(r?.isError === true, 'disasm: an undecodable architecture is an error, not an empty result');
+    check(
+      (r?.structuredContent?.errors || []).includes('unknown-encoding'),
+      'disasm: the reason code is unknown-encoding',
+      JSON.stringify(r?.structuredContent?.errors),
+    );
+    check(/no instruction decoder/.test(r?.content?.[0]?.text || ''), 'disasm: the message says what is wrong');
+  }
+
+  // An address outside any code section is a negative *answer*, not a failure:
+  // ok stays true and the note names the reason. The opposite choice would train
+  // a caller to retry variations, which is what the reason codes exist to stop.
+  {
+    const { out: o } = await session(
+      [{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'disasm', arguments: { binary: path.join(FIXTURES, 'thin-arm64.macho'), address: '0x7fffffffffff' }, _meta: meta() } }],
+      { expectLines: 1 },
+    );
+    const r = byId(parseStream(o).msgs, 1)?.result;
+    check(r?.isError !== true, 'disasm: an address outside every code section is not an error');
+    check(r?.structuredContent?.ok === true, 'disasm: it answers ok:true');
+    check(
+      (r?.structuredContent?.notes || []).some((n) => /not inside a code section/.test(n)),
+      'disasm: the note says the address is not in a code section',
+      JSON.stringify(r?.structuredContent?.notes),
+    );
+  }
+
+  // The `arch` enum is the CLI's list, so an agent can name a slice the CLI can
+  // name. Asserted because the divergence was real: on Apple silicon every system
+  // binary is arm64e, and an enum of `['x86_64','arm64']` refused the one
+  // architecture an agent most needs to select.
+  {
+    const { tools } = byId(msgs, 1)?.result || {};
+    void tools;
+    const { TOOLS: list, findTool } = await import('../src/mcp-tools.mjs');
+    const desc = findTool('describe').inputSchema.properties.arch;
+    for (const a of ['arm64e', 'arm64_32', 'ppc', 'i386', 'armv7k']) {
+      check(desc.enum.includes(a), `arch: ${a} is accepted, matching the CLI's --arch list`);
+    }
+    check(list.every((t) => t.inputSchema.properties.arch.enum.includes('arm64e')), 'arch: every tool shares the widened enum');
+    check(/not significant/.test(desc.description), 'arch: the description says a trailing "e" does not matter');
+  }
+}
 
 console.log(`\n${pass} passed. The protocol holds over a real pipe.`);
 if (skipped.length) {

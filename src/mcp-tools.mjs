@@ -139,11 +139,28 @@ const BINARY = {
     'Required: unlike the CLI, there is no fallback binary, because an agent asking to describe "nothing" should be told to pass a path.',
 };
 
+/**
+ * `arch`, spelled the way every slice the reader can name is spelled.
+ *
+ * Widened from `['x86_64', 'arm64']` to match the CLI's own `--arch` list, and
+ * that divergence was a live defect rather than a tidiness issue: on an arm64e
+ * Mac — or on any current Apple-silicon system binary, which is arm64e — an agent
+ * asking for `arm64e` was told "`arm64e` is not one of: x86_64, arm64" while the
+ * CLI accepted the same value on the same file. Two doors, two vocabularies, and
+ * the agent-facing one was the wrong one.
+ *
+ * Additive, so not a breaking change: every value the enum accepted before is
+ * still accepted. The description says what `archMatches` actually does rather
+ * than implying exact string equality, because `arm64e` is an `arm64` slice for
+ * the purpose of a name request, and treating it as otherwise is how
+ * `--arch=arm64` on a current Apple-silicon binary reports "matched none" when
+ * every slice is present.
+ */
 const ARCH = {
   type: 'string',
-  enum: ['x86_64', 'arm64'],
+  enum: ['x86_64', 'arm64', 'arm64e', 'arm64_32', 'ppc', 'ppc64', 'arm', 'i386', 'armv7', 'armv7k'],
   description:
-    'Restrict to one slice of a universal binary. A preference, not a requirement: if the named slice is absent the richest one is read instead.',
+    'Restrict to one slice of a universal binary. A preference, not a requirement: if the named slice is absent the richest one is read instead, and a trailing "e" is not significant — arch=arm64 selects an arm64e slice.',
 };
 
 const obj = (properties, required = []) => ({
@@ -455,6 +472,52 @@ function lines(tool, env) {
       }
       break;
 
+case 'overview': {
+      // Rendered as structure plus a one-line inventory count, rather than by
+      // delegating to `describe`'s block. The reason this tool exists is that an
+      // agent's *first* question is answered without three round trips, so the
+      // text has to establish on sight what the file is, whether the inventories
+      // were asked for, and what was not read.
+      L.push(`${env.binary} — ${(d.size / 1048576).toFixed(1)} MB, ${d.fat ? 'universal' : 'thin'}, ${d.slices.length} slice(s)`);
+      for (const s of d.slices) {
+        const what = [s.platformName, s.filetypeName].filter(Boolean).join(' ');
+        L.push(
+          `  ${s.arch.padEnd(7)} ${s.readable ? `${n(s.defined)} defined / ${n(s.nsyms)} symbols` : `unreadable — ${s.note}`}` +
+            `${what ? `  ${what}` : ''}  ${s.codeSections} of ${s.sections.length} sections are code`,
+        );
+        if (s.encrypted) {
+          L.push(`      ENCRYPTED (cryptid=${s.cryptid}) — __TEXT is ciphertext; findcall and findliteral cannot read it, symlookup still can`);
+        }
+        if (s.uuid) L.push(`      uuid ${s.uuid}`);
+      }
+      if (d.symbols) {
+        L.push(`symbols (${d.symbols.arch}): ${n(d.symbols.count)} defined, ${n(d.symbols.imports)} imported`);
+        for (const e of (d.symbols.symbols || []).slice(0, 15)) L.push(`  ${hex(e.addr)}  ${e.name}`);
+        if ((d.symbols.symbols || []).length > 15) L.push(`  ...and ${n(d.symbols.symbols.length - 15)} more, all in structuredContent`);
+        if (d.symbols.truncated) L.push(`  truncated at max=${d.symbols.max}; the count above is exact`);
+      } else {
+        L.push('symbols not requested — pass symbols:true for the defined symbol table');
+      }
+      if (d.strings) {
+        L.push(`strings (${d.strings.arch}): ${n(d.strings.count)} in ${(d.strings.sections || []).join(', ')}`);
+        for (const st of (d.strings.strings || []).slice(0, 15)) L.push(`  ${hex(st.vaddr)}  ${JSON.stringify(String(st.text).slice(0, 80))}`);
+        if ((d.strings.strings || []).length > 15) L.push(`  ...and ${n(d.strings.strings.length - 15)} more, all in structuredContent`);
+        if (d.strings.truncated) L.push(`  truncated at max=${d.strings.max}; the count above is exact`);
+      } else {
+        L.push('strings not requested — pass strings:true for the C-string sections');
+      }
+      // The gap list travels in every `overview` answer and only there. An agent
+      // that gets structure and inventories in one call must learn in that same
+      // call what it did not get — otherwise it reads an absent field as an
+      // absent fact, which is the one failure this project exists to prevent.
+      if (d.notRead && d.notRead.length) {
+        L.push('');
+        L.push(`not read by this package (${d.notRead.length}):`);
+        for (const x of d.notRead) L.push(`  - ${x}`);
+      }
+      break;
+    }
+
     case 'sym':
       L.push(
         `${d.mode === 'regex' ? `regex /${d.pattern}/${d.flags || ''}` : `substring "${d.pattern}"`}: ` +
@@ -594,6 +657,38 @@ function lines(tool, env) {
       break;
     }
 
+case 'disasm': {
+      if (!d.slices?.length) {
+        L.push('no instructions decoded');
+        break;
+      }
+      for (const s of d.slices) {
+        L.push(`${s.arch}  ${s.section}  from ${hex(s.startAddr)}  (${s.bytesInRange} bytes in range)`);
+        if (d.branchesOnly) {
+          for (const b of (s.branches || []).slice(0, 25)) {
+            L.push(`  ${hex(b.source)}  ${String(b.kind).padEnd(4)} -> ${hex(b.target)}`);
+          }
+          if ((s.branches || []).length > 25) L.push(`  ...and ${n(s.branches.length - 25)} more branches, all in structuredContent`);
+          if (!(s.branches || []).length) L.push('  no direct branches in range');
+        } else {
+          for (const i of (s.instructions || []).slice(0, 30)) {
+            L.push(`  ${hex(i.addr)}  ${String(i.length).padStart(2)}  ${i.bytes}${i.kind ? `  ${String(i.kind).padEnd(4)} -> ${hex(i.target)}` : ''}`);
+          }
+          if ((s.instructions || []).length > 30) L.push(`  ...and ${n(s.instructions.length - 30)} more instructions, all in structuredContent`);
+        }
+        // The coverage line is the honesty check, and it is the reason this
+        // block exists rather than a bare list. A sweep decoding a section at a
+        // poor instruction-per-byte ratio is decoding padding or data, and the
+        // reader should be able to see that from the output rather than infer it.
+        L.push(
+          `  ${n(s.decoded)} instruction(s) over ${n(s.bytesCovered)}/${n(s.bytesInRange)} bytes, ${n(s.branches?.length ?? 0)} direct branch(es)` +
+            (s.bytesInRange && s.decoded * 4 < s.bytesInRange ? '  — a low ratio, so padding or data is being decoded' : ''),
+        );
+      }
+      L.push('bytes, not mnemonics: instruction boundaries and direct branch edges only. Hand these addresses to a disassembler.');
+      break;
+    }
+
     case 'audit': {
       L.push(`${d.path} — ${String(d.verdict).toUpperCase()}  ${n(d.counts.errors)} error(s), ${n(d.counts.warnings)} warning(s)`);
       for (const s of d.slices ?? []) {
@@ -729,6 +824,66 @@ export const TOOLS = [
           }
         }
         return { data, notes };
+      });
+    },
+  },
+
+  {
+    name: 'overview',
+    title: 'The whole structural picture of a binary, in one call',
+    description:
+      'Everything `describe` returns — every slice, segment, section, load command, header flag and UUID — plus, on ' +
+      'request, the defined symbol table and the C-string sections. One call instead of three.\n\n' +
+      'It exists because a cold-start agent\'s first question is "what is this file", and answering it with `describe` ' +
+      'alone leaves two obvious follow-ups — "what are its symbols" and "what strings does it contain" — that cost a ' +
+      'round trip each and each re-choose a slice independently. Four tools choosing independently is how a caller ends ' +
+      'up holding a symbol table from one architecture and strings from another with nothing in either output saying ' +
+      'so. Here the two inventories are pinned to one slice and a disagreement is reported as a bug.\n\n' +
+      'The inventories are opt-in and bounded, and the bound is reported rather than silently applied: structure is ' +
+      'always present, `symbols` and `strings` are asked for by name, and `truncated` says when more existed.\n\n' +
+      '`notRead` is the list of things this package does not parse — code signature, entitlements, Objective-C and Swift ' +
+      'metadata, DWARF, chained fixups, dyld shared caches. It travels in every answer, not only when asked for, so an ' +
+      'absent field is evidence rather than silence.\n\n' +
+      'Prefer `describe` when you want the structure alone: this is a superset of it and costs a little more to read.',
+    inputSchema: obj(
+      {
+        binary: BINARY,
+        symbols: { type: 'boolean', description: 'Include the defined symbol table. Off by default: on a 14 MB Go binary it turns 9 KB of structure into 422 KB.' },
+        strings: { type: 'boolean', description: "Include the NUL-terminated strings from __cstring and friends. Off by default." },
+        max: { type: 'integer', minimum: 0, description: 'Cap on each inventory. Default 4000; 0 means unlimited.' },
+        min: { type: 'integer', minimum: 1, description: 'Shortest string to report. Default 4.' },
+        arch: ARCH,
+      },
+      ['binary'],
+    ),
+    outputSchema: ENVELOPE,
+    async run(args) {
+      const b = binaryOf(args);
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      return guard('overview', b.binary, async () => {
+        const { overview } = await import('./api.mjs');
+        const r = overview(b.binary, {
+          arch: args.arch ?? null,
+          symbols: args.symbols === true,
+          strings: args.strings === true,
+          max: args.max ?? 4000,
+          min: args.min ?? 4,
+        });
+        const notes = [...(r.notes || [])];
+        if (r.symbols?.note) notes.push(r.symbols.note);
+        if (r.strings?.note) notes.push(r.strings.note);
+        // Should be unreachable — both inventories are pinned to one slice — and
+        // the reader's suite asserts it. Reported rather than thrown: a warning
+        // the caller can act on beats a crash over an inconsistency that would
+        // mean the pin itself is broken.
+        if (r.symbols?.arch && r.strings?.arch && r.symbols.arch !== r.strings.arch) {
+          notes.push(`symbols came from ${r.symbols.arch} but strings from ${r.strings.arch} — the two disagree, which is a bug`);
+        }
+        return {
+          data: r,
+          notes,
+          errors: [],
+        };
       });
     },
   },
@@ -1223,6 +1378,133 @@ export const TOOLS = [
     },
   },
 
+{
+    name: 'disasm',
+    title: 'Decode instruction boundaries and direct branches at an address',
+    description:
+      'Given an address, the instruction boundaries from there and — with `branches:true` — every direct branch in the ' +
+      'range as a resolved {from, to} edge. This is what turns a shortlist of call sites into edges.\n\n' +
+      'WHAT THIS IS NOT: a disassembler. Instructions come back as `bytes` plus, on a direct branch, a resolved ' +
+      '`target`. There are no mnemonics, no operands and no control-flow graph, deliberately — a table whose wrong ' +
+      'answer is a plausible instruction rather than a detectable error is the wrong thing for a reader whose value is ' +
+      'that its answers are facts.\n\n' +
+      'Supported: arm64, arm64e, x86_64. Any other architecture is reported as unknown-encoding rather than returning ' +
+      'nothing, because "this tool has no decoder for ppc" is not the same answer as "there are no instructions here".\n\n' +
+      'It is a LINEAR SWEEP, not recursive descent: every byte in range is decoded in address order, so alignment ' +
+      'padding and any data interleaved in the code section are decoded as instructions too. Each slice reports ' +
+      '`decoded`, `bytesCovered` and `bytesInRange` so a poor instruction-per-byte ratio is visible rather than guessed ' +
+      'at. The effect is more severe on x86_64, where one wrong length shifts every boundary after it.\n\n' +
+      'Start from a known-good address — a symbol, or a function start from `starts`. Sweeping a whole code section ' +
+      'decodes jump tables and string literals as instructions.',
+    inputSchema: obj(
+      {
+        binary: BINARY,
+        address: { ...ADDRESS, description: 'Where to start decoding. Omit to begin at the start of the first code section.' },
+        count: { type: 'integer', minimum: 0, description: 'Instructions to decode. Default 32. 0 means no cap, which is only sensible with bytes.' },
+        bytes: { type: 'integer', minimum: 1, description: 'Decode a byte range instead of a count. Whole section if omitted.' },
+        branches: { type: 'boolean', description: 'Report only direct branches, as resolved edges, rather than every instruction.' },
+        arch: { ...ARCH, description: `${ARCH.description} Must be a decodable architecture — arm64, arm64e or x86_64 — or the answer is unknown-encoding.` },
+      },
+      ['binary'],
+    ),
+    outputSchema: ENVELOPE,
+    async run(args) {
+      const b = binaryOf(args);
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      // `supportedArch` is the decoder table's own predicate rather than a
+      // restatement of it. An architecture this server cannot decode is answered
+      // *before* the file is read, so the caller is told "no decoder for that
+      // architecture" instead of "zero instructions" — the same rule `findcall`
+      // applies to a matcher it has no encoding for.
+      const { supportedArch } = await import('./instruction.mjs');
+      if (args.arch && !supportedArch(args.arch)) {
+        throw Object.assign(
+          new Error(`no instruction decoder for ${args.arch}; this tool decodes arm64, arm64e and x86_64. Reporting "nothing found" here would be a wrong answer, not an empty result.`),
+          { code: 'unknown-encoding' },
+        );
+      }
+      return guard('disasm', b.binary, async () => {
+        const { disassemble } = await import('./api.mjs');
+        const addr = args.address === undefined ? null : parseAddress(args.address, 'address');
+        const r = disassemble(b.binary, {
+          addr,
+          arch: args.arch ?? null,
+          count: args.count ?? 32,
+          bytes: args.bytes ?? 0,
+        });
+        // An architecture present in the file but not decodable is a real
+        // limitation and is reported as a failure rather than folded into an
+        // empty list. The slices it *could* read are still carried in the thrown
+        // envelope's absence — which is why this throws rather than returning.
+        if (r.unsupported.length) {
+          throw Object.assign(
+            new Error(`no instruction decoder for ${r.unsupported.join(', ')}; this tool decodes arm64, arm64e and x86_64`),
+            { code: 'unknown-encoding' },
+          );
+        }
+        if (r.slices.length === 0) {
+          // Not a failure. "Nothing to decode here" is the answer to "decode this
+          // address", and the reason is what the caller needs next.
+          return {
+            data: { addr: addr ?? null, count: args.count ?? 32, slices: [], totals: { slices: 0, instructions: 0, branches: 0 } },
+            errors: [],
+            notes: [
+              addr === null
+                ? 'this binary has no code sections in a decodable architecture'
+                : `${hex(addr)} is not inside a code section of any decodable slice — check the address, and arch if the file is universal`,
+              'call describe to see which slices exist and what code sections they have',
+            ],
+          };
+        }
+        const hexBytes = (bs) => [...bs].map((x) => x.toString(16).padStart(2, '0')).join(' ');
+        const branchesOnly = args.branches === true;
+        const out = r.slices.map((s) => {
+          const insns = branchesOnly ? s.instructions.filter((i) => i.target !== null) : s.instructions;
+          const covered = insns.reduce((a, i) => a + i.length, 0);
+          const span = s.sectionSize - Number(s.startAddr - s.sectionAddr);
+          return {
+            arch: s.arch,
+            sliceOffset: s.offset,
+            section: s.section,
+            sectionAddr: s.sectionAddr,
+            startAddr: s.startAddr,
+            instructions: insns.map((i) => ({
+              addr: i.addr,
+              bytes: hexBytes(i.bytes),
+              length: i.length,
+              ...(i.kind ? { kind: i.kind, target: i.target } : {}),
+            })),
+            branches: s.branches,
+            decoded: insns.length,
+            bytesCovered: covered,
+            bytesInRange: span,
+          };
+        });
+        const totalInstructions = out.reduce((a, s) => a + s.decoded, 0);
+        const totalBranches = out.reduce((a, s) => a + s.branches.length, 0);
+        return {
+          data: {
+            addr: addr ?? null,
+            count: args.count ?? 32,
+            ...(args.bytes ? { bytes: args.bytes } : {}),
+            branchesOnly,
+            slices: out,
+            totals: { slices: out.length, instructions: totalInstructions, branches: totalBranches },
+          },
+          // Zero instructions is an answer, not a failure: the same rule as every
+          // other tool here. `ok` stays true and `data.totals.instructions` is the
+          // precise signal a caller branches on.
+          errors: [],
+          notes: [
+            ...(r.notes || []),
+            'linear sweep, not recursive descent — padding and any data inside the section are decoded as instructions too',
+            'bytes, not mnemonics: this is instruction boundaries and direct branch edges, not a disassembler',
+          ],
+        };
+      });
+    },
+  },
+
   {
     name: 'audit',
     title: 'Check a Mach-O for internal consistency',
@@ -1486,14 +1768,16 @@ function failed(name, args, message, code) {
 export const INSTRUCTIONS = [
   'Mach-O introspection: fat headers, symbol tables, sections, and __TEXT. Facts about the file format and the bytes only — this server knows nothing about any application.',
   '',
-  'The usual loop: describe to see the slices and whether symbols exist, sym to find a name, symlookup to turn an address into a function, findcall for its callers, and findliteral / mapliteral to work out which code handles a file format.',
+  'Start with `overview` for "what is this file": it returns the structure `describe` returns plus, on request, the symbol table and the strings, in one call. Use `describe` alone when you want only the structure. From there: `sym` to find a name, `symlookup` to turn an address into a function, `findcall` for its callers, and `findliteral` / `mapliteral` to work out which code handles a file format.',
   '',
-  'Three things that will otherwise waste your time:',
+  'Five things that will otherwise waste your time:',
   '• Addresses are hex STRINGS ("0x100085c30"), never JSON numbers — a 64-bit address does not survive a number.',
   '• An empty result is an answer, not a failure. ok:true with an empty list means the question was answered. Do not retry it.',
   '• findcall sees DIRECT calls only. Indirect, register and PLT calls do not encode their target and will not appear, so an empty result does not mean nothing calls the target.',
+  '• disasm is not a disassembler. It reports instruction boundaries and direct branch edges as bytes — no mnemonics, no operands, no control-flow graph. It is a linear sweep, so padding and data interleaved in a code section are decoded as instructions too; read the bytes-per-instruction line before trusting a whole-section sweep.',
+  '• overview returns notRead: a list of what this package does not parse. An absent field is evidence, not silence.',
   '',
-  'No disassembly, no load-command dump, no code signature, no Objective-C or Swift metadata, no dSYM/DWARF, and not ELF or PE. When you need to know what the code DOES rather than where it is, hand the addresses to a disassembler — the output here is a shortlist of sites worth opening, not a decoded answer.',
+  'No code signature, no Objective-C or Swift metadata, no dSYM/DWARF, no dyld shared cache, and not ELF or PE. When you need to know what the code DOES rather than where it is, hand the addresses to a disassembler — the output here is a shortlist of sites worth opening, not a decoded answer.',
 ].join('\n');
 
 export { hex };

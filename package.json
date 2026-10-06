@@ -111,11 +111,14 @@
     "test:sarif": "node test/sarif.mjs",
     "test:action": "node test/action.mjs",
     "test:pages": "node test/pages.mjs",
+    "test:docs": "node test/docs.mjs",
+    "docs:build": "node docs/build.mjs",
+    "docs:check": "node docs/build.mjs --check",
     "demo": "node demo/serve.mjs",
     "demo:link": "node demo/link.mjs",
     "build:sea": "node scripts/build-sea.mjs",
     "build:sea:tool": "node scripts/build-sea.mjs --tool",
-    "test:all": "npm run test:fixtures && npm run schema && npm run schema:check && npm test && npm run test:disasm && npm run test:browser && npm run test:pages && npm run test:conformance && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:schemas && npm run test:sarif && npm run test:action && npm run test:mutation"
+    "test:all": "npm run test:fixtures && npm run schema && npm run schema:check && npm test && npm run test:disasm && npm run test:browser && npm run test:pages && npm run test:docs && npm run test:conformance && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:schemas && npm run test:sarif && npm run test:action && npm run test:mutation"
   },
   "engines": {
     "node": ">=22.15"

@@ -147,7 +147,10 @@ const CASES = [
   { tool: 'fingerprint', args: ['fingerprint', '--json', fixture('rebuilt.macho'), fixture('rebuilt2.macho')], note: 'the two-file comparison shape' },
   { tool: 'diff', args: ['diff', '--json', fixture('rebuilt.macho'), fixture('rebuilt2.macho')], note: 'a rebuilt pair, so differences is 0' },
   { tool: 'assert', args: ['assert', '--json', '--has-symbol', 'main', fixture('populated.macho')], note: 'a passing assertion' },
+  { tool: 'overview', args: ['overview', '--json', fixture('universal.macho')], note: 'structure alone, no inventories' },
+  { tool: 'overview', args: ['overview', '--json', '--symbols', '--strings', fixture('populated.macho')], note: 'both inventories, so the optional shapes are exercised' },
   { tool: 'disasm', args: ['disasm', '--json', fixture('functions.macho')], note: 'decoded instructions' },
+  { tool: 'disasm', args: ['disasm', '--json', '--arch=arm64e', fixture('thin-arm64e.macho')], note: 'an architecture the decoder accepts and the CLI accepts, which the MCP enum did not' },
 ];
 
 for (const c of CASES) {

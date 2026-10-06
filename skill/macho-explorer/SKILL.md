@@ -266,12 +266,27 @@ Use `describe`, `sym` and `findliteral` there.
 return structured answers:
 
 ```
-describe  sym  symlookup  findcall
-findliteral  mapliteral  a2o  o2a  dump
-starts  audit  fingerprint  diff  assert
+describe  overview  sym  symlookup  starts  findcall
+findliteral  mapliteral  a2o  o2a  dump  disasm
+audit  fingerprint  diff  assert
 ```
 
-**Not on the MCP server:** `overview`, `disasm` — use the CLI for these.
+Start with **`overview`** rather than `describe`: it is `describe`'s whole answer
+plus the symbol table and the strings on request, in one call. Reach for
+`describe` alone when you want only the structure. `overview` also returns
+`notRead` — the list of what this package does not parse — in every answer, so an
+absent field is evidence rather than silence.
+
+**`disasm`** is on the server too, and it is *not* a disassembler. It reports
+instruction lengths and direct branch edges as bytes: no mnemonics, no operands,
+no control-flow graph. It is a linear sweep, so padding and data inside a code
+section decode as instructions too — read the `bytesCovered` / `bytesInRange`
+line before trusting a whole-section sweep.
+
+**`arch` accepts every slice name the CLI does** — `x86_64`, `arm64`, `arm64e`,
+`arm64_32`, `ppc`, `ppc64`, `arm`, `i386`, `armv7`, `armv7k` — and a trailing `e`
+is not significant, so `arch: "arm64"` selects an arm64e slice. That matters on
+Apple silicon: every current system binary is arm64e, not arm64.
 
 **2. The CLI**, which needs nothing configured:
 

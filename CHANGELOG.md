@@ -6,6 +6,70 @@ semver for the public API (`src/api.mjs` and the `--json` envelope).
 
 ## [Unreleased]
 
+### Added
+
+- **`overview` and `disasm` on the MCP server**, taking it from 14 tools to 16.
+  `overview` is `describe`'s whole answer plus the symbol table and strings on
+  request, in one call, and it returns `notRead` in every answer. `disasm` reports
+  instruction lengths and direct branch edges as bytes — explicitly not a
+  disassembler, and its description says so before the model has to discover it.
+  Both are placed in the tool order an agent reads on a cold start, so
+  "what is this file" is one call rather than three.
+- **A documentation site** (`docs/build.mjs`, seven documents) published alongside
+  the audit report. Rendered from the markdown in this repository, so it cannot
+  disagree with the code it documents. New documents: `docs/ci-gate.md`,
+  `docs/machine-contract.md`, `docs/agent-integration.md`; `docs/user-manual.md`,
+  `docs/use-cases.md`, `AUDITABILITY.md` and `CONTRIBUTING.md` are now rendered
+  too. `npm run docs:build` regenerates, `npm run docs:check` fails on drift, and
+  the Pages workflow gates its deploy on the same check.
+- `schema/overview.schema.json`, completing a per-tool schema for every tool on the
+  MCP surface.
+
+### Fixed
+
+- **The MCP `arch` enum rejected `arm64e`** while the CLI accepted ten slice
+  names. On an arm64e Mac — which is every current Apple-silicon system binary —
+  an agent asking for `arm64e` was refused, and the CLI accepted the same value on
+  the same file. Two doors, two vocabularies, and the agent-facing one was wrong.
+  The enum now matches the CLI's list, which is additive and therefore not a
+  breaking change.
+- **`test/mcp.mjs` chose its subject by index** (`TOOLS[2]`), so adding `overview`
+  shifted it onto `sym` and it failed for a reason unrelated to what it tests. It
+  now selects the tool by capability.
+
+### Notes on how it is tested
+
+The two new tools are held to **byte-identical parity with the CLI** on the same
+file, not merely to "works". A divergence between the two doors is the worst bug
+this package can ship: a model and a person get different instruction boundaries
+on the same binary, both well-formed, one wrong.
+
+`docs/build.mjs` is a markdown renderer written here rather than a dependency,
+because a markdown library would be the package's first one and the hardest to
+remove. That is only defensible because it **fails the build on any construct it
+does not handle**, naming file and line — a table rendered as a paragraph looks
+finished, and that is worse than a failed build. `test/docs.mjs` asserts the same
+property from the output side (no page may contain leftover markdown syntax), and
+`test/pages.mjs` asserts the assembled site contains every page the docs link to.
+
+The renderer shipped two real bugs during this work, both **silent** — producing
+pages that rendered with literal `**` in the output and nothing thrown:
+
+  - `**bold with *em* inside**` could not match, because the strong pattern's body
+    excluded `*`.
+  - Fixing that by running the italic pass first was worse: it matched across a
+    `**` run and turned `**0**` into `*<em>0</em>*`.
+
+Fixed by scanning delimiter runs rather than by alternation, including the
+CommonMark rule that a run of three closes an `em` *and* a `strong` at once. Only
+the leftover-syntax assertion caught either, which is why it is in the suite.
+
+### Unchanged
+
+No change to the reader, so `schemaVersion` stays `1.0` and no consumer needs to
+update. `mutation-check` still catches 23 of 23.
+
+
 The CI-gate and agent-readiness surface. No change to the reader, so
 `schemaVersion` stays `1.0` and no consumer needs to update.
 

@@ -1,0 +1,256 @@
+/*
+ * site.css — the documentation site's stylesheet.
+ *
+ * The palette is the audit report's, copied rather than imported, because the two
+ * pages share no build step and a `@import` would make the docs depend on the
+ * demo's directory layout surviving. Same colours, same monospace/sans pairing,
+ * so a visitor who opens the audit report and then the docs is looking at one
+ * product rather than two.
+ */
+
+:root {
+  --bg: #0b0d10;
+  --panel: #12151a;
+  --panel-2: #171b21;
+  --line: #232a33;
+  --ink: #e7edf3;
+  --dim: #8b97a5;
+  --faint: #5b6672;
+  --accent: #6ee7b7;
+  --accent-dim: #1d3b33;
+  --warn: #f5c26b;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+  --sidebar: 232px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+header.top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.brand {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+.brand:hover { color: var(--accent); }
+
+.tag {
+  font-size: 12px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+
+.back { margin-left: auto; font-size: 13px; color: var(--dim); text-decoration: none; }
+.back:hover { color: var(--accent); }
+
+/* ---------------------------------------------------------------- layout */
+
+.wrap {
+  display: grid;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  gap: 40px;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+@media (max-width: 860px) {
+  .wrap { grid-template-columns: 1fr; gap: 24px; }
+  .sidebar {
+    position: static !important;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--line);
+    padding: 0 0 16px !important;
+  }
+  .nav { border-left: 0 !important; border-radius: 7px; padding: 4px 9px !important; }
+  .nav.on { border-left: 0 !important; }
+}
+
+.sidebar {
+  position: sticky;
+  top: 78px;
+  align-self: start;
+  border-right: 1px solid var(--line);
+  padding-right: 18px;
+  max-height: calc(100vh - 100px);
+  overflow: auto;
+}
+
+.nav {
+  display: block;
+  padding: 5px 0 5px 12px;
+  border-left: 2px solid transparent;
+  color: var(--dim);
+  text-decoration: none;
+  font-size: 13.5px;
+}
+.nav:hover { color: var(--ink); }
+.nav.on { color: var(--accent); border-left-color: var(--accent); }
+
+main { min-width: 0; padding-top: 26px; }
+
+h1 { font-size: 27px; letter-spacing: -0.015em; margin: 0 0 6px; }
+h2 {
+  font-size: 19px;
+  margin: 40px 0 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+h3 { font-size: 15.5px; margin: 26px 0 8px; color: var(--ink); }
+h4 { font-size: 14px; margin: 20px 0 6px; color: var(--dim); }
+
+.blurb { color: var(--dim); max-width: 74ch; margin: 0 0 8px; }
+
+p { max-width: 78ch; }
+ul, ol { max-width: 78ch; padding-left: 22px; }
+li { margin: 3px 0; }
+li > ul, li > ol { margin: 3px 0; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+
+strong { color: #fff; font-weight: 600; }
+em { color: #dbe6f0; }
+del { color: var(--faint); }
+
+/* ---------------------------------------------------------------- code */
+
+code {
+  font-family: var(--mono);
+  font-size: 0.885em;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  /* Long identifiers are the common case in this documentation — symbol names,
+     flag spellings, paths — and a horizontal scrollbar inside a code span reads
+     as a broken page rather than a long name. */
+  overflow-wrap: break-word;
+}
+
+pre.code {
+  position: relative;
+  background: #08090b;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 13px 15px;
+  overflow-x: auto;
+  margin: 14px 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+pre.code code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: #c9d3dd;
+  overflow-wrap: normal;
+  white-space: pre;
+}
+/* The language label, from the fence's info string. A generated page that shows
+   ```sh without saying `sh` loses half the information in the block. */
+pre.code[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0 8px 0 7px;
+  padding: 2px 8px;
+}
+
+/* ---------------------------------------------------------------- tables */
+
+.tablewrap { overflow-x: auto; margin: 16px 0; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+th, td {
+  text-align: left;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+th {
+  color: var(--faint);
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+tbody tr:hover { background: var(--panel); }
+.ta-right { text-align: right; }
+.ta-center { text-align: center; }
+
+/* ---------------------------------------------------------------- quotes */
+
+blockquote {
+  margin: 16px 0;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--accent-dim);
+  color: var(--dim);
+}
+blockquote p { margin: 8px 0; }
+
+/* ---------------------------------------------------------------- index */
+
+.index { list-style: none; padding: 0; max-width: 74ch; }
+.index li {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+.index a { font-size: 15.5px; font-weight: 500; }
+.index span { display: block; color: var(--dim); font-size: 13.5px; margin-top: 2px; }
+
+/* ---------------------------------------------------------------- footer */
+
+footer {
+  border-top: 1px solid var(--line);
+  padding: 20px 24px 48px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+footer p { color: var(--faint); font-size: 13px; max-width: 80ch; }

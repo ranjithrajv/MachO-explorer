@@ -86,3 +86,16 @@ _site_test/
 .tmp-action-scratch/
 .tmp-action-test/
 macho-audit.sarif
+
+# The documentation site's build output. `docs/build.mjs` writes here by
+# default; `test/docs.mjs` and `test/pages.mjs` write into their own scratch
+# directories instead, so only the default location needs ignoring.
+#
+# It is generated and committed nowhere: the Pages workflow builds it during the
+# deploy, and `docs/build.mjs --check` fails that deploy if the checked-out tree
+# would produce a different site. Committing generated HTML would mean a second
+# copy to keep in step, which is the drift `--check` exists to prevent.
+_site/
+
+# A browser-automation tool's scratch output, not ours.
+.playwright-mcp/

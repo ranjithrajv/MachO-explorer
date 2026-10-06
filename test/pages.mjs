@@ -30,7 +30,8 @@
  * test are the same event, which is the point.
  */
 
-import { readFileSync, existsSync, rmSync, mkdirSync, cpSync } from 'node:fs';
+import { readFileSync, existsSync, rmSync, mkdirSync, cpSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -109,6 +110,65 @@ for (const f of pageFetches) {
 
 ok(existsSync(join(SITE, scriptSrc.replace('./', 'demo/'))), `the module script ${scriptSrc} is in the site`);
 ok(existsSync(join(SITE, 'index.html')), 'the site root has a page, so a visitor is not dropped on a directory listing');
+
+/* ------------------------------------------------------------------ *
+ * the documentation site
+ * ------------------------------------------------------------------ *
+ *
+ * Assembled from the same tree as the audit report, and gated the same way: the
+ * builder runs with `--check` first, so a site that has drifted from the markdown
+ * fails the deploy rather than shipping. `test/docs.mjs` holds the renderer
+ * itself; what is asserted here is that the *site* is wired up — that the files
+ * the docs link to are in it, and that the two surfaces do not point at each other
+ * wrongly.
+ */
+{
+  // Rendered here rather than assumed present, because a workflow that builds the
+  // docs into a directory this suite never looks at is a claim, not a fact.
+  // Into the same directory this suite assembles the audit report into, so the
+  // assertions below are about the *deployed layout* rather than about wherever
+  // the builder happens to default to. The workflow copies `_site` wholesale, so
+  // a site that only looks right at its default location is a site that is wrong
+  // where it actually ships.
+  const built = spawnSync(process.execPath, [join(ROOT, "docs", "build.mjs"), "--out", join(SITE, "docs")], { encoding: "utf8" });
+  ok(built.status === 0, "the docs build succeeds", built.stderr?.trim().slice(0, 160));
+
+  const DOCS = join(SITE, "docs");
+  ok(existsSync(join(DOCS, "index.html")), "the docs site has an index");
+  ok(existsSync(join(DOCS, "site.css")), "the docs site has a stylesheet");
+
+  const expected = [
+    "user-manual.html", "ci-gate.html", "machine-contract.html",
+    "agent-integration.html", "use-cases.html", "auditable.html", "contributing.html",
+  ];
+  for (const f of expected) ok(existsSync(join(DOCS, f)), `the docs site has ${f}`);
+
+  // The cross-links between the two surfaces. A docs page that points at the audit
+  // report by a path that does not exist in the deployed layout is a dead link a
+  // reader finds the hard way.
+  const idx = readFileSync(join(DOCS, "index.html"), "utf8");
+  ok(/href="\.\.\/demo\/"/.test(idx), "the docs index links to the audit report, which is one level up");
+  ok(existsSync(join(SITE, "demo", "index.html")), "and that target exists in the assembled site");
+
+  for (const f of expected) {
+    const html = readFileSync(join(DOCS, f), "utf8");
+    ok(/href="\.\.\/\.\.\/"/.test(html), `${f} links back to the repository root`);
+    ok(/href="\.\/site\.css"/.test(html), `${f} loads the stylesheet relatively`, "an absolute /site.css breaks under a GitHub Pages project subpath");
+  }
+
+  // No third-party origin anywhere in the docs, for the same reason as the audit
+  // report: a documentation site that pulls a font or a script from a CDN cannot
+  // promise what it told you to run.
+  const allow = /ranjithrajv\/MachO-explorer|json-schema\.org|oasis-tcs\.com|opensource\.apple\.com|example\.com|api\.example\.com|127\.0\.0\.1|localhost/;
+  let external = [];
+  for (const f of readdirSync(DOCS)) {
+    const html = readFileSync(join(DOCS, f), "utf8");
+    for (const m of html.matchAll(/<(?:script|img|link)[^>]*\b(?:src|href)="(https?:[^"]+)"/g)) {
+      if (!allow.test(m[1])) external.push(`${f}: ${m[1]}`);
+    }
+  }
+  ok(external.length === 0, "the docs site loads no script, image or stylesheet from a third party", external.slice(0, 3).join(" | "));
+}
 
 /* ------------------------------------------------------------------ *
  * the no-external-origin rule

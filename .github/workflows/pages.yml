@@ -47,6 +47,9 @@ on:
       - 'src/instruction.mjs'
       - 'src/api.mjs'
       - 'schema/envelope.schema.json'
+      - 'docs/**'
+      - 'AUDITABILITY.md'
+      - 'CONTRIBUTING.md'
       - 'package.json'
       - 'pages/**'
       - '.github/workflows/pages.yml'
@@ -57,6 +60,9 @@ on:
       - 'src/instruction.mjs'
       - 'src/api.mjs'
       - 'schema/envelope.schema.json'
+      - 'docs/**'
+      - 'AUDITABILITY.md'
+      - 'CONTRIBUTING.md'
       - 'package.json'
       - 'pages/**'
       - '.github/workflows/pages.yml'
@@ -131,6 +137,15 @@ jobs:
           # report instead of a directory listing.
           cp pages/index.html _site/index.html
 
+          # The documentation site, rendered from the markdown in this repository so
+          # it cannot disagree with the code it documents. `--check` runs first and
+          # fails the deploy on drift: a stale documentation site is worse than none,
+          # because it is confidently out of date. The renderer itself fails the build
+          # on any markdown construct it does not handle rather than emitting a
+          # plausible-looking wrong page, so a page is either correct or absent.
+          node docs/build.mjs --check
+          node docs/build.mjs
+
       # A check that the *assembled* site is complete, run against what was
       # actually copied rather than against the repository. Every path the page
       # fetches is listed, because each one is a 404 the reader sees as a dead
@@ -154,10 +169,19 @@ jobs:
             src/instruction.mjs \
             src/api.mjs \
             schema/envelope.schema.json \
-            package.json
+            package.json \
+            docs/index.html \
+            docs/user-manual.html \
+            docs/ci-gate.html \
+            docs/machine-contract.html \
+            docs/agent-integration.html \
+            docs/use-cases.html \
+            docs/auditable.html \
+            docs/contributing.html \
+            docs/site.css
           do
             if [ ! -f "_site/$f" ]; then
-              echo "::error::_site/$f is missing — the page would show a dead control for it"
+              echo "::error::_site/$f is missing — the audit report would show a dead control, or the docs site would 404"
               exit 1
             fi
           done

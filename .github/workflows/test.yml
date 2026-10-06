@@ -14,7 +14,8 @@
 #               that no longer tests, and it would otherwise go unnoticed.
 #   test      — the reader suite, on macOS, Linux and Windows.
 #   protocol  — the MCP server, the agent skill, the declared types, the publish
-#               contract, the SARIF emitter and the composite action, on Linux.
+#               contract, the SARIF emitter, the composite action, the published page
+#               and the documentation site, on Linux.
 #   mutation  — prove the suite fails when the reader is broken. Slow, and the
 #               job most likely to rot, so it runs on its own rather than
 #               blocking every push's test job.
@@ -184,6 +185,15 @@ jobs:
       # that ran — and the visitor could not tell.
       - name: The published page is this repository
         run: node test/pages.mjs
+      # The documentation site is rendered by a from-scratch markdown renderer, so
+      # its tests are about the *renderer* rather than the seven documents it ships.
+      # `test/docs.mjs` asserts from the output side — no leftover markdown syntax in
+      # any page, every anchor resolves, every page has a source — because the
+      # failure mode of a hand-rolled renderer is degrading quietly rather than
+      # throwing. Two emphasis bugs got through here and were caught only by the
+      # leftover-syntax assertion.
+      - name: The documentation site renders, and --check detects drift
+        run: node test/docs.mjs
 
   mutation:
     name: mutation
