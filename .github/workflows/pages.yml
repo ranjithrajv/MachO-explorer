@@ -159,12 +159,22 @@ jobs:
           cp pages/index.html _site/index.html
 
           # The documentation site, rendered from the markdown in this repository so
-          # it cannot disagree with the code it documents. `--check` runs first and
-          # fails the deploy on drift: a stale documentation site is worse than none,
-          # because it is confidently out of date. The renderer itself fails the build
-          # on any markdown construct it does not handle rather than emitting a
-          # plausible-looking wrong page, so a page is either correct or absent.
-          node docs/build.mjs --check
+          # it cannot disagree with the code it documents.
+          #
+          # Deliberately no `--check` here, and the reason is structural rather than
+          # a judgement about its value. `--check` compares `_site/docs/` against a
+          # fresh render, and this step `rm -rf _site` forty lines above — so at this
+          # point the directory it compares against does not exist, every page is
+          # reported as differing, and the deploy fails unconditionally. It ran before
+          # the build it was checking, which is the one ordering that cannot work.
+          #
+          # It could not have been meaningful even reordered: `_site` is wiped and
+          # rebuilt inside this single step, so there is no prior build to drift from.
+          # Drift is a *local* risk — a developer viewing a stale `_site` — and
+          # `node docs/build.mjs --check` is the right guard there. In CI the renderer
+          # fails the build itself on any markdown construct it does not handle, and
+          # `test/pages.mjs` asserts the assembled site contains every path the page
+          # fetches. Those two are the checks that can actually fail.
           node docs/build.mjs
 
       # A check that the *assembled* site is complete, run against what was
