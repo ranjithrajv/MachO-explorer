@@ -1,0 +1,164 @@
+.TH TBD 1 "October 7, 2026" "MachO-explorer 0.1.0" "User Commands"
+.SH NAME
+tbd \- read a text stub: the exported symbols of a dylib
+.SH SYNOPSIS
+.B tbd
+.I stub.tbd
+.RB [ \-\-symbol= name ]
+.RB [ \-\-symbols ]
+.RB [ \-\-reexports ]
+.RB [ \-\-objc ]
+.RB [ \-\-max= n ]
+.RB [ \-\-json ]
+.br
+.B tbd
+.BI \-\-symbol= name
+.BI \-\-sdk= dir
+.RB [ \-\-mode= exact | substring ]
+.RB [ \-\-max= n ]
+.RB [ \-\-json ]
+.SH DESCRIPTION
+Reads a
+.I .tbd
+text stub: the install names, target triples and exported symbols of a dylib.
+.PP
+A
+.I .tbd
+is what a Mach\-O symbol table would have been if Apple had shipped it as text.
+Since macOS 11 the system dylibs no longer exist as files \fIat all\fR: they are
+baked into the dyld shared cache, so
+.BR nm (1),
+.BR otool (1)
+and every tool that reads binaries have nothing to open. The question "what does
+libSystem export" is not slow on a modern machine; it is unanswerable by anything
+that reads binaries. The answer is in the SDK, as text.
+.PP
+Reading one needs no Mach\-O parser at all. This command therefore works on a stub
+and on nothing else \fIand says so when handed a binary\fR.
+.SH ONE FILE, MANY LIBRARIES
+A
+.I .tbd
+is a stream of YAML documents, one per library, and the distinction is load\-bearing.
+.B libSystem.tbd
+holds
+.I 39
+of them \fIone per constituent dylib\fR, such as
+.IR libsystem_c.dylib ,
+.I libsystem_malloc.dylib
+and
+.IR libsystem_pthread.dylib .
+.PP
+Reading only the first would report the umbrella's own metadata and a fraction of
+its symbols, with nothing in the answer indicating that. So the summary always
+states the document count, and
+.B \-\-symbol
+attributes every hit to the document that exports it. "Which library provides
+this symbol" is only answerable if the symbol knows which of the 39 it came from.
+.SH SEARCHING AN SDK
+.TP
+.BI \-\-symbol= name " " \-\-sdk= dir
+Report which stubs under
+.I dir
+export
+.IR name .
+.PP
+This is the question that has no other answer on a current macOS, and it takes
+about a second.
+.PP
+.B 2,448
+of the
+.I 5,309
+stubs in the macOS 15.2 SDK are symlinks \fIone stub per interface umbrella, many
+names\fR, so paths are resolved and deduplicated. Without that,
+.B _pthread_mutex_lock
+is reported as exported by 39 files and a reader concludes there are 39 places to
+look; the install name is identical in all 39, so nothing in the output
+contradicts it. The alias count is reported rather than hidden.
+.SH QUERIES
+.TP
+.BI \-\-symbol= name
+Is this name exported, by which library, and for which targets.
+.TP
+.B \-\-symbols
+List every exported symbol. Use with
+.B \-\-max
+to cap it; the count stays exact.
+.TP
+.B \-\-reexports
+List the libraries and symbols this stub re\-exports.
+.TP
+.B \-\-objc
+List Objective\-C class and ivar
+.IR names .
+No types, no ivar offsets, no method lists \fIthis reads no Objective\-C
+metadata\fR.
+.PP
+With none of them, the stub is summarised: version, targets, document count,
+symbol count, and one line per library.
+.SH A PARTIAL ANSWER IS WITHHELD
+A stub containing a line this reader does not understand has an
+.I unknown
+symbol count. Printing the count anyway states something not known to be true, and
+"this stub exports 4,100 symbols" sends someone down the wrong path.
+.PP
+So the command exits
+.B 3
+and names the lines, which is also the only way anyone finds out the parser needs
+extending. Every line is parsed or the answer is not given.
+.SH "WHAT IS NOT READ"
+Symbol
+.I names
+only. No address, because a stub describes the linker's view and contains no
+addresses; no Objective\-C types or method lists; no Swift conformance metadata;
+no
+.I $REF
+re\-export target resolution; and not Mach\-O, DWARF or a shared cache. A
+re\-export is recorded where the name passes through, and the implementation may
+live in another library entirely.
+.SH "EXIT STATUS"
+.TP
+.B 0
+Ran, found something.
+.TP
+.B 1
+Ran, found nothing. This stub does not export that name \fIa negative answer, not
+an error\fR, and a caller that retries variations of a name which is genuinely
+absent is wasting time.
+.TP
+.B 2
+Usage error.
+.TP
+.B 3
+Could not do the job: the file could not be read, it is not a stub, or it contains
+a line this reader does not understand.
+.SH EXAMPLES
+What does libz export, and where does it install:
+.PP
+.RS
+.nf
+macho\-explorer tbd \-\-symbol=_deflate \-\-sdk=/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk/usr/lib
+.fi
+.RE
+.PP
+Which library provides malloc:
+.PP
+.RS
+.nf
+macho\-explorer tbd \-\-symbol=_malloc \-\-sdk=$SDK/usr/lib
+.fi
+.RE
+.PP
+Summarise one stub, and list its Objective\-C classes:
+.PP
+.RS
+.nf
+macho\-explorer tbd libz.tbd
+macho\-explorer tbd libFoo.tbd \-\-objc
+.fi
+.RE
+.SH "SEE ALSO"
+.BR otool (1),
+.BR nm (1),
+.BR dyld_info (1)
+.PP
+Full documentation: https://ranjithrajv.github.io/MachO-explorer/docs/

@@ -505,6 +505,93 @@ change are facts about a *build* while a changed literal string is a change to t
 *program*. Turning any of them into a failure is a policy decision, and a policy
 belongs in `assert` where it can be written down and reviewed.
 
+## What does this library export? — `tbd`
+
+Every other tool here reads a Mach-O. This one reads a **text stub**, and it is
+the reason you can answer a question you currently cannot.
+
+Since macOS 11 the system dylibs do not exist as files. `/usr/lib/libSystem.B.dylib`
+is inside the dyld shared cache, so `nm`, `otool`, `jtool2` and this package's own
+symbol tools all have **nothing to open**. "What does libSystem export" is not a
+slow question on a modern machine; it is unanswerable by anything that reads
+binaries.
+
+The answer is in the SDK, as text. A `.tbd` is what Apple would have shipped if
+the symbol table had been a file.
+
+```sh
+# Which library provides this symbol? Across a whole SDK, in about a second.
+macho-explorer tbd --symbol=_pthread_mutex_lock \
+  --sdk="$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib"
+```
+
+```
+_pthread_mutex_lock  —  4 hit(s) in 2 libraries, from 394 stub(s)
+  /usr/lib/system/libsystem_pthread.dylib
+  ...
+    _pthread_mutex_lock   .../libSystem.B.tbd#31  [arm64-macos, arm64-macos, ...]
+```
+
+That is the answer you need before you can reason about a call site: it is
+`libsystem_pthread.dylib`, **not** `libSystem.B.dylib`, and the umbrella only
+re-exports it.
+
+### One file, many libraries — and the count matters
+
+`libSystem.tbd` is **39 documents** in one file, one per constituent dylib. So
+every hit is attributed to the library that exports it, and the summary always
+states the document count. A reader that took only the first document would
+report the umbrella's own metadata and a fraction of its symbols, with nothing in
+the answer saying so.
+
+### 46% of the stubs in an SDK are symlinks
+
+`libm.tbd` is a link to `libSystem.tbd`; so are `libc.tbd` and `libpthread.tbd`.
+An SDK ships one stub per *interface umbrella* and points every name at it, so
+paths are resolved and deduplicated. Without that, `_pthread_mutex_lock` is
+reported as exported by 39 files and you conclude there are 39 places to look —
+while the install name is identical in all 39 and nothing in the output
+contradicts you. The alias count is reported, not hidden.
+
+### Queries
+
+| flag | question |
+|---|---|
+| `--symbol=<name>` | is this exported, by which library, for which targets |
+| `--mode=substring` | …matching anywhere in the name. `exact` is the default and the two are **different questions** |
+| `--sdk=<dir>` | search a whole SDK (needs `--symbol`) |
+| `--symbols` | list every exported symbol |
+| `--reexports` | what this stub passes through from elsewhere |
+| `--objc` | Objective-C class and ivar **names** |
+| `--max=<n>` | cap a listing. The count stays exact |
+
+With none of them, the stub is summarised: version, targets, document count,
+symbol count, one line per library.
+
+### Exit codes, and the one that will surprise you
+
+`0` found · `1` **found nothing** · `2` usage error · `3` could not do the job.
+
+So `--symbol=_nonexistent` exits **1**, not 3. It is a negative answer, and a
+caller that retries variations of a name which is genuinely absent is wasting
+time.
+
+`3` means the file could not be read, **or it is not a stub, or it contains a line
+this reader does not understand**. That last one is deliberate: a stub with an
+unread line has an *unknown* symbol count, and printing the count anyway states
+something not known to be true. The command refuses and names the lines — which
+is also how you find out the parser needs extending.
+
+### What it does not read
+
+Names only. No address (a stub describes the linker's view and contains none), no
+Objective-C types, offsets or method lists, no Swift conformance metadata, no
+`$REF` target resolution, and not Mach-O, DWARF or a shared cache.
+
+**A re-export is not an implementation.** The name is recorded where it passes
+through; the code may live in another library entirely. That is why the answer
+names the provider rather than assuming the umbrella built it.
+
 ## Where functions begin — `starts`
 
 `LC_FUNCTION_STARTS` is the linker's own list of function entry addresses, and it

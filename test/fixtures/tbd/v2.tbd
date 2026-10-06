@@ -1,0 +1,28 @@
+--- !tapi-tbd
+tbd-version: 2
+targets:
+  x86_64-apple-macos:
+    platforms:
+      - macos
+      - macCatalyst
+    settings:
+      base:
+        SWIFT_FORCE_LOAD: '-objc'
+    symbols:
+      _exit: null
+      _printf: null
+      _malloc$RENAMED: '@rpath/libmalloc.dylib(libSystem.B)'
+      _memcpy: null
+      _OSAtomicAdd64Barrier: null
+  arm64-apple-macos:
+    platforms:
+      - macos
+    symbols:
+      _exit: null
+      _printf: null
+      _memcpy: null
+    re-exports:
+      - /usr/lib/system/libcommon_shims.dylib
+    objc-classes:
+      NSObject:
+        - NSObject

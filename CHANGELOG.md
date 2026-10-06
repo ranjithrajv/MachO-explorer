@@ -8,6 +8,116 @@ semver for the public API (`src/api.mjs` and the `--json` envelope).
 
 ### Added
 
+- **`tbd` — read a `.tbd` text stub.** The only tool here that does not read a Mach-O,
+  and the one that answers a question nothing else on a current macOS can.
+- `readTbd`, `findSymbol`, `findInSdk` and `parseTbd` exported from `src/api.mjs`, so
+  the stub reader is importable and vendorable like the rest.
+- `schema/tbd.schema.json`, a per-tool schema like every other tool on the surface.
+- `man/man1/tbd.1`, a skill section, and a README section on the libSystem question.
+
+### Why a `.tbd` reader belongs in a Mach-O tool
+
+Since macOS 11 the system dylibs are not files. `/usr/lib/libSystem.B.dylib` is
+inside the dyld shared cache, so `nm`, `otool`, `jtool2` and this package's own
+symbol tools all have nothing to open. "What does libSystem export" is not a slow
+question on a modern machine — it is unanswerable by anything that reads binaries.
+
+The answer is in the SDK, as text:
+
+```
+$ macho-explorer tbd --symbol=_pthread_mutex_lock --sdk="$SDK/usr/lib"
+_pthread_mutex_lock  —  4 hit(s) in 2 libraries, from 394 stub(s)
+  /usr/lib/system/libsystem_pthread.dylib
+```
+
+That is the answer you need before reasoning about a call site: it is
+`libsystem_pthread.dylib`, **not** `libSystem.B.dylib`, which only re-exports it.
+0.7 seconds.
+
+### What the reader is careful about
+
+Each of these was a real bug found while building it, not a precaution.
+
+- **A `.tbd` is a stream of documents, not one.** `libSystem.tbd` holds **39**, one
+  per constituent dylib. Reading only the first reports the umbrella's metadata
+  and a fraction of its symbols with nothing saying so. Every hit is attributed to
+  the document that exports it.
+- **A partial answer is withheld.** A stub containing one unread line has an
+  *unknown* symbol count, so `tbd` exits 3 and names the line rather than printing
+  a number it cannot justify. Exit 1 is reserved for "ran, found nothing".
+- **An unread line is not the same as the wrong format.** A Mach-O handed to `tbd`
+  once produced "a line I do not understand" — because the "is this a stub?" guard
+  was gated on there being no unrecognised lines, and a Mach-O has plenty. Now a
+  file with no `--- !tapi-tbd` header is rejected as the wrong format, which is a
+  different problem with a different fix.
+- **46% of an SDK's stubs are symlinks.** `libm.tbd` is a link to `libSystem.tbd`.
+  Without resolution and deduplication, `_pthread_mutex_lock` reads as exported by
+  39 files and you look in all 39 — while the install name is identical in all 39
+  and nothing in the output contradicts you. The alias count is reported.
+- **Re-exports read the `libraries` field, not the whole entry.** An entry is
+  `{ targets, libraries }`; walking it wholesale returned the six target triples
+  alongside the one library, so `libnetwork.tbd` reported **7** re-exported
+  libraries when the file lists 1. All seven were real strings from the file, so
+  the wrong answer was entirely plausible.
+- **Both format versions, one parser.** v4 is flat; v2 nests three mappings deep
+  and writes each symbol as `_name: null` — the names are the *keys*. Reading
+  values alone reports a v2 stub as exporting nothing, and the first rule for the
+  keys ("only when every value is null") broke on the next line of the same
+  mapping, because `_malloc$RENAMED: '@rpath/libmalloc.dylib'` carries a
+  re-export annotation. `malloc` vanished from a v2 stub that plainly listed it.
+- **`...` is Apple's end-of-document marker**, on the last line of every stub
+  Apple ships. Treating it as content puts one unrecognised line on every file,
+  and a report that always says "1 unrecognised" trains a reader to ignore the
+  field.
+- **Exports are item-shaped, not per-symbol.** A v4 entry has its own `targets:`,
+  so `libQMIParserDynamic`'s two weak symbols are recorded as x86_64-only while
+  its real symbols list all three architectures. Per-symbol targets would have
+  buried that.
+
+### The performance bug
+
+`readValue` recomputed bracket depth over the whole accumulated buffer on every
+continuation line. That is quadratic, and a flow sequence with 50,000 entries
+spread over 2,000 lines triggers it — which `libextension.tbd` (5.1 MB) does on
+its own.
+
+An SDK search took **14 minutes**. Tracking the depth incrementally took it to
+**0.7 seconds**, and the 5.1 MB file now parses in 0.3 s.
+
+### How it is verified
+
+`test/tbd.mjs` — 127 checks.
+
+- **Fixtures are verbatim excerpts of real SDK files**, not files written to match
+  the parser. A generated fixture is a restatement of the parser's assumptions.
+- **One fixture is malformed on purpose**, and the reader must refuse it.
+- **When a real SDK is present, its stubs must parse with zero unrecognised
+  lines.** That is a deterministic stride sample of ~300 files by default, and
+  `--full` walks the lot. Sampled rather than exhaustive because a check that
+  takes minutes stops being run; deterministic rather than random because a
+  failure has to reproduce.
+
+Run against the whole SDK on this machine: **5,304 files, 6,387 documents,
+4,743,784 symbols, zero unrecognised lines, zero failures, 15.7 seconds.**
+
+### Also fixed
+
+- `test/skill.mjs` supplied the Mach-O probe binary to every tool, which is the
+  wrong operand for `tbd` — so `--sdk` and `--mode` were reported as "accepted by
+  no tool". The harness now supplies a real stub, and the case builds
+  `[src, ...sub, …]` because `src` is the dispatcher and an invocation without the
+  subcommand makes it read `--symbol=_exit` as a verb name.
+
+### Unchanged
+
+No change to the Mach-O reader, so `schemaVersion` stays `1.0` and no consumer
+needs to update. `mutation-check` still catches 23 of 23.
+
+---
+
+
+### Added
+
 - **`overview` and `disasm` on the MCP server**, taking it from 14 tools to 16.
   `overview` is `describe`'s whole answer plus the symbol table and strings on
   request, in one call, and it returns `notRead` in every answer. `disasm` reports

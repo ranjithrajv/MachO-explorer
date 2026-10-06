@@ -183,6 +183,14 @@ jobs:
       # it gets an explicit suite. It also asserts the no-external-origin rule,
       # because a CDN link would mean the reader being audited is not the reader
       # that ran — and the visitor could not tell.
+      # A .tbd is read by a parser written for the format, and its failure mode
+      # is a well-formed wrong answer: half the symbols with the right install name
+      # and nothing saying the rest were missed. So the suite asserts the reader
+      # REFUSES a stub it did not fully understand, and — when a real SDK is present
+      # — that every stub in it parses with zero unrecognised lines. The fixtures are
+      # verbatim excerpts of Apple's own files, not files written to match the parser.
+      - name: A text stub is read completely, or the answer is withheld
+        run: node test/tbd.mjs
       - name: The published page is this repository
         run: node test/pages.mjs
       # The documentation site is rendered by a from-scratch markdown renderer, so

@@ -151,6 +151,16 @@ const CASES = [
   { tool: 'overview', args: ['overview', '--json', '--symbols', '--strings', fixture('populated.macho')], note: 'both inventories, so the optional shapes are exercised' },
   { tool: 'disasm', args: ['disasm', '--json', fixture('functions.macho')], note: 'decoded instructions' },
   { tool: 'disasm', args: ['disasm', '--json', '--arch=arm64e', fixture('thin-arm64e.macho')], note: 'an architecture the decoder accepts and the CLI accepts, which the MCP enum did not' },
+{ tool: 'tbd', args: ['tbd', '--json', fixture('tbd/libz.1.2.11.tbd')], note: 'the summary: one library, its install name and versions' },
+  { tool: 'tbd', args: ['tbd', '--json', '--symbols', '--max=5', fixture('tbd/libz.1.2.11.tbd')], note: 'a capped listing, so the exact count and the truncated flag are both exercised' },
+  { tool: 'tbd', args: ['tbd', '--json', '--symbol=_deflate', fixture('tbd/libz.1.2.11.tbd')], note: 'a match, so the hits array is exercised' },
+  { tool: 'tbd', args: ['tbd', '--json', '--symbol=_deflate', '--mode=substring', fixture('tbd/libz.1.2.11.tbd')], note: 'substring mode' },
+  { tool: 'tbd', args: ['tbd', '--json', '--symbol=_not_there', fixture('tbd/libz.1.2.11.tbd')], note: 'a negative answer, which is ok:true with a zero count and no error' },
+  { tool: 'tbd', args: ['tbd', '--json', '--reexports', fixture('tbd/libnetwork.tbd')], note: 're-exports, where reading the whole entry instead of its `libraries` field padded the list with target triples' },
+  { tool: 'tbd', args: ['tbd', '--json', '--objc', fixture('tbd/libUSBCfwflasher.tbd')], note: 'Objective-C names' },
+  { tool: 'tbd', args: ['tbd', '--json', fixture('tbd/libsystem-excerpt.tbd')], note: 'a three-document stub, where libraries[] is the point and installName is absent' },
+  { tool: 'tbd', args: ['tbd', '--json', '--symbol=_adler32', `--sdk=${fixture('tbd/sdk.tbd')}`], note: 'an SDK sweep, so aliasesSkipped is exercised' },
+  { tool: 'tbd', args: ['tbd', '--json', fixture('tbd/v2.tbd')], note: 'the v2 shape, which puts names in mapping keys' },
 ];
 
 for (const c of CASES) {

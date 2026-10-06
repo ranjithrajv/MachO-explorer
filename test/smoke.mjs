@@ -2459,7 +2459,26 @@ console.log('\na2o / o2a: address and file offset');
       const { searchSymbolsIn } = await import('../src/api.mjs');
       const corpusRoot = path.join(HERE, 'fixtures');
 
-      const all = searchSymbolsIn([corpusRoot], 'target_fn');
+      // The corpus is *the Mach-O fixtures*, named explicitly rather than
+      // "everything in the directory".
+      //
+      // The directory now also holds `tbd/`, a corpus of text stubs — a different
+      // format with its own suite — and passing the directory walked those too.
+      // The failure was legible and wrong: `corpus: nothing was skipped, because the
+      // fixture directory holds only Mach-O` went red with `skipped=14`, which
+      // reads as fourteen broken Mach-O fixtures rather than fourteen text files
+      // the Mach-O corpus was never meant to include.
+      //
+      // So the input is derived from what the corpus *is*. That also keeps the
+      // "nothing was skipped" assertion meaningful: it now means "no Mach-O
+      // fixture was unreadable", which is the fact it was always checking.
+      const CORPUS = fs
+        .readdirSync(corpusRoot)
+        .filter((f) => f.endsWith('.macho'))
+        .sort()
+        .map((f) => path.join(corpusRoot, f));
+
+      const all = searchSymbolsIn([...CORPUS], 'target_fn');
       check(
         all.totals.matchedFiles > 5 && all.totals.looked === all.totals.files,
         'corpus: a directory of Mach-O files is searched, and every one was read',
@@ -2490,7 +2509,7 @@ console.log('\na2o / o2a: address and file offset');
       // `sym` lone-path checks below use.
       const nonMachOInCorpus = path.join(os.tmpdir(), 'macho-smoke-corpus-not-a-binary.txt');
       fs.writeFileSync(nonMachOInCorpus, 'this is not a Mach-O\n');
-      const mixed = searchSymbolsIn([corpusRoot, nonMachOInCorpus], 'target_fn');
+      const mixed = searchSymbolsIn([...CORPUS, nonMachOInCorpus], 'target_fn');
       check(
         mixed.totals.skipped === 1 && mixed.totals.unreadable === 0,
         'corpus: a non-Mach-O file in the set is skipped, not reported as an error',
@@ -2519,13 +2538,13 @@ console.log('\na2o / o2a: address and file offset');
         `files=${missing.totals.files} looked=${missing.totals.looked}`,
       );
 
-      const only = searchSymbolsIn([corpusRoot], 'caller_a', { matchedOnly: true });
+      const only = searchSymbolsIn([...CORPUS], 'caller_a', { matchedOnly: true });
       check(
         only.files.every((f) => f.count > 0) && only.files.length === only.totals.matchedFiles,
         'corpus: --matched-only leaves out the files that did not match',
         `${only.files.length} rows, ${only.totals.matchedFiles} matched`,
       );
-      const cappedNames = searchSymbolsIn([corpusRoot], 'caller', { perFile: 0 });
+      const cappedNames = searchSymbolsIn([...CORPUS], 'caller', { perFile: 0 });
       check(
         cappedNames.files.every((f) => f.matches.length === 0 && f.count >= 0),
         'corpus: --per-file 0 keeps counts and drops names',
@@ -2533,26 +2552,26 @@ console.log('\na2o / o2a: address and file offset');
 
       // Imports, which is the question corpus mode is really for: which of these
       // artifacts pull in a given symbol.
-      const imports = searchSymbolsIn([corpusRoot], '_malloc', { definedOnly: false });
+      const imports = searchSymbolsIn([...CORPUS], '_malloc', { definedOnly: false });
       check(
         imports.totals.matchedFiles > 3,
         'corpus: imports are searchable across a corpus',
         `${imports.totals.matchedFiles} file(s)`,
       );
-      const definedOnly = searchSymbolsIn([corpusRoot], '_malloc', { definedOnly: true });
+      const definedOnly = searchSymbolsIn([...CORPUS], '_malloc', { definedOnly: true });
       check(
         definedOnly.totals.matchedFiles === 0,
         'corpus: and excluded by default, matching single-binary behaviour',
       );
 
-      const re = searchSymbolsIn([corpusRoot], '^caller_[ab]$', { mode: 'regex' });
+      const re = searchSymbolsIn([...CORPUS], '^caller_[ab]$', { mode: 'regex' });
       check(
         re.totals.matchedFiles > 0 && re.files.some((f) => f.matches.some((m) => m.name === 'caller_a')),
         'corpus: regex mode works across a corpus',
         `${re.totals.matchedFiles} file(s)`,
       );
       let threw = null;
-      try { searchSymbolsIn([corpusRoot], '(unclosed', { mode: 'regex' }); } catch (e) { threw = e; }
+      try { searchSymbolsIn([...CORPUS], '(unclosed', { mode: 'regex' }); } catch (e) { threw = e; }
       check(
         threw instanceof SyntaxError,
         'corpus: an invalid regex is rejected before any file is opened',

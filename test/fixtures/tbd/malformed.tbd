@@ -1,0 +1,9 @@
+--- !tapi-tbd
+tbd-version:     4
+targets:         [ arm64-macos ]
+install-name:    '/usr/lib/libBroken.tbd.dylib'
+exports:
+  - targets:         [ arm64-macos ]
+    symbols:         [ _fine, _also_fine ]
+    &anchor
+...

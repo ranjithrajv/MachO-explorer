@@ -70,6 +70,7 @@ const PAGES = [
   { src: 'docs/user-manual.md', out: 'user-manual.html', title: 'User manual', blurb: 'Every subcommand, every flag, and what each one refuses to do.' },
   { src: 'docs/ci-gate.md', out: 'ci-gate.html', title: 'Gating a build', blurb: 'The exit-status taxonomy, SARIF, the composite action, and the fingerprint comparison.' },
   { src: 'docs/machine-contract.md', out: 'machine-contract.html', title: 'The machine contract', blurb: 'One envelope, four exit codes, nine reason codes, and a JSON Schema per tool.' },
+  { src: 'docs/text-stubs.md', out: 'text-stubs.html', title: 'Text stubs — .tbd', blurb: 'What a system dylib exports, now that macOS 11 put them all in the shared cache.' },
   { src: 'docs/agent-integration.md', out: 'agent-integration.html', title: 'Driving it from an agent', blurb: 'The MCP server, the agent skill, and the three things that waste an agent’s time.' },
   { src: 'docs/use-cases.md', out: 'use-cases.html', title: 'When to use this', blurb: 'Where this reader is the right tool, and where it is the wrong one.' },
   { src: 'AUDITABILITY.md', out: 'auditable.html', title: 'Auditable by design', blurb: 'What the claim means, what it does not mean, and the checks that keep it true.' },

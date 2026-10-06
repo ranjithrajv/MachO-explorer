@@ -181,6 +181,7 @@ means. That is not a footnote: see
 | `fingerprint.mjs` | Is this the same **program** as that one? A digest that survives a rebuild, which a byte comparison cannot |
 | `diff.mjs` | What changed between two binaries — structure and literal content, so a rebuilt pair does not read as a different program |
 | `assert.mjs` | A CI policy: `--has-symbol`, `--no-symbol`, `--has-string`, `--no-string`, repeatable. Exit 0 only when every assertion holds |
+| `tbd.mjs` | **What does this library export?** A `.tbd` text stub — the only readable record of a system dylib, since macOS 11 put them all in the shared cache. One file may hold 39 libraries, and every symbol is attributed to the one that exports it. `--symbol` with `--sdk` answers "which library provides this", which nothing else on a current macOS can |
 
 Fifteen tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
 `sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, eight
@@ -188,6 +189,43 @@ until `disasm.mjs` added the boundary decoder, nine until `audit`, `fingerprint`
 and `diff` answered the three questions a build or a reviewer asks about *two*
 binaries at once, and twelve until `dump`, `starts` and `assert` added the byte
 read, the function list and the policy gate.
+
+### What does libSystem export?
+
+Since macOS 11 the system dylibs are not files. `/usr/lib/libSystem.B.dylib` is inside the
+dyld shared cache, so `nm`, `otool` and every tool here have nothing to open — the
+question is not slow, it is unanswerable by anything that reads binaries.
+
+The answer is in the SDK, as text:
+
+```sh
+$ macho-explorer tbd --symbol=_pthread_mutex_lock --sdk="$SDK/usr/lib"
+_pthread_mutex_lock  —  4 hit(s) in 2 libraries, from 394 stub(s)
+  /usr/lib/system/libsystem_pthread.dylib
+  /usr/lib/system/introspection/libsystem_pthread.dylib
+```
+
+That is the answer you need before reasoning about a call site: it is
+`libsystem_pthread.dylib`, **not** `libSystem.B.dylib`, which only re-exports it.
+
+Three properties make it trustworthy rather than merely fast:
+
+- **One file, many libraries.** `libSystem.tbd` holds **39 documents**, one per
+  constituent dylib. Every hit is attributed to the library that exports it — a
+  reader that took only the first would report the umbrella's metadata and a
+  fraction of its symbols with nothing saying so.
+- **46% of an SDK's stubs are symlinks.** `libm.tbd` is a link to `libSystem.tbd`;
+  so are `libc.tbd` and `libpthread.tbd`. Paths are resolved and deduplicated, or
+  `_pthread_mutex_lock` reads as exported by 39 files and you look in all 39.
+  The alias count is reported, not hidden.
+- **A partial answer is withheld.** A stub with one unread line has an *unknown*
+  symbol count, so `tbd` exits 3 and names the line rather than printing a number
+  it cannot justify.
+
+Verified against **every stub in a real SDK**: 5,304 files, 6,387 libraries,
+**4,743,784 symbols**, zero unrecognised lines. That corpus run is the check; the
+checked-in fixtures are verbatim excerpts of Apple's own files, not files written
+to match the parser.
 
 ### Three questions about two binaries
 
@@ -310,6 +348,7 @@ no lockfile and no install step.
 | `fingerprint` | Is this the same program as that one? A digest that survives a rebuild, which a byte comparison cannot |
 | `diff` | What changed between two binaries — structural facts only, so a rebuilt pair does not read as a different program |
 | `overview` | The whole picture in one call: every slice, segment, section, load command, flag, UUID and entry point, plus `--symbols` and `--strings` on request — all read from one slice, and carrying a `notRead` list of what this package does not parse |
+| `tbd` | Read a `.tbd` text stub: the exported symbols, install names and target triples of a dylib. Since macOS 11 the system libraries exist only in the dyld shared cache, so this is the **only** readable record of what they export — and `--symbol=X --sdk=<dir>` answers "which library provides X" across an entire SDK in under a second |
 | `mcp` | Serve the tools over the Model Context Protocol (JSON-RPC on stdin/stdout) |
 
 ### Global flags
@@ -460,8 +499,9 @@ are different facts and a patch script needs to tell them apart.
 uniformly. Every tool here has it, and the envelope shape is the same across all
 of them.
 
-The full row-by-row comparison, taken from `ipsw`'s source tree rather than its
-README, is in [`FEATURE-PARITY-IPSW.md`](FEATURE-PARITY-IPSW.md).
+The claims above were taken from `ipsw`'s source tree rather than its README, which
+matters: `macho diff` is a hidden `panic()` stub, and `macho info --json` discards
+every selector combined with it. Neither is visible in `--help`.
 
 ## What it will not do
 
@@ -613,11 +653,10 @@ Copilot and Gemini CLI by copying one directory.
 mkdir -p .claude/skills && cp -r skill/macho-explorer .claude/skills/
 ```
 
-Be clear-eyed about what this is: Hopper, Binary Ninja and `ipsw` all ship an MCP
-server, so **this is distribution, not differentiation**. An MCP server is how an
-agent discovers a capability exists; without one this package is invisible to
-every agent-driven workflow while being well suited to it. See
-[`COMPETITIVE-LANDSCAPE.md`](COMPETITIVE-LANDSCAPE.md).
+Be clear-eyed about what this is: Hopper, Binary Ninja, IDA and Ghidra all ship an
+MCP server, so **this is distribution, not differentiation**. An MCP server is how
+an agent discovers a capability exists; without one this package is invisible to
+every agent-driven workflow while being well suited to it.
 
 ```js
 import { describe, findCalls, lookupAddress, mapLiteral } from 'macho-explorer';

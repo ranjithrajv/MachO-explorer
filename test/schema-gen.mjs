@@ -323,6 +323,97 @@ overview: {
     },
   },
 
+  tbd: {
+    type: 'object',
+    // No field is required, because the four queries return four different shapes:
+    // a summary, a symbol list, a symbol match, and an SDK sweep. A schema that
+    // demanded the union of all four would be describing none of them, and a
+    // validator that rejects correct output is worse than no validator — the
+    // consumer works around it, and the workaround becomes a second description
+    // of the shape.
+    //
+    // What *is* constrained is the part a consumer branches on. `matchCount` and
+    // `symbolCount` are the precise signals a caller needs, and both are pinned to
+    // non-negative integers so "found nothing" cannot be spelled some other way.
+    properties: {
+      // -- the summary --
+      path: { type: 'string', description: 'The stub that was read.' },
+      size: COUNT,
+      tbdVersion: { type: ['integer', 'null'], description: 'The stub format version, when the file states exactly one. Null for a file whose documents disagree.' },
+      tbdVersions: { type: 'array', items: { type: 'integer' } },
+      documentCount: COUNT,
+      installName: { type: 'string', description: 'Present only when the file holds exactly one library. A multi-library stub has no single install name, and reporting the first document\'s as if it were the file\'s would answer "which dylib is this" with whichever came first.' },
+      targets: { type: 'array', items: { type: 'string' } },
+      symbolCount: COUNT,
+      objcClassCount: COUNT,
+      weakSymbolCount: COUNT,
+      reexportedLibraryCount: COUNT,
+      reexportedLibraries: { type: 'array', items: { type: 'string' } },
+      reexportedSymbols: { type: 'array', items: { type: 'string' } },
+      reexportedSymbolCount: COUNT,
+      libraries: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            index: COUNT,
+            installName: { type: ['string', 'null'] },
+            targets: { type: 'array', items: { type: 'string' } },
+            currentVersion: { type: ['string', 'null'] },
+            compatibilityVersion: { type: ['string', 'null'] },
+            swiftAbiVersion: { type: ['string', 'null'] },
+            flags: { type: 'array', items: { type: 'string' } },
+            symbolCount: COUNT,
+            objcClassCount: COUNT,
+            reexportedLibraries: { type: 'array', items: { type: 'string' } },
+          },
+        },
+      },
+
+      // -- --symbols --
+      symbols: { type: 'array', items: { type: 'string' }, description: 'Exported symbol names. A name, not a hex address — a stub describes the linker\'s view, so there are no addresses in it.' },
+      truncated: { type: 'boolean', description: 'More names matched than --max allowed. symbolCount stays exact.' },
+      weakSymbols: { type: 'array', items: { type: 'string' } },
+
+      // -- --symbol --
+      query: { type: 'string' },
+      mode: { type: 'string', enum: ['exact', 'substring'] },
+      matchCount: COUNT,
+      // Install names of the libraries that export the name, as strings. Named
+      // `providers` rather than `libraries` because the summary's `libraries` is
+      // a list of objects — one field cannot be both, and a schema that permits
+      // both is a schema that permits a consumer to read the wrong one.
+      providers: { type: 'array', items: { type: 'string' } },
+      providerCount: COUNT,
+      reexported: { type: 'boolean', description: 'Every match is a re-export rather than an implementation. This library passes the name through from somewhere else.' },
+      weak: { type: 'boolean' },
+      hits: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            symbol: { type: 'string' },
+            library: { type: 'string', description: 'The install name of the document that exports it — not the file, which may hold 39 libraries.' },
+            document: COUNT,
+            targets: { type: 'array', items: { type: 'string' } },
+            weak: { type: 'boolean' },
+            threadLocal: { type: 'boolean' },
+            reexported: { type: 'boolean' },
+            file: { type: 'string', description: 'Present for an SDK sweep.' },
+          },
+        },
+      },
+
+      // -- --sdk --
+      providerCount: COUNT,
+      scanned: COUNT,
+      stubs: COUNT,
+      aliasesSkipped: COUNT,
+      unreadable: COUNT,
+      symbolCount: COUNT,
+    },
+  },
+
   sym: {
     type: 'object',
     required: ['matches', 'count', 'arch', 'mode', 'pattern'],

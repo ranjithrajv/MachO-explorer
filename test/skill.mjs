@@ -22,6 +22,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -244,6 +245,25 @@ for (const name of SKILLS) {
     switch (t) {
       case 'audit':
         return [src, ...sub, `--${flag}`, rebuilt];
+      case 'tbd':
+        // `tbd` reads a *text stub*, so the Mach-O probe binary is the wrong
+        // operand: supplying it makes every flag a usage error — for the wrong
+        // reason, and in a way that reads as a defect in the flag.
+        //
+        // So the harness supplies what each flag actually needs: a stub path for a
+        // flag that names a file, a directory for --sdk, and a word for --mode.
+        // Without this, `--sdk is accepted by a tool` fails for `tbd` — true, and
+        // irrelevant.
+        //
+        // `...sub` is not optional here. Every other case in this switch puts the
+        // subcommand in front, because `src` is the *dispatcher*: an invocation
+        // without it makes the dispatcher read `--symbol=_exit` as a verb name and
+        // exit 2, which is what the first version of this case did.
+        if (flag === 'sdk') return [src, ...sub, '--symbol=_exit', '--sdk', probeDir];
+        if (flag === 'mode') return [src, ...sub, '--mode=substring', '--symbol=exit', probeStub];
+        if (flag === 'max') return [src, ...sub, '--symbols', '--max=5', probeStub];
+        if (flag === 'symbols' || flag === 'reexports' || flag === 'objc') return [src, ...sub, `--${flag}`, probeStub];
+        return [src, ...sub, '--symbol=_exit', probeStub];
       case 'fingerprint':
         return [src, ...sub, `--${flag}`, probeBin];
       case 'diff':
@@ -322,6 +342,28 @@ for (const name of SKILLS) {
     if (['symlookup', 'a2o', 'o2a', 'describe'].includes(t)) args.push(probeBin);
     return args;
   };
+
+  // `tbd` needs operands the Mach-O probe cannot supply. A real stub, written
+  // here rather than read from an SDK, so the check does not depend on Xcode being
+  // installed on the machine running it.
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'macho-skill-tbd-'));
+  const probeStub = path.join(stubDir, 'probe.tbd');
+  fs.writeFileSync(
+    probeStub,
+    ['--- !tapi-tbd', 'tbd-version:     4', 'targets:         [ arm64-macos ]',
+     "install-name:    '/usr/lib/libprobe.dylib'", 'exports:',
+     '  - targets:         [ arm64-macos ]',
+     '    symbols:         [ _exit, _probe_helper, _another ]', '...', ''].join('\n'),
+  );
+  const probeDir = stubDir;
+
+  process.on('exit', () => {
+    try {
+      fs.rmSync(stubDir, { recursive: true, force: true });
+    } catch {
+      /* a leftover temp directory is not worth failing a test over */
+    }
+  });
 
   const runFlag = (flag) => {
     for (const t of TOOLS_ON_DISK) {

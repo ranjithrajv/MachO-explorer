@@ -137,8 +137,11 @@ ok(existsSync(join(SITE, 'index.html')), 'the site root has a page, so a visitor
   ok(existsSync(join(DOCS, "index.html")), "the docs site has an index");
   ok(existsSync(join(DOCS, "site.css")), "the docs site has a stylesheet");
 
+  // Listed rather than counted, so a page dropped from the builder fails here
+  // instead of quietly reducing a total. A gate that checks "at least seven" is a
+  // gate that passes with the wrong seven.
   const expected = [
-    "user-manual.html", "ci-gate.html", "machine-contract.html",
+    "user-manual.html", "ci-gate.html", "machine-contract.html", "text-stubs.html",
     "agent-integration.html", "use-cases.html", "auditable.html", "contributing.html",
   ];
   for (const f of expected) ok(existsSync(join(DOCS, f)), `the docs site has ${f}`);

@@ -90,7 +90,7 @@ export const TOOLS = [
  * with an `=` in one place silently misparsed in another. The asymmetry was the
  * bug: a flag that only works one way is a trap for anyone who types the other.
  */
-export const VALUE_FLAGS = new Set(['b', 'binary', 'arch', 'max', 'len', 'include', 'count', 'bytes', 'in', 'per-file', 'max-files', 'max-depth', 'min', 'has-symbol', 'no-symbol', 'has-string', 'no-string']);
+export const VALUE_FLAGS = new Set(['b', 'binary', 'arch', 'max', 'len', 'include', 'count', 'bytes', 'in', 'per-file', 'max-files', 'max-depth', 'min', 'symbol', 'sdk', 'mode', 'has-symbol', 'no-symbol', 'has-string', 'no-string']);
 
 /**
  * Flags every tool accepts, whatever else it does.
