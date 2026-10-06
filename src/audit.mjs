@@ -2,8 +2,9 @@
 /**
  * audit.mjs — is this file internally consistent?
  *
- *   macho-explorer audit [binary|bundle] [--json] [--strict] [--arch=<name>]
+ *   macho-explorer audit [binary|bundle] [--json] [--sarif] [--strict] [--arch=<name>]
  *   macho-explorer audit --strict build/Contents/MacOS/app
+ *   macho-explorer audit --sarif build/Contents/MacOS/app > audit.sarif
  *
  * Every structural check this reader knows about, in one call, with an exit status
  * a build can gate on. `describe` already reports abnormalities per slice; this
@@ -55,12 +56,13 @@
  */
 import { requireBinary } from './target.mjs';
 import { audit } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
+import { auditSarif } from './sarif.mjs';
+import { parseArgs, emitJSON, usage, toJSON, writeAllSync, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: macho-explorer audit [binary|bundle] [--json] [--strict] [--arch=<name>] [-b <binary>]',
+  'usage: macho-explorer audit [binary|bundle] [--json] [--sarif] [--strict] [--arch=<name>] [-b <binary>]',
   '',
   '  checks every structural claim a Mach-O makes about itself, and exits',
   '  non-zero when the file does not hold together. 0 = sound, 1 = unsound',
@@ -68,6 +70,10 @@ const HELP = [
   '',
   'options:',
   '  --strict           fail on warnings too, not only on errors',
+  '  --sarif            SARIF 2.1.0 on stdout, for GitHub Code Scanning and any',
+  '                     other SARIF consumer. Findings are rules named by their',
+  '                     own `kind`, so a second run matches the first run rather',
+  '                     than filing a new alert. Implies no prose on stdout.',
   '  --arch=<name>      audit only this slice of a universal binary; container',
   '                     findings are still reported, since they are about the file',
   '  --json             one JSON object on stdout; prose to stderr',
@@ -84,7 +90,18 @@ if (flags.has('help') || flags.has('h')) {
   process.exit(EXIT.ok);
 }
 
-rejectUnknownFlags(new Set(['strict', 'arch', 'json']), flags, HELP);
+rejectUnknownFlags(new Set(['strict', 'arch', 'json', 'sarif']), flags, HELP);
+
+// `--sarif` and `--json` are two renderings of one answer, not two answers, so
+// this is a usage error rather than a precedence rule. Silently preferring one
+// means a CI script that added `--sarif` to a `--json` command line gets JSON,
+// writes it to a `.sarif` file, and the Code Scanning upload fails much later
+// with a parse error that names nothing about which of two flags was dropped.
+if (flags.has('sarif') && flags.has('json')) {
+  usage([...HELP, '', '--sarif and --json cannot both be given: they are two formats for one answer.']);
+}
+
+const sarif = flags.has('sarif');
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[0] });
 const arch = opts.arch;
@@ -99,6 +116,15 @@ try {
   // script, a file that is not Mach-O is a bug in the pipeline feeding it.
   if (flags.has('json')) {
     emitJSON({ tool: 'audit', binary, ok: false, errors: [e.code ?? 'io'], messages: [e.message] }, EXIT.fail);
+  }
+  // An unreadable file is *not* an audit finding. Reporting it as SARIF results
+  // would put a finding on the commit for a typo in the workflow's own path, and
+  // the finding would be indistinguishable from "this binary is damaged". So the
+  // file is written as a run that executed and reported nothing, with the reason
+  // in a notification, and the exit code carries the failure. A consumer shows
+  // "the check did not run" rather than a red mark with no cause.
+  if (sarif) {
+    writeAllSync(1, toJSON(auditSarif({ path: binary, slices: [], containerAbnormalities: [], counts: { errors: 0, warnings: 0 } }, { path: binary }), 2) + '\n');
   }
   // `e.message` already names the path — `readerError` builds it that way — so the
   // binary is not prepended here. `a2o` prints it this way; `describe` prepends a
@@ -120,6 +146,26 @@ try {
 // So the gate branches on `clean` / `strictClean`, which are defined to be the
 // gate, and `verdict` is only ever printed.
 const status = (strict ? result.strictClean : result.clean) ? EXIT.ok : EXIT.empty;
+
+// SARIF first, and on its own. `--sarif` means "stdout is a SARIF document and
+// nothing else", because the consumer is a file: `macho-explorer audit --sarif
+// app > audit.sarif`. A human-readable summary printed into that file makes it
+// invalid JSON, and Code Scanning's failure for that is a parse error naming
+// nothing about the reader. The prose goes to stderr instead, so a person running
+// it by hand still sees the verdict — and stderr cannot corrupt the artefact.
+//
+// The summary line is on stderr rather than omitted because the most common way to
+// run this by hand is `audit --sarif <binary>` with no redirect, in which case
+// stdout is a terminal and the run looks silent otherwise.
+if (sarif) {
+  writeAllSync(1, toJSON(auditSarif(result, { path: binary }), 2) + '\n');
+  writeAllSync(
+    2,
+    `${binary} — ${result.verdict.toUpperCase()}  ${result.counts.errors} error(s), ` +
+      `${result.counts.warnings} warning(s)  (SARIF on stdout)\n`,
+  );
+  process.exit(status);
+}
 
 if (flags.has('json')) {
   emitJSON({

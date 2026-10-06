@@ -32,6 +32,7 @@
     ".": "./src/api.mjs",
     "./macho": "./src/macho.mjs",
     "./fixtures": "./test/fixtures.mjs",
+    "./conformance": "./conformance/adapter.mjs",
     "./package.json": "./package.json"
   },
   "types": "src/api.d.ts",
@@ -46,8 +47,10 @@
     "man",
     "completions",
     "skill",
-    "config.json",
+    "action.yml",
     "COPYING",
+    "pages",
+    "config.json",
     "LICENSE",
     "README.md",
     "AUDITABILITY.md",
@@ -102,9 +105,15 @@
     "test:publish": "node test/publish.mjs",
     "test:browser": "node test/browser.mjs",
     "test:conformance": "node test/conformance.mjs",
+    "schema": "node test/schema-gen.mjs",
+    "schema:check": "node test/schema-gen.mjs --check",
+    "test:schemas": "node test/schemas.mjs",
+    "test:sarif": "node test/sarif.mjs",
+    "test:action": "node test/action.mjs",
+    "test:pages": "node test/pages.mjs",
     "demo": "node demo/serve.mjs",
     "demo:link": "node demo/link.mjs",
-    "test:all": "npm run test:fixtures && npm test && npm run test:disasm && npm run test:browser && npm run test:conformance && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:mutation"
+    "test:all": "npm run test:fixtures && npm run schema && npm run schema:check && npm test && npm run test:disasm && npm run test:browser && npm run test:pages && npm run test:conformance && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:schemas && npm run test:sarif && npm run test:action && npm run test:mutation"
   },
   "engines": {
     "node": ">=22.15"

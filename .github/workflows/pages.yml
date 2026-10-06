@@ -1,0 +1,196 @@
+# Publish the audit report to GitHub Pages.
+#
+# ## What this deploys, and why it is assembled rather than pointed at
+#
+# The audit report is `demo/index.html`, and its two claims are that (a) the code
+# that read your file is small enough to read, and (b) the bytes never left your
+# machine. Both are structural properties of *how the page is served*, not of the
+# HTML — so the deployment has to preserve them or the page stops meaning
+# anything:
+#
+#   * The page imports `./macho.browser.mjs` and fetches `../src/macho.mjs`. Both
+#     are relative, so the directory layout `demo/` and `src/` must survive
+#     intact. Copying `demo/index.html` to the site root would break the second
+#     one, and the view-source panel is the entire reason the page exists.
+#   * Nothing is fetched from a CDN. A `<script src="https://unpkg.com/…">` would
+#     mean the reader you are auditing is not the reader that ran, which is the
+#     failure this whole page is arguing against.
+#
+# So the site is *assembled* here, from named paths, and `demo/link.mjs --check`
+# runs before the upload. That check is the load-bearing step: the bundle is
+# generated and committed, it can go stale, and a stale bundle means the published
+# page is running a parser that no longer matches the source it offers for
+# reading. The page would then be auditing the wrong code while looking exactly
+# like it audits the right code.
+#
+# ## Why there is no build step
+#
+# There is no bundler, no transpiler and no framework here, and adding one to
+# publish a directory would contradict the package's central claim. The
+# "build" is four `cp` commands, which is also the entire dependency surface of
+# the deploy: the runner's shell.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Only the paths that can change the page. Without this list every commit
+      # redeploys, and a deploy is not free — but note what is deliberately NOT
+      # here: nothing from `src/` other than the modules the bundle is built
+      # from. A change to `src/audit.mjs` does not affect the report, because the
+      # browser bundle does not contain it, and rebuilding for it would spend a
+      # deploy to publish an identical page.
+      - 'demo/**'
+      - 'src/macho.mjs'
+      - 'src/instruction.mjs'
+      - 'src/api.mjs'
+      - 'schema/envelope.schema.json'
+      - 'package.json'
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
+  pull_request:
+    paths:
+      - 'demo/**'
+      - 'src/macho.mjs'
+      - 'src/instruction.mjs'
+      - 'src/api.mjs'
+      - 'schema/envelope.schema.json'
+      - 'package.json'
+      - 'pages/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Least privilege by default, with the two things this workflow actually needs
+# granted narrowly rather than globally. `pages: write` is required by
+# `deploy-pages`; `id-token: write` is what makes the deployment a verifiable
+# provenance artifact rather than a claim in a log line.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time. Two concurrent runs racing to the same Pages slot
+# produces an intermittent 404 for a few minutes, and the failure is seen by
+# whoever happens to click the link — which here means a reviewer checking whether
+# a claim is verifiable.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: assemble the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The view-source panel fetches the real files, so the sources have to be
+          # in the checkout. A shallow clone would be fine for a compiled site and
+          # would break this one, which is a good illustration of why "just clone
+          # shallow" is a rule that has to be re-examined per repository rather
+          # than applied from memory.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          # 22 for the same reason as everywhere else: the reader's `engines` field
+          # says >= 22.15 and the test matrix runs on 22. The Pages build is a
+          # *different* Node from the test job's, and matching them is what keeps
+          # a page that builds green from being one that cannot run.
+          node-version: '22'
+
+      # The load-bearing step. See the header: a stale bundle publishes a page
+      # that audits code that is no longer the code that ran.
+      - name: The bundle matches its sources
+        run: node demo/link.mjs --check
+
+      - name: Assemble the site
+        run: |
+          set -euo pipefail
+
+          # Built into a directory rather than published from the repository root:
+          # the root also holds `test/`, `.github/` and a 42 KB corpus of fixture
+          # binaries, and a Pages site is a public directory. Publishing the root
+          # would expose every fixture and, more to the point, would be
+          # publishing far more than the report.
+          rm -rf _site
+          mkdir -p _site
+
+          # The layout the page's relative paths require. Preserved rather than
+          # flattened; see the header for why flattening breaks the audit panel.
+          cp -R demo _site/demo
+          mkdir -p _site/src
+          cp src/macho.mjs src/instruction.mjs src/api.mjs _site/src/
+          mkdir -p _site/schema
+          cp schema/envelope.schema.json _site/schema/
+          cp package.json _site/
+
+          # The root redirect, so a visitor who lands on the site URL reaches the
+          # report instead of a directory listing.
+          cp pages/index.html _site/index.html
+
+      # A check that the *assembled* site is complete, run against what was
+      # actually copied rather than against the repository. Every path the page
+      # fetches is listed, because each one is a 404 the reader sees as a dead
+      # button, and a dead "view source" button on a page arguing "you can audit
+      # this" is worse than no button.
+      #
+      # Done as an explicit list rather than a crawl: a crawler would only prove
+      # the files exist, not that they are the ones the page asks for. The list is
+      # the contract.
+      - name: Every file the page fetches is in the site
+        run: |
+          set -euo pipefail
+          for f in \
+            index.html \
+            demo/index.html \
+            demo/app.mjs \
+            demo/macho.browser.mjs \
+            demo/runtime.mjs \
+            demo/link.mjs \
+            src/macho.mjs \
+            src/instruction.mjs \
+            src/api.mjs \
+            schema/envelope.schema.json \
+            package.json
+          do
+            if [ ! -f "_site/$f" ]; then
+              echo "::error::_site/$f is missing — the page would show a dead control for it"
+              exit 1
+            fi
+          done
+          echo "all ${f:-} fetches resolve inside _site"
+          find _site -type f | sort
+
+      # No CDN anywhere in the shipped page. This is the assertion the whole page
+      # rests on: a reader fetched from a third party is not the reader the page
+      # offers for reading, and the difference is invisible to the visitor.
+      - name: The page loads nothing from a third party
+        run: |
+          set -euo pipefail
+          if grep -rEn 'https?://[^"'"'"' ]*' _site --include='*.html' --include='*.mjs' \
+            | grep -Ev 'ranjithrajv/MachO-explorer|json-schema\.org|oasis-tcs\.com/schema|opensource\.apple\.com' \
+            | grep -E '<script|src=|href=|fetch\(|import\(' ; then
+            echo "::error::the assembled page references an external origin — the audit panel must read this repository, not a CDN"
+            exit 1
+          fi
+          echo "no external script, style, fetch or import in the assembled site"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

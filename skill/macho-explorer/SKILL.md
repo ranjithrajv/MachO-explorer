@@ -302,6 +302,24 @@ From a checkout with nothing installed, `node src/describe.mjs <binary>` works �
 and `src/macho.mjs` alone is one auditable file that imports nothing but
 `node:fs`, so it can be copied into a project outright.
 
+**Validating the answers.** Every tool emits one envelope, and `schema/` holds a
+JSON Schema per tool — `schema/audit.schema.json`, `schema/a2o.schema.json`, and
+so on — each composed from `schema/envelope.schema.json` with `data` constrained
+to what that tool actually returns.
+
+```sh
+macho-explorer audit --json app | ajv validate -s schema/audit.schema.json
+```
+
+The envelope is **closed** (a typo'd field is rejected, so `errorss` does not read
+as "no errors"); `data` is deliberately **open**, so a bug fix can add a field
+without a major version bump. Check `schemaVersion` against the value you were
+written against rather than trusting the field names.
+
+The browser audit report — where the reader runs in a tab and you can read the
+source that read your file — is published at the repository's GitHub Pages site,
+and `npm run demo` serves the same thing locally.
+
 ### Reading a `.app`
 
 Pass the bundle; the executable inside is found automatically. Anywhere a binary
@@ -342,6 +360,135 @@ An address can reach a byte, be mapped with no byte (`__bss`, `__PAGEZERO`), or
 be in no slice at all. `dump` reports all three as values — `zerofill` and
 `mapped` tell them apart — and exits 1 for the two "no byte" cases, which are
 answers rather than errors.
+
+## The literal-to-pointer recipe — find the code that handles a format
+
+This is the workflow with **no equivalent in `ipsw`, Ghidra, `otool`, Hopper or
+`jtool2`**, and it is the one to reach for when the question is "which code in this
+binary handles format X". Three steps, each one answering a question the previous
+one made askable.
+
+**Step 1 — find the magic.** `findliteral` searches the whole file by default,
+not just `__TEXT`, which matters because a format's magic often lives in a
+`__cstring` next to its name rather than in code.
+
+```sh
+findliteral '\x1f\x8b' /path/to/binary          # a gzip header, as escapes
+findliteral LZ4 --json /path/to/binary          # a readable substring
+findliteral --json LZ4 /path/to/binary | jq '.data.hits[] | {off, vaddr, section}'
+```
+
+Each hit carries `off` (file offset), `vaddr`, `section`, and the surrounding
+bytes as context. Escapes work because the match is raw latin1.
+
+**Step 2 — map it to addresses.** `mapliteral` turns each occurrence into the
+virtual address it loads at. Pass the offsets from step 1 as **positional
+arguments** to skip the search pass:
+
+```sh
+mapliteral LZ4 /path/to/binary                  # search and map
+mapliteral LZ4 /path/to/binary 0x8a40          # map offsets you already found
+```
+
+The positional order is `<literal> [binary] [file-offset ...]` — the binary comes
+second, so it must be named before the offsets. With `-b` the binary moves out of
+the positionals entirely and the offsets stand alone:
+
+```sh
+mapliteral LZ4 -b /path/to/binary 0x8a40 0x8b10
+```
+
+**Step 3 — find what points at it.** The same call reports every pointer in the
+binary that references those addresses — the descriptor table, the vtable, the
+dispatch array. **These are the addresses worth disassembling.** That set is the
+answer to the question; everything before step 3 was in service of asking it.
+
+```sh
+mapliteral LZ4 --json /path/to/binary \
+  | jq -r '.data.locations[].pointers[] | "\(.vaddr) \(.section)"'
+```
+
+Then hand those to `symlookup` to name them, and to `findcall` for their callers.
+`mapliteral` searches **all** sections, not just `__TEXT`, and reports the section
+per hit — so a magic in `__cstring` is found the same way as one in code.
+
+Two answers this recipe must read correctly:
+
+- **No pointers at all** means nothing dispatches on this magic *by reference*, so
+  it is matched inline — a single comparison against a constant, or assembled at
+  runtime. That is a real answer about the program's shape, not a failure.
+- **No literal at all** means the value is never stored contiguously. It is built
+  at runtime from parts, or obfuscated. Go to `findcall` on the handler you
+  already suspect, or pass explicit offsets if you know where to look.
+
+## Gating a build — `audit`, `--sarif`, and the composite action
+
+`audit` is not just a report: its **exit status is the product**, and it is the
+one tool here designed to be a CI gate.
+
+```sh
+audit  /path/to/binary        # 0 sound · 1 unsound · 2 usage · 3 could not read
+audit  --strict /path/to/binary   # warnings fail too
+audit  --sarif /path/to/binary > audit.sarif   # SARIF 2.1.0, for Code Scanning
+audit  --json /path/to/binary | jq '.data.strictClean'
+```
+
+The four codes are the whole design. **1 is a negative answer, not an error** — an
+audit that found something wrong has done its job. **3 is "could not read the
+file"**, which is *not* a passing audit: a mistyped path in a CI script must never
+read as a clean bill of health.
+
+Branch on the **booleans**, not the label: `data.clean` (the default gate) and
+`data.strictClean` (`--strict`). `verdict` is `ok` / `warnings` / `failed` and is
+a **label for a person** — `verdict: "warnings"` with `clean: true` is a
+*passing* audit, and mapping the label onto the exit status fails a build over a
+binary the reader says is fine.
+
+`--strict` is off by default on purpose. A binary built by an Xcode newer than
+this reader sets a header flag bit the reader has no name for, and failing every
+build over that trains people to stop running the gate. **A gate that only fires
+on genuine damage is a gate people leave on.** Turn it on for a release gate where
+you control the toolchain.
+
+If you find yourself wanting to disable the gate on some builds only, that is the
+signal to fix the toolchain rather than to split the gate — an audit that is
+sometimes skipped is an audit that is eventually always skipped.
+
+`--sarif` gives GitHub Code Scanning findings named by the reader's own `kind`, so
+a second run matches the first run's findings rather than filing a new alert every
+build. `--sarif` and `--json` are two formats for one answer and cannot be
+combined; combining them is a usage error rather than a precedence rule, because
+silently preferring one produces a `.sarif` file containing JSON that fails to
+parse much later with an error that names neither flag.
+
+There is also a **composite GitHub Action** so none of this needs writing:
+
+```yaml
+- uses: ranjithrajv/MachO-explorer@main
+  with:
+    binary: build/Some.app/Contents/MacOS/Some
+    baseline: known-good/Some        # enables the fingerprint and diff jobs
+    sarif: true
+```
+
+It has **no install step** — it runs the reader from the checked-out source, so
+the gate tests this commit rather than whatever a version tag resolved to today.
+See `action.yml` for the inputs and outputs.
+
+**When comparing two builds**, `fingerprint` answers a question `cmp` gets wrong in
+both directions, and `fingerprint --sarif` turns "these are not the same program"
+into a finding on the commit:
+
+```sh
+fingerprint built.app known-good.app      # 0 same program · 1 different · 3 unreadable
+fingerprint --sarif built.app known-good.app > fp.sarif
+```
+
+`diff` is the companion and is **deliberately not a gate**: it reports three lists
+and only the first decides the verdict, because a UUID change and a section-size
+change are facts about a *build* while a changed literal string is a change to the
+*program*. Turning any of them into a failure is a policy decision, and a policy
+belongs in `assert` where it can be written down and reviewed.
 
 ## Where functions begin — `starts`
 
@@ -472,7 +619,17 @@ No install, no network, no fixtures to download:
 node test/fixtures.mjs --check   # the corpus matches its generator
 node test/smoke.mjs              # the tools against binaries they were not written for
 node test/mcp.mjs                # the protocol, over a real pipe
+node test/schemas.mjs            # every tool's real output, against its own schema
+node test/sarif.mjs              # the SARIF emitter is well-formed
+node test/action.mjs             # the composite action's shell, extracted and run
 ```
+
+`test/mutation-check.mjs` is the one that matters most and runs slowest: it
+reintroduces eleven real historical bugs one at a time and requires the suite to
+fail on each. An inconclusive mutation fails the run — a check that cannot fail
+reports success, which is worse than a missing check.
+
+`npm run test:all` runs everything in order.
 
 ## Registering the MCP server
 

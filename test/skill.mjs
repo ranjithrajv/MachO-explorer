@@ -103,7 +103,20 @@ for (const name of SKILLS) {
   check(meta.name === name, `${short}: the name matches its directory`, `${meta.name} in ${name}/`);
   check(!!meta.description, `${short}: declares a description`);
   check(
-    !!meta.license && /SPDX|LGPL|MIT|Apache/.test(meta.license),
+    // Both LGPL and MPL are accepted, and that is deliberate rather than
+    // lenient. This check exists to catch a skill that declares no licence at
+    // all, which is the failure a reader cannot recover from; it is not here to
+    // decide which licence the project uses.
+    //
+    // Hard-coding one token makes the check a landmine during a licence change:
+    // the project moves, the regex is forgotten, and the suite goes red on a
+    // test whose subject is unrelated to what broke. That is not hypothetical
+    // here — the alternation once read `SPDX|LGPL|MIT|Apache` and became
+    // `SPDX|MPL|MIT|Apache` during a migration, which turned a documentation
+    // decision into a red build. The check *below* compares the skill's licence
+    // against `package.json`; that is the one that enforces agreement, and it
+    // needs no list here to do it.
+    !!meta.license && /SPDX|LGPL|MPL|MIT|Apache/.test(meta.license),
     `${short}: declares a licence`,
     meta.license,
   );
@@ -283,6 +296,19 @@ for (const name of SKILLS) {
       case 'starts':
         // `--max` takes a number; `--symbols` is a bare flag.
         return flag === 'max' ? [src, ...sub, '--max', '5', probeBin] : [src, ...sub, `--${flag}`, probeBin];
+      case 'audit':
+        // `audit` takes the binary as a positional and reads no query, so a bare
+        // flag plus the probe binary is the whole invocation. `--strict` and
+        // `--sarif` are both real and both need no value.
+        return [src, ...sub, `--${flag}`, probeBin];
+      case 'fingerprint':
+        // `fingerprint` is the one tool whose flags only make sense in the
+        // two-binary comparison mode, so the probe binary is supplied twice. A
+        // single binary would make `--sarif` a usage error — which is correct
+        // behaviour and would make this check fail for the wrong reason.
+        return flag === 'arch'
+          ? [src, ...sub, '--arch', 'x86_64', probeBin, probeBin]
+          : [src, ...sub, `--${flag}`, probeBin, probeBin];
       default:
         break;
     }
@@ -341,6 +367,52 @@ for (const name of SKILLS) {
     `${short}: no reader accepts --check, which belongs to fixtures.mjs`,
     acceptingCheck.join(', '),
   );
+
+  // `--sarif` is the one flag the CI-gate section of this skill promises, and the
+  // loop above proves only that *some* tool accepts it — which `audit` alone would
+  // satisfy, leaving the `fingerprint --sarif` example unverified. This is the
+  // positive control that closes that gap: the flag is named twice in the skill, so
+  // it is asserted against both tools that must accept it.
+  //
+  // Each is run twice: once with the flag, once without, and the assertion is that
+  // the flag *changes the output* rather than that it merely avoids exit 2. A tool
+  // that accepted `--sarif` and then ignored it would pass the loop above and fail
+  // this one, which is the entire distinction the flag exists to avoid.
+  for (const [tool, extraArgs] of [['audit', []], ['fingerprint', [probeBin]]]) {
+    const src = path.join(ROOT, 'src', `${tool}.mjs`);
+    if (!fs.existsSync(src)) continue;
+    const withoutSarif = spawnSync(process.execPath, [src, '--json', ...extraArgs, probeBin], { encoding: 'utf8' });
+    const withSarif = spawnSync(process.execPath, [src, '--sarif', ...extraArgs, probeBin], { encoding: 'utf8' });
+    check(
+      withSarif.status !== 2,
+      `${short}: ${tool} --sarif is accepted (the CI-gate example is real)`,
+    );
+    let parsedSarif = false;
+    try {
+      const doc = JSON.parse(withSarif.stdout);
+      parsedSarif = doc.$schema?.includes('sarif-schema-2.1.0') && Array.isArray(doc.runs);
+    } catch { /* not SARIF; the check below reports it */ }
+    check(parsedSarif, `${short}: ${tool} --sarif emits a SARIF document, not the --json envelope`, 'the skill promises a SARIF report');
+    check(
+      withoutSarif.stdout !== withSarif.stdout,
+      `${short}: ${tool} --sarif changes the output rather than being accepted and ignored`,
+    );
+  }
+
+  // `mapliteral`'s offsets are positional, and the skill's recipe shows them that
+  // way. If someone "fixes" the prose to `--offsets=…` — which is how it reads
+  // from MCP, where the argument is a named field — the recipe becomes a usage
+  // error an agent will hit on its first try. So the exact invocation in the
+  // skill is run.
+  {
+    const src = path.join(ROOT, 'src', 'mapliteral.mjs');
+    const r = spawnSync(process.execPath, [src, 'pop', '-b', probeBin, '0x100'], { encoding: 'utf8' });
+    check(
+      r.status !== 2,
+      `${short}: mapliteral accepts file offsets as positionals, as the recipe shows`,
+      r.stderr?.trim().split('\n')[0],
+    );
+  }
 
   /* ---- 3. the claims that can be checked by running something ----- */
 

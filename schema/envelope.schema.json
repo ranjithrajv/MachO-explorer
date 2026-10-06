@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/ranjithrajv/MachO-explorer/schema/envelope.schema.json",
   "title": "MachO-explorer JSON envelope",
-  "description": "The single response shape every tool emits under --json, and the shape the MCP server returns in structuredContent. One envelope for every tool and both doors, so a consumer learns it once.\n\n`data` is deliberately unconstrained here. Each tool's own answer shape is a function of the file it read, is documented in the TypeScript declarations (src/api.d.ts), and is the thing most likely to grow; constraining it in one schema would make this file a second, worse copy of those declarations. What this schema pins is the envelope itself — which is the part every consumer must be able to rely on, and the part that has to stay identical across ten tools and two doors.\n\nAddresses inside `data` are hex strings, never JSON numbers: a 64-bit address does not survive one. That is enforced by convention rather than by this schema, because the schema cannot see inside an unconstrained object — the address-bearing types are documented in src/api.d.ts and asserted by test/types.mjs.",
+  "description": "The single response shape every tool emits under --json, and the shape the MCP server returns in structuredContent. One envelope for every tool and both doors, so a consumer learns it once.\n\n`data` is deliberately unconstrained here. Each tool's own answer shape is a function of the file it read, is documented in the TypeScript declarations (src/api.d.ts), and is the thing most likely to grow; constraining it in one schema would make this file a second, worse copy of those declarations. Each tool additionally ships a composed schema — `schema/<tool>.schema.json` — that takes this envelope and replaces `data` with that tool's shape. Constrain against those when you want the answer validated; the envelope alone is the shared contract.\n\nAddresses inside `data` are hex strings, never JSON numbers: a 64-bit address does not survive one. That is enforced by convention rather than by this schema, because the schema cannot see inside an unconstrained object — the address-bearing types are documented in src/api.d.ts, asserted by test/types.mjs, and enforced by the per-tool schemas.",
   "type": "object",
   "required": ["schemaVersion", "tool", "ok", "binary", "errors", "data"],
   "additionalProperties": false,
@@ -36,11 +36,12 @@
           "no-match",
           "no-call-sites",
           "no-symbols",
+          "encrypted",
           "unknown-encoding",
           "io"
         ]
       },
-      "description": "Machine-readable reason codes, empty when ok is true. These are what let a caller self-correct rather than parse prose: 'io' and 'unknown-encoding' are different problems, and conflating them sends a caller looking in the wrong place."
+      "description": "Machine-readable reason codes, empty when ok is true. These are what let a caller self-correct rather than parse prose: 'io' and 'unknown-encoding' are different problems, and conflating them sends a caller looking in the wrong place.\n\n'encrypted' means the bytes could NOT be read because they are ciphertext, so a zero result from findcall or findliteral is NOT evidence the target is absent — this is the one code that means 'could not look' rather than 'looked and found nothing'. The no-* codes are the CLIs' 'ran fine, found nothing' values; the MCP layer reports those as ok:true with data.count:0 rather than in errors, because isError is what a model branches on."
     },
     "messages": {
       "type": "array",

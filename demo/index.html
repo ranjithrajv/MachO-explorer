@@ -85,6 +85,30 @@
   .srcs button { font-family: var(--mono); font-size: 12.5px; padding: 6px 10px; border-radius: 8px;
     background: var(--panel); color: var(--ink); border: 1px solid var(--line); cursor: pointer; }
   .srcs button:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* The proof table.
+   *
+   * Each row is a claim the page makes about itself, and each value is *fetched
+   * from this repository at load time* rather than typed into the HTML. That is
+   * the whole point: a hard-coded "0 dependencies" is a slogan, and one that
+   * survives the dependency being added. A number read out of package.json stops
+   * being true the moment the thing it describes changes, which means it cannot
+   * quietly become a lie — it goes red instead.
+   *
+   * `em` rather than a colour alone for the failing state, so the state is not
+   * carried by hue alone. That is an accessibility floor, not a nicety: a page
+   * whose entire argument is "trust these numbers" should not be the one place
+   * where colour is the only channel.
+   */
+  .proof { margin: 18px 0 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .proof-row { display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: space-between;
+    padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .proof-row:last-child { border-bottom: 0; }
+  .proof-k { color: var(--faint); font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; }
+  .proof-v { font-family: var(--mono); font-size: 13px; text-align: right; }
+  .proof-v.bad { color: var(--warn); font-style: italic; }
+  .proof-v.good { color: var(--accent); }
+
   #viewer { background: #08090b; border: 1px solid var(--line); border-radius: 10px; padding: 14px;
     font-family: var(--mono); font-size: 12px; line-height: 1.5; color: #c9d3dd; overflow: auto;
     max-height: 460px; white-space: pre; }
@@ -130,6 +154,16 @@
       modules by <code>demo/link.mjs</code> — no logic is copied, so the file you audit is the file
       that ran. Click a file to view it (served from this repository, not fetched from a CDN).
     </p>
+
+    <div class="proof">
+      <div class="proof-row"><span class="proof-k">Dependencies</span><span class="proof-v" id="p-deps">reading…</span></div>
+      <div class="proof-row"><span class="proof-k">Bundle</span><span class="proof-v" id="p-bundle">reading…</span></div>
+      <div class="proof-row"><span class="proof-k">Reader size</span><span class="proof-v" id="p-lines">reading…</span></div>
+      <div class="proof-row"><span class="proof-k">Verification</span><span class="proof-v" id="p-tests">reading…</span></div>
+      <div class="proof-row"><span class="proof-k">Machine contract</span><span class="proof-v" id="p-contract">reading…</span></div>
+    </div>
+    <p class="muted" id="proof-note"></p>
+
     <div class="srcs" id="srcs"></div>
     <pre id="viewer"><span class="muted">Select a source file above to read it here.</span></pre>
     <p class="muted" id="bundle-note"></p>

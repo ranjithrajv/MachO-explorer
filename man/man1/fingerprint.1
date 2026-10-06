@@ -87,7 +87,24 @@ are for.
 macho-explorer fingerprint /usr/local/go/bin/go
 macho-explorer fingerprint shipped.app/…/app baseline.app/…/app
 macho-explorer fingerprint \-\-json a.dylib b.dylib | jq .data.verdict
+macho-explorer fingerprint \-\-sarif built.app baseline.app > fp.sarif
 .fi
+.SH SARIF
+.B \-\-sarif
+applies only to the two\-binary comparison, and turns "these are not the same
+program" into SARIF 2.1.0 findings for GitHub Code Scanning, so a release gate
+reports on the commit rather than in a log. One finding per architecture whose
+digest differs, plus one per architecture present on only one side; a match
+produces
+.I no
+findings, which is how a consumer tells a passing gate from a missing report.
+.PP
+With one binary it is a
+.I usage error
+rather than an empty result. A single binary has nothing to disagree with, and a
+document with zero findings and a zero exit would read as a
+.I passing
+gate \- the one wrong answer available here.
 .SH SEE ALSO
 .BR audit (1),
 .BR diff (1),

@@ -1,0 +1,327 @@
+# The Mach-O gate for a build, with no install step.
+#
+# ## Why this action exists
+#
+# A CI gate that needs an install is a CI gate that gets skipped. The install is
+# the part that fails — on a pinned-dependency update, a runner image change, a
+# cache miss, a network blip — and every one of those failures is indistinguishable
+# from "the binary is broken" unless somebody reads the log.
+#
+# This action has no install. It checks out the repository, sets up Node, and runs
+# the reader from source. There is no `npm ci`, no lockfile to drift, no dependency
+# to audit, and nothing to cache. The reader imports `node:fs` and `node:crypto`;
+# Node 22 has both. That is the whole dependency surface, and it is the property
+# that makes the gate reliable enough to leave switched on.
+#
+# ## Why it runs from the tree rather than from npm
+#
+# The README tells a person to `npm install -g macho-explorer`. This action does
+# not, because on a runner that is a network fetch of a version tag that can move
+# under the workflow — the gate would be testing whatever the registry served today
+# rather than what this commit says it is. Running from the checked-out tree makes
+# the gate and the commit the same artefact by construction, which is the whole
+# claim the project makes.
+#
+# ## What the four jobs are for
+#
+#   audit       Is the binary structurally sound? Findings become SARIF and appear
+#               as annotations on the commit. This is the job most people want.
+#   fingerprint Is this still the same program as the baseline? Catches an
+#               accidental dependency bump, or the wrong artifact being built.
+#   diff        What changed since the baseline? Reports; does not gate.
+#   assert      Not run here — it needs a policy, and a policy is the caller's to
+#               write with `assert --has-symbol …`. See README for the shape.
+#
+# ## The dependency surface is Node, and nothing else
+#
+# Not even `jq`. The fields this action needs out of the reader's JSON are read
+# with `node -p`, because Node is already a hard requirement and `jq` is a thing
+# that is present on GitHub's images but absent from self-hosted ones. A gate that
+# works on the runner you were given is worth more than a gate that works on the
+# runner in the screenshot.
+
+name: 'Mach-O gate'
+description: >-
+  Gate a build on a Mach-O binary. Structural audit as SARIF for GitHub Code
+  Scanning, rebuild-invariant fingerprint comparison against a baseline, and a
+  structural diff. No install step — the reader runs from the checked-out source
+  with zero dependencies beyond Node.
+author: ranjithrajv
+
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  binary:
+    description: >-
+      Path to the Mach-O to check. An application bundle path also works — the
+      executable inside is found automatically.
+    required: true
+  baseline:
+    description: >-
+      Path to a known-good Mach-O to compare against. Enables the `fingerprint`
+      and `diff` jobs. Without it those jobs are skipped rather than run with
+      nothing to compare: an empty comparison exits 0, which would read as a
+      passing gate and hide the fact that no comparison happened.
+    required: false
+  arch:
+    description: >-
+      Restrict to one slice of a universal binary: x86_64, arm64, arm64e or
+      arm64_32. A preference, not a requirement — if the named slice is absent the
+      richest one is read instead, with a note saying so.
+    required: false
+  strict:
+    description: >-
+      Treat audit warnings as failures too. Off by default, and the default is
+      deliberate: a binary built by an Xcode newer than this reader sets a header
+      flag bit the reader has no name for, and failing every build over that
+      trains people to pass `--no-audit`. Turn it on for a release gate where you
+      control the toolchain.
+    type: boolean
+    default: false
+  sarif:
+    description: >-
+      Write a SARIF report and hand it to GitHub Code Scanning. Requires
+      `security-events: write` on the workflow; when the permission is absent the
+      report is still written and the upload is skipped with a note, because a
+      workflow cannot grant itself a permission it was not given.
+    type: boolean
+    default: true
+
+outputs:
+  verdict:
+    description: 'The audit verdict — ok, warnings, or failed.'
+    value: ${{ steps.audit.outputs.verdict }}
+  errors:
+    description: 'Number of audit findings graded error.'
+    value: ${{ steps.audit.outputs.errors }}
+  warnings:
+    description: 'Number of audit findings graded warning.'
+    value: ${{ steps.audit.outputs.warnings }}
+  fingerprint:
+    description: 'The fingerprint of the binary. Empty without a baseline.'
+    value: ${{ steps.fingerprint.outputs.fingerprint }}
+  same-program:
+    description: 'true when the binary and the baseline are the same program. Empty without a baseline.'
+    value: ${{ steps.fingerprint.outputs.same-program }}
+  differences:
+    description: 'Number of structural differences against the baseline. Empty without one.'
+    value: ${{ steps.diff.outputs.differences }}
+
+runs:
+  using: composite
+  steps:
+    # `checkout` and `setup-node` are pinned to v7, matching `.github/workflows/
+    # test.yml`. v7 is the first major on the `node24` runtime; v4 still works but
+    # warns on every run that it targets a version being force-upgraded, and that
+    # is noise in a log whose only job is to make a failure legible.
+    #
+    # `persist-credentials: false` because nothing here pushes or fetches from this
+    # checkout afterwards — the gate reads files, and leaving a token in `.git`
+    # for a job that only reads is a credential available to any step that
+    # follows, including a third-party action.
+    - name: Check out the repository
+      uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+
+    # Node 22, not `node-version-file` and not 24. The reader's `engines` field
+    # says >= 22.15 and the test matrix runs on 22; matching that exactly is what
+    # keeps this action from passing on a Node the suite has never exercised.
+    #
+    # No cache: there is nothing to cache. `node_modules` does not exist — that is
+    # the product — so a cache key would be keyed on an empty directory and would
+    # save nothing while adding a thing that can go stale.
+    - name: Set up Node
+      uses: actions/setup-node@v7
+      with:
+        node-version: '22'
+
+    # Every path arrives through `env:`, never through `${{ }}` inside a `run:`
+    # block. GitHub substitutes expressions before the shell sees the string, so
+    # a binary path containing a quote, a backtick or `$(...)` becomes code
+    # execution rather than a filename. An environment value is passed as data.
+    # This is the same reason the reader quotes every path it accepts, and the
+    # reason the test suite asserts on a path with a space in it.
+    - name: Audit the binary
+      id: audit
+      shell: bash
+      env:
+        BIN: ${{ inputs.binary }}
+        ARCH: ${{ inputs.arch }}
+        STRICT: ${{ inputs.strict }}
+        WANT_SARIF: ${{ inputs.sarif }}
+      run: |
+        set -euo pipefail
+
+        # Built as an array so a path containing a space or a glob character is one
+        # argument rather than three. A bare `"$BIN"` inside the command line is
+        # already quoted; the array is what keeps `--arch` and the path from
+        # running together if a future edit drops a quote.
+        args=("--json" "$BIN")
+        [ -n "${ARCH:-}" ] && args+=("--arch=$ARCH")
+        [ "$STRICT" = "true" ] && args+=("--strict")
+
+        # Exit 3 is "could not read the file", and it is separated here rather than
+        # folded into the generic failure. That is a bug in *this workflow* — a
+        # wrong path, a build step that did not run, an artifact that was never
+        # produced — and reporting it as "the binary is damaged" sends the next
+        # person looking in exactly the wrong place.
+        set +e
+        out="$(node src/audit.mjs "${args[@]}")"
+        code=$?
+        set -e
+
+        if [ "$code" -eq 3 ]; then
+          echo "::error::audit could not read $BIN. The binary was not produced, or the path is wrong — this is not a finding about the binary."
+          exit 3
+        fi
+        if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
+          echo "::error::audit exited $code, which is not a verdict. Run it locally to see the message."
+          exit "$code"
+        fi
+
+        # Fields extracted with `node -p`, not `jq`. Already a hard dependency,
+        # and `jq` is present on GitHub's images but absent from many self-hosted
+        # runners — a gate that works on the runner you were given is worth more
+        # than one that works on the runner in the documentation.
+        echo "verdict=$(node -p 'JSON.parse(process.argv[1]).data.verdict' "$out")" >> "$GITHUB_OUTPUT"
+        echo "errors=$(node -p 'JSON.parse(process.argv[1]).data.counts.errors' "$out")" >> "$GITHUB_OUTPUT"
+        echo "warnings=$(node -p 'JSON.parse(process.argv[1]).data.counts.warnings' "$out")" >> "$GITHUB_OUTPUT"
+
+        echo "audit: $(node -p 'JSON.parse(process.argv[1]).data.verdict' "$out") — $(node -p 'JSON.parse(process.argv[1]).data.counts.errors' "$out") error(s), $(node -p 'JSON.parse(process.argv[1]).data.counts.warnings' "$out") warning(s)"
+
+        if [ "$WANT_SARIF" = "true" ]; then
+          # Written even when the audit passed. An empty `results` array is how a
+          # consumer learns the check ran and found nothing, which is a different
+          # fact from finding no file at all — and it is what keeps a green run
+          # from looking like a broken integration.
+          #
+          # The audit exits 1 when the binary is unsound, so the exit status is
+          # deliberately not checked here: a non-zero code is the gate working,
+          # not this step failing. What *is* checked is that the file parses,
+          # because a truncated SARIF document is accepted silently by some
+          # uploaders and rendered as "no findings" — which turns a failing gate
+          # into a passing one with nothing visible to explain it.
+          node src/audit.mjs --sarif ${ARCH:+--arch="$ARCH"} "$BIN" > macho-audit.sarif 2>/dev/null || true
+          if ! node -e 'JSON.parse(require("fs").readFileSync("macho-audit.sarif","utf8"))' 2>/dev/null; then
+            echo "::error::the SARIF report did not parse. The audit result above is still valid — this is a bug in the report, not in the binary."
+            exit 1
+          fi
+          echo "wrote macho-audit.sarif"
+        fi
+
+        # 1 here means unsound: the gate working. Reported as a failure without an
+        # `::error::`, because the SARIF upload below is what turns each finding
+        # into an annotation on the offending line — an error annotation per finding
+        # as well would report the same problem twice, once legibly and once not.
+        exit "$code"
+
+    - name: Compare against the baseline
+      id: fingerprint
+      if: ${{ inputs.baseline != '' }}
+      shell: bash
+      env:
+        BIN: ${{ inputs.binary }}
+        BASE: ${{ inputs.baseline }}
+        ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+
+        args=("--json" "$BIN" "$BASE")
+        [ -n "${ARCH:-}" ] && args+=("--arch=$ARCH")
+
+        set +e
+        out="$(node src/fingerprint.mjs "${args[@]}")"
+        code=$?
+        set -e
+
+        if [ "$code" -eq 3 ]; then
+          echo "::error::could not read one of the two binaries. A wrong path on either side is the usual cause."
+          exit 3
+        fi
+
+        echo "fingerprint=$(node -p 'JSON.parse(process.argv[1]).data.a.fingerprint' "$out")" >> "$GITHUB_OUTPUT"
+        echo "same-program=$(node -p 'JSON.parse(process.argv[1]).data.sameProgram' "$out")" >> "$GITHUB_OUTPUT"
+        echo "$(node -p 'JSON.parse(process.argv[1]).data.verdict' "$out")"
+
+        # A mismatch is expected to fail and is not masked. This is the job that
+        # catches "we shipped the wrong artifact", which no structural audit can
+        # see: both binaries can be perfectly sound and still be different
+        # programs, which is the failure mode `audit` is blind to by construction.
+        if [ "$code" -ne 0 ]; then
+          echo "::error::$BIN is not the same program as $BASE"
+          exit 1
+        fi
+
+    - name: Report what changed
+      id: diff
+      if: ${{ inputs.baseline != '' }}
+      shell: bash
+      env:
+        BIN: ${{ inputs.binary }}
+        BASE: ${{ inputs.baseline }}
+        ARCH: ${{ inputs.arch }}
+      run: |
+        set -euo pipefail
+
+        # Informational, and deliberately never a gate. `diff` keeps three lists
+        # apart and only the first decides its verdict, because a UUID change and a
+        # section-size change are facts about a build rather than changes to a
+        # program. Turning any of them into a failure is a policy decision, and a
+        # policy belongs in `assert`, where it can be written down and reviewed.
+        args=("--json" "$BIN" "$BASE")
+        [ -n "${ARCH:-}" ] && args+=("--arch=$ARCH")
+
+        set +e
+        out="$(node src/diff.mjs "${args[@]}")"
+        code=$?
+        set -e
+
+        if [ "$code" -eq 3 ]; then
+          echo "::warning::could not diff — one of the binaries could not be read."
+          exit 0
+        fi
+
+        echo "differences=$(node -p 'JSON.parse(process.argv[1]).data.counts.differences' "$out")" >> "$GITHUB_OUTPUT"
+        echo "$(node -p 'JSON.parse(process.argv[1]).data.verdict' "$out") — $(node -p 'JSON.parse(process.argv[1]).data.counts.differences' "$out") difference(s), $(node -p 'JSON.parse(process.argv[1]).data.counts.buildMetadata' "$out") build-metadata change(s)"
+
+        # Each difference on its own line, so it is greppable in a CI log without
+        # parsing JSON. The reader already capped the list at `maxNames`; this
+        # prints what it returned rather than re-capping it.
+        node -e '
+          const d = JSON.parse(process.argv[1]).data;
+          for (const x of d.differences || []) console.log(`  [${x.category}] ${x.detail}`);
+        ' "$out"
+
+    # Last, and `always()`, so the report is uploaded even when the audit failed —
+    # which is the case it exists for. A report only produced on success would be
+    # produced exactly when there is nothing to report.
+    #
+    # The permission check is explicit because `upload-sarif` fails hard without
+    # `security-events: write`, and a fork's pull request does not have it. Skipping
+    # with a note keeps the gate's result meaningful on a fork, where the binary
+    # is still perfectly auditable even though the finding cannot be uploaded.
+    - name: Publish the audit report to GitHub
+      if: ${{ always() && inputs.sarif == 'true' }}
+      shell: bash
+      env:
+        CAN_UPLOAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false }}
+      run: |
+        set -euo pipefail
+        if [ ! -f macho-audit.sarif ]; then
+          echo "no SARIF report was written; skipping the upload."
+          exit 0
+        fi
+        if [ "$CAN_UPLOAD" != "true" ]; then
+          echo "macho-audit.sarif was written to the workspace. Uploading needs security-events: write, which pull requests from forks do not have."
+          exit 0
+        fi
+        echo "permissions: ${{ github.event.repository.permissions }}"
+
+    - uses: github/codeql-action/upload-sarif@v3
+      if: ${{ always() && inputs.sarif == 'true' && github.event_name != 'pull_request' || (always() && inputs.sarif == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false) }}
+      with:
+        sarif_file: macho-audit.sarif
+        category: macho-explorer

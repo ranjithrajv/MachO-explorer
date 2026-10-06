@@ -1,0 +1,691 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ranjithrajv/MachO-explorer/schema/audit.schema.json",
+  "title": "MachO-explorer audit — full response envelope",
+  "description": "The response shape of the audit tool, under `--json` from the CLI and in `structuredContent` over MCP. Composed from `envelope.schema.json` with `data` constrained to what this tool actually returns, so the envelope contract is enforced from the one file that owns it.\n\nAddresses inside `data` are hex strings, never JSON numbers — a 64-bit address does not survive one. `data` is left open to new fields: an unrecognised key is ignorable, which is what lets a bug fix add one without a major version bump. The *envelope* is closed; `data` is not.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "tool",
+    "ok",
+    "binary",
+    "errors",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Version of the envelope shape, not of the package. Bump the major on a removal, a rename, or a change of meaning; bump the minor when a field is added, since an added field is ignorable. Compare it against the value you were written against and fail loudly on a change, rather than discovering it from an empty field."
+    },
+    "tool": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Which tool produced this. Over MCP this is the tool name with the 'macho-' prefix; from the CLI it is the unprefixed name."
+    },
+    "ok": {
+      "type": "boolean",
+      "description": "True when the tool ran, whether or not it found anything. An empty result is ok:true — 'ran and found nothing' is an answer, not a failure. False means the tool could not do its job."
+    },
+    "binary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The file that was read, or null when none was named. Over MCP there is no fallback binary, so this is null unless the caller passed one."
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "bad-arguments",
+          "bad-address",
+          "bad-pattern",
+          "no-match",
+          "no-call-sites",
+          "no-symbols",
+          "encrypted",
+          "unknown-encoding",
+          "io"
+        ]
+      },
+      "description": "Machine-readable reason codes, empty when ok is true. These are what let a caller self-correct rather than parse prose: 'io' and 'unknown-encoding' are different problems, and conflating them sends a caller looking in the wrong place.\n\n'encrypted' means the bytes could NOT be read because they are ciphertext, so a zero result from findcall or findliteral is NOT evidence the target is absent — this is the one code that means 'could not look' rather than 'looked and found nothing'. The no-* codes are the CLIs' 'ran fine, found nothing' values; the MCP layer reports those as ok:true with data.count:0 rather than in errors, because isError is what a model branches on."
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Prose for a human, one per code above. Absent rather than empty when there is nothing to say, which keeps 'nothing to report' distinguishable from 'there is nothing there'."
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Caveats that do not make the answer wrong — that zero is the correct answer for a stripped binary, that a slice was chosen by preference rather than by request. Absent rather than empty, for the same reason as messages."
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "verdict",
+        "clean",
+        "strictClean",
+        "counts",
+        "slices",
+        "containerAbnormalities"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "warnings",
+            "failed"
+          ]
+        },
+        "clean": {
+          "type": "boolean",
+          "description": "The gate without --strict: true when there are no error-severity findings."
+        },
+        "strictClean": {
+          "type": "boolean",
+          "description": "The gate with --strict: false when there are any findings at all."
+        },
+        "counts": {
+          "type": "object",
+          "required": [
+            "errors",
+            "warnings"
+          ],
+          "properties": {
+            "errors": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "warnings": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "severity",
+              "kind",
+              "detail"
+            ],
+            "properties": {
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "error",
+                  "warning"
+                ],
+                "description": "error — the file disagrees with itself, so addresses computed from it may be wrong. warning — it parsed; something is unfamiliar or heuristic."
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A stable identifier for the check that fired. This is the string SARIF uses as its rule id, so it must not be renamed lightly."
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The finding in prose, naming the numbers that produced it."
+              }
+            }
+          }
+        },
+        "slices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "arch",
+              "abnormalities"
+            ],
+            "properties": {
+              "arch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "abnormalities": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "severity",
+                    "kind",
+                    "detail"
+                  ],
+                  "properties": {
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "error",
+                        "warning"
+                      ],
+                      "description": "error — the file disagrees with itself, so addresses computed from it may be wrong. warning — it parsed; something is unfamiliar or heuristic."
+                    },
+                    "kind": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "A stable identifier for the check that fired. This is the string SARIF uses as its rule id, so it must not be renamed lightly."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "The finding in prose, naming the numbers that produced it."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "containerAbnormalities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "severity",
+              "kind",
+              "detail"
+            ],
+            "properties": {
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "error",
+                  "warning"
+                ],
+                "description": "error — the file disagrees with itself, so addresses computed from it may be wrong. warning — it parsed; something is unfamiliar or heuristic."
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A stable identifier for the check that fired. This is the string SARIF uses as its rule id, so it must not be renamed lightly."
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The finding in prose, naming the numbers that produced it."
+              }
+            }
+          },
+          "description": "Findings about the fat container itself, which no per-slice check can see."
+        }
+      },
+      "description": "The answer. Shape specific to `audit`. Null when ok is false."
+    }
+  },
+  "examples": [],
+  "$defs": {
+    "slice": {
+      "type": "object",
+      "required": [
+        "arch"
+      ],
+      "properties": {
+        "arch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bits": {
+          "type": "integer",
+          "enum": [
+            32,
+            64
+          ]
+        },
+        "readable": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platformName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "filetypeName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "thin": {
+          "type": "boolean"
+        },
+        "nsyms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "defined": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "textAddr": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "textSize": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "codeSections": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "uuid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "encrypted": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cryptid": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "flagsNamed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "flagsUnknown": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "segname"
+            ],
+            "properties": {
+              "segname": {
+                "type": "string"
+              },
+              "vmaddr": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]+$",
+                "description": "A virtual address as a hex string with an 0x prefix. Never a number: a 64-bit address does not survive one."
+              },
+              "vmsize": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]+$",
+                "description": "A virtual address as a hex string with an 0x prefix. Never a number: a 64-bit address does not survive one."
+              },
+              "fileoff": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]+$",
+                "description": "A virtual address as a hex string with an 0x prefix. Never a number: a 64-bit address does not survive one."
+              },
+              "filesize": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]+$",
+                "description": "A virtual address as a hex string with an 0x prefix. Never a number: a 64-bit address does not survive one."
+              },
+              "maxprot": {
+                "type": "integer"
+              },
+              "initprot": {
+                "type": "integer"
+              },
+              "flags": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "sectname"
+            ],
+            "properties": {
+              "segname": {
+                "type": "string"
+              },
+              "sectname": {
+                "type": "string"
+              },
+              "addr": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]+$",
+                "description": "A virtual address as a hex string with an 0x prefix. Never a number: a 64-bit address does not survive one."
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "A file offset, not an address."
+              },
+              "align": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reloff": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "nreloc": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "flags": {
+                "type": "integer"
+              },
+              "type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "typeRaw": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "attributes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "loadCommands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "cmdsize": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "rpaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dylibs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "linkage": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "installName": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        "buildVersion": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "platform": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "platformRaw": {
+              "type": "integer"
+            },
+            "minos": {
+              "type": "object"
+            },
+            "sdk": {
+              "type": "object"
+            }
+          }
+        },
+        "sourceVersion": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          }
+        },
+        "entryPoint": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "entryoff": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "vaddr": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "encryption": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "cryptid": {
+              "type": "integer"
+            },
+            "encrypted": {
+              "type": "boolean"
+            }
+          }
+        },
+        "filetype": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "raw": {
+              "type": "integer"
+            }
+          }
+        },
+        "abnormalities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "severity",
+              "kind",
+              "detail"
+            ],
+            "properties": {
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "error",
+                  "warning"
+                ],
+                "description": "error — the file disagrees with itself, so addresses computed from it may be wrong. warning — it parsed; something is unfamiliar or heuristic."
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A stable identifier for the check that fired. This is the string SARIF uses as its rule id, so it must not be renamed lightly."
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The finding in prose, naming the numbers that produced it."
+              }
+            }
+          }
+        }
+      }
+    },
+    "fingerprintSide": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fat": {
+          "type": "boolean"
+        },
+        "fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uuid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tier": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "full",
+            "structure-only",
+            null
+          ]
+        },
+        "slices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "arch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fingerprint": {
+                "type": "string"
+              },
+              "structure": {
+                "type": "string"
+              },
+              "symbols": {
+                "type": "string"
+              },
+              "tier": {
+                "type": "string"
+              },
+              "nsyms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "nsects": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "ncmds": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "uuid": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

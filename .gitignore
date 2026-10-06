@@ -44,3 +44,18 @@ mutcheck-*
 *.rej
 .idea/
 .vscode/
+
+# Scratch directories the CI-surface suites create.
+#
+# `test/action.mjs` builds a shell step's environment and `test/pages.mjs`
+# assembles the Pages site, both in a temporary directory beside the repository
+# root rather than in the OS temp directory — beside, so the assembled site's
+# relative paths resolve the same way they will after a real deployment, which is
+# the whole thing being tested. Each suite removes its own directory on the way
+# out; these entries cover the case where it did not, which is a test that threw
+# rather than a test that failed, and an untracked directory is exactly the
+# signal that tells you which of the two happened.
+_site_test/
+.tmp-action-scratch/
+.tmp-action-test/
+macho-audit.sarif

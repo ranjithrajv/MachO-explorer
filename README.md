@@ -30,6 +30,15 @@ reads a Mach-O **in the tab**, with the bytes never leaving the machine, and
 `test/browser.mjs` proves it produces byte-for-byte the same answers as the Node
 build on every fixture.
 
+It is also the **audit report** — not just a demo. Every number it states about
+itself is fetched from the repository at page load rather than typed into the
+page, so a claim cannot survive the thing it describes changing: add a dependency
+and the row turns amber, because it is reading `package.json` rather than
+reciting a slogan. The "Audit it yourself" panel opens the actual source that read
+your file, served from this repository. Published at the repository's GitHub Pages
+site; `npm run demo` serves the same page locally on
+<http://localhost:8788/demo/>.
+
 ## Run it anywhere
 
 One reader, every platform. The same Mach-O analysis runs on a forensic
@@ -193,6 +202,58 @@ exit 1
 It also checks the fat table itself, which no per-slice check can: two slices
 claiming the same file bytes are *each* internally consistent, and the damage only
 exists between them.
+
+## Gating a build
+
+`audit`'s **exit status is the product**, and it is the one tool here designed to
+be a CI gate rather than a report.
+
+```sh
+audit  app                        # 0 sound · 1 unsound · 2 usage · 3 could not read
+audit  --strict app               # warnings fail too
+audit  --sarif app > audit.sarif  # SARIF 2.1.0, for GitHub Code Scanning
+```
+
+The four codes are the design. **1 is a negative answer, not an error** — an audit
+that found something wrong has done its job. **3 means the file could not be
+read**, which is *not* a passing audit: a mistyped path in a CI script must never
+read as a clean bill of health.
+
+Branch on the **booleans**, not the label: `data.clean` (the default gate) and
+`data.strictClean` (`--strict`). `verdict` is `ok` / `warnings` / `failed` and is
+a label for a person — `verdict: "warnings"` with `clean: true` is a *passing*
+audit.
+
+`--strict` is off by default on purpose: a binary built by an Xcode newer than
+this reader sets a header flag bit the reader has no name for, and failing every
+build over that trains people to stop running the gate.
+
+### The composite GitHub Action
+
+So none of that needs writing:
+
+```yaml
+- uses: ranjithrajv/MachO-explorer@main
+  with:
+    binary: build/Some.app/Contents/MacOS/Some
+    baseline: known-good/Some        # enables fingerprint + diff
+    sarif: true                      # upload to Code Scanning
+  permissions:
+    contents: read
+    pages: write
+    id-token: write
+```
+
+It has **no install step** — it runs the reader from the checked-out source, so
+the gate tests *this commit* rather than whatever a version tag resolved to today.
+A CI gate that needs an install is a gate that gets skipped, and the install is
+the part that fails. See [`action.yml`](action.yml) for inputs and outputs.
+
+`diff` is deliberately **not** a gate: it reports three lists and only the first
+decides the verdict, because a UUID change and a section-size change are facts
+about a *build* while a changed literal string is a change to the *program*.
+Turning any of them into a failure is a policy decision, and a policy belongs in
+[`assert`](#the-tools) where it can be written down and reviewed.
 
 ## Install
 
@@ -429,13 +490,17 @@ learn one dialect: **stdout is JSON only** (progress lines, per-slice narration
 and "none found" prose all go to stderr), and **one envelope, always** —
 `{ tool, ok, binary, errors, messages?, notes?, data }`, where `errors` holds
 machine-readable reason codes (`bad-arguments`, `bad-address`, `bad-pattern`,
-`no-match`, `no-call-sites`, `no-symbols`, `unknown-encoding`, `io`) rather than
-prose.
+`no-match`, `no-call-sites`, `no-symbols`, `encrypted`, `unknown-encoding`, `io`)
+rather than prose.
 
 `io` and `unknown-encoding` are deliberately distinct, because the two are
 different problems: one is a file that cannot be read, the other a file that
 reads fine and is not a Mach-O. Told "not a Mach-O binary" about a path that
 does not exist, a caller goes looking for the wrong file entirely.
+
+`encrypted` is the one code that means **could not look** rather than **looked and
+found nothing**: an App Store build's `__TEXT` is ciphertext, so a zero result from
+`findcall` or `findliteral` is not evidence the target is absent.
 
 Addresses are emitted as `"0x..."` strings, never JSON numbers: a 64-bit vaddr
 does not survive a `Number`, and a silent precision loss would be
@@ -455,6 +520,32 @@ not the answer, and a tool whose text mode and JSON mode disagree about whether
 something was found is worse than one with no contract at all. The suite asserts
 that parity across tools rather than listing expected values per tool, so a tool
 added later fails the same check.
+
+### Validating the output
+
+Every tool ships a **JSON Schema for its own envelope** under `schema/`, composed
+from `schema/envelope.schema.json` with `data` constrained to what that tool
+actually returns:
+
+```sh
+macho-explorer audit --json app | ajv validate -s schema/audit.schema.json
+```
+
+Two deliberate properties. The **envelope is closed** — a typo'd field is
+rejected, so `errorss` does not validate and a consumer cannot read it as "no
+errors". **`data` is open** — an unrecognised key is ignorable, which is what
+lets a bug fix add a field without a major version bump.
+
+Check `schemaVersion` against the value you were written against rather than
+trusting the field names; that field exists so a consumer can fail loudly on a
+change instead of discovering it from an empty field.
+
+The schemas are **generated** from the shapes the tools emit, and
+`npm run schema:check` fails if a checked-in schema has drifted from the
+generator — the same discipline the fixture corpus and the browser bundle get.
+`test/schemas.mjs` runs every tool's real output through its own schema and
+asserts the schemas also *reject* wrong documents, because a validator that
+accepts everything would pass every positive check and be found by nobody.
 
 ### For coding agents
 
@@ -590,10 +681,15 @@ node test/fixtures.mjs --check    #  ~0.1s   the corpus matches its generator
 node test/smoke.mjs               #  ~4s     the tools, on binaries they were not written for
 node test/mcp.mjs                 #  ~15s    the protocol, driven over a real pipe
 node test/skill.mjs               #  ~3s     the agent instructions match the tools
+node test/schemas.mjs             #  ~3s     every tool's real output, against its own schema
+node test/sarif.mjs               #  ~2s     the SARIF emitter is well-formed
+node test/action.mjs              #  ~2s     the composite action's shell, extracted and run
+node test/pages.mjs               #  ~1s     the published page is this repository
+npm run schema:check              #  ~1s     the checked-in schemas match the generator
 node test/mutation-check.mjs      #  ~2m     the historical defects are still caught
 ```
 
-The four fast numbers are wall-clock on an M-series laptop and are there to set
+The fast numbers are wall-clock on an M-series laptop and are there to set
 expectations, not to be asserted. The counts and verdicts are the claim.
 
 Each is a different kind of evidence: `--check` re-derives every byte of the
@@ -603,9 +699,15 @@ asserts its own coverage; `mcp.mjs` drives a real subprocess over a real pipe
 and parses **every** line of stdout, so a stray write on any code path turns a
 test red rather than a user's session green; `skill.mjs` holds the agent-facing
 prose to the tree, so an instruction cannot name a flag that does nothing or an
-exit code that means something else. `mutation-check.mjs` reintroduces one real
-historical bug at a time and requires the suite to fail, with an inconclusive
-mutation failing the run rather than counting as caught.
+exit code that means something else; `schemas.mjs` runs each tool's real output
+through its own schema **and** asserts the schema rejects wrong documents, because
+a validator that accepts everything passes every positive check; `action.mjs`
+extracts the shell out of `action.yml` and runs it, which is the only way to test
+a composite action — its steps are shell, nothing type-checks them, and the file
+parses as valid YAML whether the shell inside it is correct or not.
+`mutation-check.mjs` reintroduces one real historical bug at a time and requires
+the suite to fail, with an inconclusive mutation failing the run rather than
+counting as caught.
 
 **A green `npm run test:all` is also a complete rot check** — the fixtures pin
 exact addresses and counts, so a new toolchain release cannot silently change
@@ -642,8 +744,6 @@ package.
 **LGPL-3.0-or-later.** See [`LICENSE`](LICENSE) for the GNU Lesser General Public
 License v3, and [`COPYING`](COPYING) for the GNU General Public License v3 that it
 incorporates — both are required, since LGPLv3 is defined in terms of GPLv3.
-
-It has no opinion about, and no access to, the contents of the files it is
 pointed at.
 
 ### Provenance

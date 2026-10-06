@@ -87,6 +87,34 @@ node test/browser.mjs        # 45 checks: shims match Node, answers match Node
 That is the auditability claim made visible: the code you audit is the code that
 runs, in both hosts, and a stale bundle fails the build rather than shipping.
 
+### It is published as the audit report
+
+The page is not only a local demo. `.github/workflows/pages.yml` assembles it
+into a GitHub Pages site, and two properties of *that deployment* are what make
+the published version mean anything:
+
+- **The bundle-freshness gate runs before the upload.** `demo/link.mjs --check`
+  is a required step, not an optimisation. Without it the site could publish a
+  bundle that no longer matches the sources it offers for reading — a page that
+  audits the wrong code while looking exactly like it audits the right code, which
+  is the one outcome worse than having no page.
+- **Nothing is fetched from a third party.** `test/pages.mjs` asserts the
+  assembled site has no external `<script>`, `src=`, `href=`, `fetch()` or
+  `import()`. A CDN link would mean the reader being offered for audit is not the
+  reader that ran, and the visitor could not tell.
+
+And the page states its own claims by **reading them**, not by asserting them. The
+dependency count, the bundle size, the reader's line count and the reason-code
+list are all fetched from `package.json`, from the bundle itself and from
+`schema/envelope.schema.json` at page load. A hard-coded claim would survive the
+thing it describes changing; these turn amber instead. That is the whole argument
+in one behaviour: a page whose subject is "trust these numbers" should be the one
+place where a number going stale is visible rather than fatal.
+
+```sh
+node test/pages.mjs       # 31 checks: every fetch resolves, no external origin
+```
+
 ## What "auditable" does *not* mean
 
 - **It is not a security audit.** Reading the parser tells you it reads bytes
@@ -114,6 +142,11 @@ being true. It is enforced, not asserted:
 | `demo/link.mjs --check` | The committed browser bundle matches the sources it is generated from |
 | `conformance/run.mjs --check` | `cases.json` matches the reader on every fixture |
 | `test/fixtures.mjs --check` | Every byte of the test corpus matches its generator |
+| `test/pages.mjs` | Every path the published page fetches is in the assembled site, and it loads nothing from a third party |
+| `test/schemas.mjs` | Every tool's real output validates against its own schema — and the schema rejects what it should, so a permissive validator cannot pass |
+| `npm run schema:check` | The committed per-tool schemas match the generator, so a description cannot drift from the code |
+| `test/action.mjs` | The composite action's shell, extracted from `action.yml`, actually runs — including that every `$VAR` it reads is declared in its `env:` |
+| `test/sarif.mjs` | Every SARIF `ruleId` resolves to a declared rule, so a finding is never rendered with no name |
 
 Each of these is a check that **can fail** — the project treats a verification
 that cannot fail as worse than none, because it reports success. See

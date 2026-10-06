@@ -13,17 +13,18 @@
 #               the generator produces. A stale or hand-edited fixture is a test
 #               that no longer tests, and it would otherwise go unnoticed.
 #   test      — the reader suite, on macOS, Linux and Windows.
-#   protocol  — the MCP server, the agent skill, the declared types and the
-#               publish contract, on Linux.
+#   protocol  — the MCP server, the agent skill, the declared types, the publish
+#               contract, the SARIF emitter and the composite action, on Linux.
 #   mutation  — prove the suite fails when the reader is broken. Slow, and the
 #               job most likely to rot, so it runs on its own rather than
 #               blocking every push's test job.
 #
 # The `protocol` job is named for what it started as and now also carries the
-# type and publish suites. Renaming it to match its contents would mean renaming
-# it on every addition; what the four share is that none is reachable by testing
-# the reader — one drives a subprocess, one holds prose to the tree, one holds
-# the declared contract to the code, one asks whether the package can ship.
+# type, publish, SARIF and action suites. Renaming it to match its contents would
+# mean renaming it on every addition; what they share is that none is reachable by
+# testing the reader — one drives a subprocess, one holds prose to the tree, one
+# holds the declared contract to the code, one asks whether the package can ship,
+# one checks a format translation, and one runs a CI gate's shell.
 name: test
 
 on:
@@ -135,6 +136,54 @@ jobs:
       # nothing platform-specific, and asserts nothing that differs by OS.
       - name: The package can be published and the docs name it
         run: node test/publish.mjs
+
+      # The per-tool JSON Schemas are generated from the same `data` shapes the
+      # tools emit, and this is the check that keeps them honest. `--check` fails
+      # if any checked-in schema has drifted from what the generator produces — the
+      # same drift discipline `fixtures --check` and `demo/link.mjs --check` apply,
+      # applied to the one artefact category that had none. Then `schemas.mjs` runs
+      # every tool's real output through its own schema and asserts the schemas
+      # *reject* wrong documents, because a validator that accepts everything would
+      # pass every positive check above and be found by nobody.
+      #
+      # Regenerating in CI and then checking would be theatre; it only generates,
+      # never writes.
+      - name: The checked-in schemas match the generator
+        run: npm run schema:check
+      - name: Every tool's output validates, and the schemas reject what they should
+        run: npm run test:schemas
+
+      # SARIF and the composite action are the CI-gate surface, and neither is
+      # reachable by testing the reader.
+      #
+      # `sarif.mjs` holds the emitter to the SARIF 2.1.0 members a consumer
+      # depends on. The check that bites is that every `ruleId` appears in the
+      # declared rule catalog: an undeclared one is not an error to a consumer, it
+      # is a finding rendered with no name attached, so it ships and nobody sees
+      # it.
+      #
+      # `action.mjs` extracts the shell out of `action.yml` and runs it. That is
+      # the only way to test a composite action — its steps are shell, nothing
+      # type-checks them, and the file parses as valid YAML whether the shell
+      # inside it is correct or not. It found three real defects the first time
+      # it ran, one of which would have made a failing gate report green.
+      #
+      # Linux only, and for the same reason as everything else in this job: the
+      # three-OS matrix is what keeps the reader's cross-platform claim honest,
+      # and these check integration shape, which does not vary by OS.
+      - name: The SARIF emitter is well-formed
+        run: node test/sarif.mjs
+      - name: The composite action's shell actually runs
+        run: node test/action.mjs
+      # The Pages site is assembled with `cp`, and the failure that matters is not
+      # a failing `cp` — it is a source file the audit panel fetches that nobody
+      # copied, which gives a dead "view source" button on a page whose entire
+      # argument is that you can verify its claims. That is a silent failure, so
+      # it gets an explicit suite. It also asserts the no-external-origin rule,
+      # because a CDN link would mean the reader being audited is not the reader
+      # that ran — and the visitor could not tell.
+      - name: The published page is this repository
+        run: node test/pages.mjs
 
   mutation:
     name: mutation

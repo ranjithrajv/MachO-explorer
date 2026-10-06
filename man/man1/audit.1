@@ -6,6 +6,7 @@ macho-explorer \- Mach\-O binary introspection
 .B audit
 .RI [ binary | bundle ]
 .RB [ \-\-json ]
+.BR [ \-\-sarif ]
 .RB [ \-\-strict ]
 .RB [ \-\-arch= name ]
 .RB [ \-b | \-\-binary
@@ -90,8 +91,46 @@ indistinguishable from a stripped binary.
 .nf
 macho-explorer audit build/Contents/MacOS/app
 macho-explorer audit \-\-strict ./dist/*.dylib
-macho-explorer audit \-\-json ./out | jq '.data.verdict, .data.counts'
+macho-explorer audit \-\-json ./out | jq '.data.clean, .data.counts'
+macho-explorer audit \-\-sarif ./out > audit.sarif
 .fi
+.SH SARIF
+.B \-\-sarif
+writes a SARIF 2.1.0 document to stdout and a one\-line summary to stderr, for GitHub
+Code Scanning and any other SARIF consumer. Two properties are deliberate:
+.PP
+Each finding is a rule named by the
+.I kind
+the reader already reports, so a second run matches the first run's findings rather
+than filing a new alert on every build. And an unreadable file yields a valid
+document with
+.I no
+findings \- a mistyped path in a workflow is a bug in the workflow, not damage to
+the binary, and reporting it as a finding would put an annotation on the commit for
+something the commit did not do.
+.PP
+.B \-\-sarif
+and
+.B \-\-json
+are two formats for one answer and cannot be combined; doing so is a usage error
+rather than a precedence rule, because silently preferring one produces a
+.I .sarif
+file containing JSON that fails to parse much later with an error naming neither
+flag.
+.PP
+Use
+.I data.clean
+or
+.I data.strictClean
+as the gate, not
+.IR data.verdict ,
+which is a label for a person:
+.I verdict: "warnings"
+with
+.I clean: true
+is a
+.I passing
+audit.
 .SH SEE ALSO
 .BR describe (1),
 .BR fingerprint (1),

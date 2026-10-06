@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MachO-explorer</title>
+<!--
+  A redirect, and nothing else.
+
+  The audit report is `demo/index.html`, and it lives under `demo/` rather than at
+  the site root because its relative paths are load-bearing: it imports
+  `./macho.browser.mjs` and fetches `../src/macho.mjs` for the view-source panel.
+  Both work under any base path *as long as the directory layout is preserved*,
+  which is what makes the report portable between a local `node demo/serve.mjs`
+  and GitHub Pages without a single path rewriting.
+
+  Moving the page to the root would break the second one: `../src/macho.mjs`
+  from `/index.html` resolves above the site root and 404s, and the view-source
+  panel is the entire reason the page exists. So the layout is kept and this
+  redirect is what points a visitor at it.
+
+  `0` content and a bare `location.replace` rather than a link: the canonical URL
+  is the report itself, so a visitor who lands here should end up there, and a
+  Back button that returns to a redirect is a small irritation that costs
+  nothing to avoid.
+-->
+<meta http-equiv="refresh" content="0; url=./demo/">
+<link rel="canonical" href="./demo/">
+</head>
+<body>
+<p>Redirecting to the <a href="./demo/">MachO-explorer audit report</a>…</p>
+<script>location.replace('./demo/');</script>
+</body>
+</html>

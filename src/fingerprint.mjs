@@ -41,17 +41,24 @@
  */
 import { requireBinary } from './target.mjs';
 import { fingerprint, compareFingerprints } from './api.mjs';
-import { parseArgs, emitJSON, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
+import { fingerprintSarif } from './sarif.mjs';
+import { parseArgs, emitJSON, usage, toJSON, writeAllSync, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
-  'usage: macho-explorer fingerprint <binary> [<other-binary>] [--json] [--arch=<name>]',
+  'usage: macho-explorer fingerprint <binary> [<other-binary>] [--json] [--sarif] [--arch=<name>]',
   '',
   '  with one binary, reports its fingerprint. With two, reports whether they are',
   '  the same program — which survives a rebuild, unlike a byte comparison.',
   '',
+  '  --sarif applies only to the two-binary comparison: it turns "these are not',
+  '  the same program" into SARIF 2.1.0 findings for GitHub Code Scanning, so a',
+  '  release gate reports on the commit rather than in a log. With one binary',
+  '  there is nothing to compare and it is a usage error, not an empty result.',
+  '',
   'options:',
+  '  --sarif            SARIF 2.1.0 on stdout (two-binary comparison only)',
   '  --arch=<name>      fingerprint only this slice of a universal binary',
   '  --json             one JSON object on stdout; prose to stderr',
   '  -q, --quiet        suppress non-essential output',
@@ -66,7 +73,13 @@ if (flags.has('help') || flags.has('h')) {
   process.exit(EXIT.ok);
 }
 
-rejectUnknownFlags(new Set(['arch', 'json']), flags, HELP);
+rejectUnknownFlags(new Set(['arch', 'json', 'sarif']), flags, HELP);
+
+const sarif = flags.has('sarif');
+
+if (sarif && flags.has('json')) {
+  usage([...HELP, '', '--sarif and --json cannot both be given: they are two formats for one answer.']);
+}
 
 // Two positionals is a comparison, one is a lookup. Resolved through the same
 // fallback chain as every other tool, so `$MACHO_EXPLORER_BINARY` supplies the
@@ -82,6 +95,20 @@ if (positional.length > 2) {
 }
 
 const arch = opts.arch;
+
+// SARIF describes findings, and "these two are different" is the only finding
+// this tool has — one binary has nothing to disagree with. Reporting zero results
+// with a zero exit for a one-file call would read as a *passing* gate, which is
+// the one wrong answer available here, so it is a usage error instead.
+if (sarif && positional.length < 2) {
+  usage([
+    ...HELP,
+    '',
+    '--sarif needs two binaries: it reports "not the same program" as a finding,',
+    'and a single binary has nothing to compare against.',
+  ]);
+}
+
 const first = requireBinary({ argv: opts.b || opts.binary || positional[0] });
 
 let result;
@@ -130,6 +157,12 @@ if (!comparing) {
 
 // A comparison: 0 when the programs match, 1 when they do not.
 const status = result.sameProgram ? EXIT.ok : EXIT.empty;
+
+if (sarif) {
+  writeAllSync(1, toJSON(fingerprintSarif(result, { path: first, other: positional[1] }), 2) + '\n');
+  writeAllSync(2, `${result.verdict}  (SARIF on stdout)\n`);
+  process.exit(status);
+}
 
 if (flags.has('json')) {
   emitJSON({

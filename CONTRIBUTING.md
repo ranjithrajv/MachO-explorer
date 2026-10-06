@@ -85,13 +85,52 @@ node test/skill.mjs               #  ~3s     the agent instructions match the to
 node test/mutation-check.mjs      #  ~2m     the historical bugs are still caught
 ```
 
+The four fast ones cover the reader and its two doors. The CI-gate and
+published-page surfaces have their own, and they are the ones a change to
+`action.yml`, `schema/` or `demo/` has to pass:
+
+```sh
+npm run schema:check              #  ~1s     the checked-in schemas match the generator
+node test/schemas.mjs             #  ~3s     every tool's real output, against its own schema
+node test/sarif.mjs               #  ~2s     the SARIF emitter is well-formed
+node test/action.mjs              #  ~2s     the composite action's shell, extracted and run
+node test/pages.mjs               #  ~1s     the published page is this repository
+```
+
 Each suite prints its own counts. They are deliberately not written here: a
 number in prose is a claim that some later commit has to remember, and the
 failure mode is a document asserting a total the reader can disprove by running
 one command. Read the number off the run.
 
-`npm run test:all` runs all three in order. There is no `npm install` step
+`npm run test:all` runs everything in order. There is no `npm install` step
 because there is nothing to install.
+
+### The four that are not about the reader
+
+Each covers something no amount of reader testing reaches, and each found at
+least one real defect on its first run — which is the argument for writing the
+test before the feature ships rather than after:
+
+- **`test/schemas.mjs`** runs each tool's *real* output through its own schema,
+  and then asserts the schemas **reject** wrong documents. The second half is the
+  load-bearing one: a validator that accepts everything passes every positive
+  check above and is found by nobody. This is the suite that caught `encrypted`
+  missing from the envelope's reason-code enum — a bug in the *description* of
+  the reader, in the direction a reader test cannot look.
+- **`test/action.mjs`** extracts the shell out of `action.yml` and runs it. A
+  composite action's steps are shell: nothing type-checks them, and the file
+  parses as valid YAML whether the shell inside it is correct or not. It also
+  asserts every `$VAR` a `run:` block reads is declared in that step's `env:`,
+  because Actions passes an undeclared variable as an empty string and the
+  reader is then called with no binary.
+- **`test/pages.mjs`** assembles the Pages site and asserts every path the page
+  fetches is in it. The failure that matters is not a failing `cp` — it is a
+  source file nobody copies, which gives a dead "view source" button on a page
+  whose entire argument is that you can verify its claims.
+- **`npm run schema:check`** fails if a committed schema has drifted from the
+  generator, the same discipline `fixtures --check` and `demo/link.mjs --check`
+  apply. Run `npm run schema` to regenerate; **never hand-edit a file under
+  `schema/`** for the same reason you never hand-edit a fixture.
 
 **`fixtures --check`** re-derives every byte of the generated corpus and
 compares them to what is on disk. Never hand-edit a file under
@@ -117,8 +156,10 @@ PR) or it moved the code the anchor pointed at (fix the anchor in the same
 commit).
 
 CI runs four jobs — `fixtures` on ubuntu, `test` on a macOS/Linux/Windows
-matrix, `protocol` (the MCP and skill suites) on ubuntu, and `mutation` on
-ubuntu.
+matrix, `protocol` (the MCP, skill, publish, schema, SARIF, action and Pages
+suites) on ubuntu, and `mutation` on ubuntu. A fifth workflow, `pages`, deploys
+the audit report to GitHub Pages and runs on push to `main` for the paths that
+can change the page.
 
 Locally there are two versioned hooks in `.githooks/`, enabled once per clone
 with `git config core.hooksPath .githooks`. `pre-commit` runs `fixtures.mjs
