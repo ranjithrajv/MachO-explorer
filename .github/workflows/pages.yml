@@ -133,6 +133,27 @@ jobs:
           cp schema/envelope.schema.json _site/schema/
           cp package.json _site/
 
+          # The two fixtures the demo's sample buttons fetch, and only those.
+          #
+          # The page loads a sample from `../test/fixtures/<name>` so a visitor with
+          # no binary to hand still sees it work. That is a real fetch against a real
+          # path, so the path has to exist in the assembled site or the buttons are
+          # dead — and the assemble step above copies `demo/` without its siblings,
+          # which is exactly the failure: `demo/serve.mjs` serves the repository root
+          # and has them, so this passes locally and 404s in production.
+          #
+          # Named individually rather than copying the directory. The header's
+          # objection to publishing `test/` stands — a Pages site is a public
+          # directory and the corpus is not the report — and two files the page
+          # actually asks for is a contract, where the other thirty are not.
+          # Both are already public on the legacy root build, so nothing is exposed
+          # here that is not exposed already; this makes the set explicit.
+          #
+          # If a sample is added or renamed in `demo/app.mjs`, add it here and to the
+          # list below, or the corresponding button ships broken.
+          mkdir -p _site/test/fixtures
+          cp test/fixtures/universal.macho test/fixtures/bulk.macho _site/test/fixtures/
+
           # The root redirect, so a visitor who lands on the site URL reaches the
           # report instead of a directory listing.
           cp pages/index.html _site/index.html
@@ -170,6 +191,8 @@ jobs:
             src/api.mjs \
             schema/envelope.schema.json \
             package.json \
+            test/fixtures/universal.macho \
+            test/fixtures/bulk.macho \
             docs/index.html \
             docs/user-manual.html \
             docs/ci-gate.html \
