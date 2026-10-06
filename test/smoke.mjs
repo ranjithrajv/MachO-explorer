@@ -614,13 +614,26 @@ console.log('\n--json:');
     // The same command with stdout on a regular file. A descriptor to a regular
     // file is synchronous, so this is the untruncated reference — and it is why
     // the bug presented as "redirecting works, piping does not".
+    // The redirect is done by handing the child a real file descriptor, not by
+    // building a shell command. `/bin/sh -c` with `>` and `2>/dev/null` does not
+    // exist on Windows, so the reference file was never written there and the
+    // three checks below failed with an empty string — reported as a pipe
+    // truncation bug when the pipe was never involved. `fs.openSync` +
+    // `stdio` is the same redirection expressed in a way every platform has.
     const refFile = path.join(os.tmpdir(), `macho-explorer-bulk-${process.pid}.json`);
-    const cmd = [
-      JSON.stringify(process.execPath), JSON.stringify(`${SRC}macho-explorer.mjs`),
-      'sym', '--json', '--regex', '.', '--all-imp', '--no-dedupe', JSON.stringify(bulkPath),
-      '>', JSON.stringify(refFile), '2>/dev/null',
-    ].join(' ');
-    spawnSync('/bin/sh', ['-c', cmd], { encoding: 'utf8', timeout: 180000 });
+    let refFd;
+    try {
+      refFd = fs.openSync(refFile, 'w');
+      spawnSync(
+        process.execPath,
+        [`${SRC}macho-explorer.mjs`, 'sym', '--json', '--regex', '.', '--all-imp', '--no-dedupe', bulkPath],
+        { stdio: ['ignore', refFd, 'ignore'], timeout: 180000 },
+      );
+    } finally {
+      if (refFd !== undefined) {
+        try { fs.closeSync(refFd); } catch { /* best effort */ }
+      }
+    }
     const reference = fs.existsSync(refFile) ? fs.readFileSync(refFile, 'utf8') : '';
     try { fs.unlinkSync(refFile); } catch { /* best effort */ }
 

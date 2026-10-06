@@ -656,9 +656,19 @@ console.log('\nmcp: the protocol\n');
     // argument — which is itself worth asserting: they were the only tools here
     // that could be probed against a real binary without first finding something
     // inside one.
-    'audit': [{ binary: REAL }],
-    'fingerprint': [{ binary: REAL }],
-    'diff': [{ binary: REAL, other: REAL }],
+    //
+    // Guarded on REAL like every other tool above. These three entries were
+    // unconditional, so when no real Mach-O was available they were called as
+    // `{ binary: null }` and answered `bad-arguments` — which is a correct
+    // rejection of a bad call, but it was the *test* handing over a null and
+    // then failing on the refusal. A missing input is a skip, not a finding.
+    ...(REAL
+      ? {
+          'audit': [{ binary: REAL }],
+          'fingerprint': [{ binary: REAL }],
+          'diff': [{ binary: REAL, other: REAL }],
+        }
+      : {}),
   };
 
   const SKIP_WHY = {
@@ -666,6 +676,9 @@ console.log('\nmcp: the protocol\n');
     'a2o': 'no Mach-O with a mappable address was available',
     'mapliteral': 'no Mach-O with a known literal was available (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
     'findliteral': 'no Mach-O with a known literal, and no strings fixture (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
+    'audit': 'no real Mach-O was available (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
+    'fingerprint': 'no real Mach-O was available (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
+    'diff': 'no real Mach-O was available (looked at /usr/local/go/bin/go, /bin/ls, /usr/bin/ls)',
   };
 
   for (const d of defs) {
