@@ -174,7 +174,7 @@ const POPULATED_FLOOR = 50;
  * the slice that tool will read.
  */
 function facts(p) {
-  const out = { defined: 0, firstAddr: null, firstName: null, textAddr: null, addrs: [] };
+  const out = { defined: 0, firstAddr: null, firstName: null, textAddr: null, baseAddr: null, addrs: [] };
   const f = opener(p);
   for (const s of slicesOf(f)) {
     const thin = parseThin(f, s.offset);
@@ -183,6 +183,12 @@ function facts(p) {
   const slice = preferredSlice(f, 'x86_64');
   if (slice) {
     out.arch = slice.arch;
+    // A *mapped* address below every defined symbol: the image base of the first
+    // segment. Needed because probing an unmapped address (the old `0x10`) is
+    // refused by the mapping gate before symbol lookup runs, so the check passed
+    // even with the `defined && addr !== 0n` guard removed from `symlookup` — the
+    // mutation the harness reports as inconclusive. See the probe below.
+    out.baseAddr = parseThin(f, slice.offset)?.segments?.[0]?.vmaddr ?? null;
     const withAddr = readSymbols(f, slice.offset, slice.thin).entries
       .filter((e) => e.defined && e.addr !== 0n)
       .sort((a, b) => (a.addr < b.addr ? -1 : a.addr > b.addr ? 1 : 0));
@@ -3289,6 +3295,31 @@ for (const b of binaries) {
               : (r.stdout.match(/no defined.*/) || [''])[0]);
     check(!/starts\s*:\s*0x0\b/.test(r.stdout), 'symlookup: never reports a function starting at 0x0',
       /starts\s*:\s*0x0\b/.test(r.stdout) ? 'reported starts: 0x0' : '');
+  }
+
+  // 1b. The same two claims, asked at an address that is *mapped*.
+  //
+  // `0x10` above is unmapped, and `symlookup` refuses an unmapped address before
+  // it consults the symbol table — so those two checks pass no matter what the
+  // table is filtered to. Removing the `defined && addr !== 0n` guard from the
+  // lookup (the mutation `test/mutation-check.mjs` calls "symlookup matches
+  // imported symbols") changed nothing they could see, and the harness correctly
+  // reported it as inconclusive rather than as a pass.
+  //
+  // The image base is mapped and sits below every defined symbol, which is
+  // exactly the gap where a zero-address entry would be picked up. With the
+  // guard removed, `0x100000000` resolves to a function `starts: 0x0` of roughly
+  // four billion bytes; with it in place, it resolves to nothing. That difference
+  // is the whole claim, and this is the address that can see it.
+  if (b.facts.baseAddr !== null && b.facts.firstAddr !== null && b.facts.baseAddr < b.facts.firstAddr) {
+    const env2 = { MACHO_EXPLORER_BINARY: b.path };
+    const mapped = run('symlookup', ['0x' + b.facts.baseAddr.toString(16)], { env: env2 });
+    check(!/function\s*:/m.test(mapped.stdout),
+      'symlookup: a mapped address below every defined symbol is not attributed to a function',
+      (mapped.stdout.match(/function.*/) || [''])[0]);
+    check(!/starts\s*:\s*0x0\b/.test(mapped.stdout),
+      'symlookup: a mapped address below every defined symbol never reports a function starting at 0x0',
+      /starts\s*:\s*0x0\b/.test(mapped.stdout) ? 'reported starts: 0x0' : '');
   }
 
   // 2. Round trip: an address from the table must resolve at offset 0.
