@@ -39,8 +39,12 @@
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
+
+// A bare Windows path is not a valid `import()` specifier — it parses as a URL with
+// an unsupported `d:` scheme. One helper so both dynamic imports below agree.
+const imp = (...parts) => import(pathToFileURL(join(...parts)).href);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -314,7 +318,7 @@ console.log('fingerprint --sarif');
  * will throw in their build rather than in CI.
  */
 {
-  const { auditSarif, fingerprintSarif } = await import(join(ROOT, 'src', 'sarif.mjs'));
+  const { auditSarif, fingerprintSarif } = await imp(ROOT, 'src', 'sarif.mjs');
 
   const emptyAudit = auditSarif({ path: 'x', slices: [], containerAbnormalities: [], counts: { errors: 0, warnings: 0 } }, { path: 'x' });
   const r1 = isSarif(emptyAudit, 'auditSarif(empty)');
@@ -384,7 +388,7 @@ console.log('fingerprint --sarif');
  * `kind`, so it cannot drift from the code that produces the finding.
  */
 {
-  const { auditSarif } = await import(join(ROOT, 'src', 'sarif.mjs'));
+  const { auditSarif } = await imp(ROOT, 'src', 'sarif.mjs');
   const mk = (kind) =>
     auditSarif(
       { path: 'x', slices: [{ arch: 'arm64', abnormalities: [{ severity: 'warning', kind, detail: 'd' }] }], containerAbnormalities: [], counts: { errors: 0, warnings: 1 } },

@@ -47,8 +47,13 @@
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
+
+// A bare Windows path is not a valid `import()` specifier — it parses as a URL with
+// an unsupported `d:` scheme, so this threw ERR_UNSUPPORTED_ESM_URL_SCHEME there
+// while working on POSIX.
+const imp = (...parts) => import(pathToFileURL(join(...parts)).href);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -383,7 +388,7 @@ for (const [name, schema] of Object.entries(generated)) {
   // Every code the MCP layer declares must be in the enum. Two lists that are
   // maintained separately are two lists that drift, and the drift shows up as a
   // consumer's validator rejecting a valid response from this package.
-  const { REASON_CODES } = await import(join(ROOT, 'src', 'mcp-tools.mjs'));
+  const { REASON_CODES } = await imp(ROOT, 'src', 'mcp-tools.mjs');
   for (const code of REASON_CODES) {
     ok(codes.includes(code), `the envelope enum includes "${code}", which the MCP layer can emit`);
   }

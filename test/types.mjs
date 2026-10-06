@@ -1,8 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+// `import()` needs a URL on Windows: a bare `C:\...` path is parsed as a URL with
+// an unsupported `d:` scheme and throws ERR_UNSUPPORTED_ESM_URL_SCHEME. On POSIX a
+// bare path happens to work, which is what hid this. One helper so every dynamic
+// import in this file agrees.
+const imp = (rel) => import(pathToFileURL(path.resolve(rel)).href);
 
 const dts = fs.readFileSync("src/api.d.ts", "utf8");
-const api = await import(path.resolve("src/api.mjs"));
+const api = await imp("src/api.mjs");
 
 let fail = 0;
 const ok = (m) => console.log("  PASS  " + m);
@@ -57,7 +64,7 @@ for (const [name, runtime, declared] of checks) {
 // `Thin` is the shape `parseThin` hands every other function, so it drifts the
 // same way `describe` does. Asserted against a real parsed header rather than a
 // fixture, because the fields below are header facts that no fixture pins.
-const { parseThin } = await import(path.resolve("src/macho.mjs"));
+const { parseThin } = await imp("src/macho.mjs");
 const opener = api.withFile("test/fixtures/populated.macho", (f) => parseThin(f, 0));
 let thinBlock = dts.slice(dts.indexOf("export interface Thin {"));
 thinBlock = thinBlock.slice(0, thinBlock.indexOf("\n}"));
@@ -89,7 +96,7 @@ if (!fs.existsSync(schemaPath)) {
   bad("schema/envelope.schema.json is missing — the published contract is undefined");
 } else {
   const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
-  const { SCHEMA_VERSION } = await import(path.resolve("src/output.mjs"));
+  const { SCHEMA_VERSION } = await imp("src/output.mjs");
   const props = schema.properties ?? {};
   const declaredKeys = new Set(Object.keys(props));
 

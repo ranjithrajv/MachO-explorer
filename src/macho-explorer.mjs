@@ -39,7 +39,7 @@
  *   3  could not do the job (unreadable file, unparseable Mach-O)
  */
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -130,7 +130,12 @@ if (!SUBCOMMANDS.includes(subcommand)) {
 // Dispatch to subcommand by modifying process.argv and dynamically importing
 const toolPath = path.resolve(__dirname, `${subcommand}.mjs`);
 process.argv = [process.argv[0], toolPath, ...subcommandArgs];
-await import(toolPath);
+// `pathToFileURL`, not the bare path: `import()` accepts a bare absolute path on
+// POSIX only by accident, and on Windows `D:\...\describe.mjs` is parsed as a URL
+// with an unsupported `d:` scheme, so every subcommand failed to load with
+// ERR_UNSUPPORTED_ESM_URL_SCHEME. A file URL is the one specifier form that means
+// the same thing on every platform this package claims to run on.
+await import(pathToFileURL(toolPath).href);
 
 /** Plain Levenshtein, no early exit. Inputs are a handful of characters. */
 function levenshtein(a, b) {
