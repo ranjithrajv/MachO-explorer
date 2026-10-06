@@ -3648,7 +3648,7 @@ function readerError(path) {
   // actionable message instead of the generic "not a Mach-O binary".
   // This fires on any path (file or directory) whose extension matches.
   const lower = path.toLowerCase();
-  const container = APPLE_CONTAINERS.find((c) => lower.endsWith(c.ext));
+  const container = APPLE_CONTAINERS.find((c) => lower.endsWith(c.ext.toLowerCase()));
   if (container) {
     const action = container.containsMachO
       ? `Extract the Mach-O executable and pass that file to this tool.`
