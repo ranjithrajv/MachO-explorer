@@ -70,17 +70,28 @@ export const REASON_CODES = [
 ];
 
 /**
- * The one import this file has, and it is here for a specific reason.
+ * The imports this file has, and why each is here.
  *
  * Everything else here is deliberately self-contained — the reason codes, the
  * validator, the schemas — because the MCP server is what an agent loads first and
- * a module graph it has to resolve is a module graph that can fail to load. But
- * `SCHEMA_VERSION` is the exception: a *version* is only a version if there is
- * exactly one of it. Restating the literal here would leave two constants free to
- * drift, and the CLI answering "1.0" while the server says "1.1" is a bug that
- * presents as a successful call and would be found by nobody.
+ * a module graph it has to resolve is a module graph that can fail to load. The three
+ * exceptions are all single-source values rather than logic:
+ *
+ *   - `SCHEMA_VERSION`: a *version* is only a version if there is exactly one of it.
+ *     Restating the literal here would leave two constants free to drift, and the CLI
+ *     answering "1.0" while the server says "1.1" is a bug that presents as a
+ *     successful call and would be found by nobody.
+ *   - `NOT_READ` and the container table: the same argument as the version, for the
+ *     two things that must read identically across every door. An agent told by one
+ *     door that `.dmg` is acceptable and by another that it is not will pick the
+ *     wrong one.
+ *
+ * Each comes from a module with no imports of its own, so reaching them here costs a
+ * leaf rather than `api.mjs` and its graph. See `notread.mjs` and `container.mjs`.
  */
 import { SCHEMA_VERSION } from './output.mjs';
+import { NOT_READ } from './notread.mjs';
+import { ACCEPTED, containerMessage } from './container.mjs';
 
 /* ------------------------------------------------------------------ *
  * schemas
@@ -136,6 +147,7 @@ const BINARY = {
   minLength: 1,
   description:
     'Absolute path to a Mach-O file, or to an application bundle (the executable inside is found automatically). ' +
+    `Accepted: ${ACCEPTED.join('; ')}. ` +
     'Required: unlike the CLI, there is no fallback binary, because an agent asking to describe "nothing" should be told to pass a path.',
 };
 
@@ -305,9 +317,34 @@ function binaryOf(args) {
     return {
       error: {
         errors: ['bad-arguments'],
-        messages: ['no binary given. Pass `binary`: an absolute path to a Mach-O file or an application bundle. Set $MACHO_EXPLORER_BINARY or $MACHO_EXPLORER_APP to avoid repeating it.'],
+        messages: [
+          `no binary given. Pass \`binary\`: an absolute path to a Mach-O file or an application bundle. ` +
+          `Accepted: ${ACCEPTED.join('; ')}. ` +
+          'Set $MACHO_EXPLORER_BINARY or $MACHO_EXPLORER_APP to avoid repeating it.',
+        ],
       },
     };
+  }
+
+  // A container gets its own answer here rather than being passed through to the
+  // reader. Two reasons, and the second is the one that matters.
+  //
+  // The first is that this layer does not resolve a bundle to the executable inside
+  // it, so a `.app` would arrive at `describe` as a directory and be reported as
+  // unreadable — true of this door, and misleading about the file. The second is
+  // that an agent asked to describe an `.ipa` is very often holding a path it
+  // intends to extract, and the useful answer is the extraction, not "not a Mach-O".
+  //
+  // `unknown-encoding` rather than `bad-arguments`: the file is readable, it is
+  // simply one layer of packaging above what this reader parses. Collapsing the two
+  // would tell an agent its path was malformed, which is the wrong thing for it to
+  // retry.
+  const container = containerMessage(b);
+  if (container) {
+    // Prefixed with the path here rather than inside `containerMessage`, for the same
+    // reason the CLI does it that way: the envelope already carries `binary`, and a
+    // message that repeated it would print the path twice.
+    return { error: { errors: ['unknown-encoding'], messages: [`${b}: ${container}`] } };
   }
   return { binary: b };
 }
@@ -320,7 +357,22 @@ async function guard(tool, binary, fn) {
     // whole point of a version is that there is one, and a second literal here would
     // be free to drift from the one the CLIs emit — which is precisely the failure
     // the field exists to prevent.
-    return { schemaVersion: SCHEMA_VERSION, tool, ok: errors.length === 0, binary, errors, notes, data };
+    //
+    // `notRead` for the same reason, and by the same route: the CLI door injects it
+    // in `emitJSON`, and an agent that got it from one door and not the other would
+    // be told the answer was complete. One contract, two doors — which is the whole
+    // claim the MCP server exists to keep true.
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      tool,
+      ok: errors.length === 0,
+      binary,
+      errors,
+      notes,
+      data: data === null || typeof data !== 'object' || Array.isArray(data)
+        ? data
+        : { notRead: NOT_READ, ...data },
+    };
   } catch (e) {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -803,7 +855,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('describe', b.binary, async () => {
         const { describe } = await import('./api.mjs');
         let data = describe(b.binary);
@@ -859,7 +911,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('overview', b.binary, async () => {
         const { overview } = await import('./api.mjs');
         const r = overview(b.binary, {
@@ -912,7 +964,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('sym', b.binary, async () => {
         const { searchSymbols } = await import('./api.mjs');
         const r = searchSymbols(b.binary, args.pattern, {
@@ -950,7 +1002,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('symlookup', b.binary, async () => {
         const { lookupAddress } = await import('./api.mjs');
         const queries = args.addresses.map((a) => lookupAddress(b.binary, parseAddress(a), { arch: args.arch }));
@@ -988,7 +1040,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('starts', b.binary, async () => {
         const { listFunctionStarts } = await import('./api.mjs');
         const r = listFunctionStarts(b.binary, { arch: args.arch, symbols: args.symbols === true, max: args.max ?? 0 });
@@ -1034,7 +1086,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       if (args.list_targets === undefined && args.target === undefined) {
         throw Object.assign(
           new Error('give either `target` (to find its callers) or `list_targets: true` (to list what the binary calls). Both omitted means neither question was asked.'),
@@ -1123,7 +1175,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       // `literal` is required for the search and meaningless for the listing, so
       // the requirement is conditional rather than declared in the schema. A
       // required field that one mode ignores is a schema that lies about itself.
@@ -1208,7 +1260,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('mapliteral', b.binary, async () => {
         const { mapLiteral } = await import('./api.mjs');
         const r = mapLiteral(b.binary, args.literal, {
@@ -1261,7 +1313,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('a2o', b.binary, async () => {
         const { addressToOffset } = await import('./api.mjs');
         const queries = args.addresses.map((a) => addressToOffset(b.binary, parseAddress(a), { arch: args.arch }));
@@ -1312,7 +1364,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('o2a', b.binary, async () => {
         const { offsetToAddress } = await import('./api.mjs');
         const r = offsetToAddress(b.binary, args.offsets.map((o) => BigInt(o)), { arch: args.arch });
@@ -1360,7 +1412,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('dump', b.binary, async () => {
         const { dumpBytes } = await import('./api.mjs');
         const r = dumpBytes(b.binary, parseAddress(args.address), { arch: args.arch, length: args.length ?? 64 });
@@ -1410,7 +1462,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       // `supportedArch` is the decoder table's own predicate rather than a
       // restatement of it. An architecture this server cannot decode is answered
       // *before* the file is read, so the caller is told "no decoder for that
@@ -1528,7 +1580,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('audit', b.binary, async () => {
         const { audit } = await import('./api.mjs');
         const r = audit(b.binary, { strict: args.strict === true, arch: args.arch });
@@ -1570,7 +1622,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       return guard('fingerprint', b.binary, async () => {
         const { fingerprint, compareFingerprints } = await import('./api.mjs');
         if (!args.other) {
@@ -1621,7 +1673,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       if (!args.other) {
         throw Object.assign(new Error('other: required — a diff needs two binaries. See macho-fingerprint for a one-file lookup.'), { code: 'bad-arguments' });
       }
@@ -1674,7 +1726,7 @@ export const TOOLS = [
     outputSchema: ENVELOPE,
     async run(args) {
       const b = binaryOf(args);
-      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: 'bad-arguments' });
+      if (b.error) throw Object.assign(new Error(b.error.messages[0]), { code: b.error.errors[0] });
       if (!Array.isArray(args.assertions) || args.assertions.length === 0) {
         throw Object.assign(new Error('assertions: at least one is required — a policy with no claims is true of everything and gates nothing'), { code: 'bad-arguments' });
       }

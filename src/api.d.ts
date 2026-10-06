@@ -105,6 +105,96 @@ export declare function platformName(n: number | null): string | null;
 export declare function filetypeName(n: number | null): string | null;
 
 /**
+ * What this package does not parse, as data.
+ *
+ * Carried on every answer, so an absent field is evidence rather than silence. Held
+ * in one place across all three doors — see `src/notread.mjs`.
+ */
+export declare const NOT_READ: readonly string[];
+
+/**
+ * What this package reads, as data.
+ *
+ * Appended to the message for a file that is Apple packaging rather than a binary,
+ * so the refusal answers "then what do you take?" — see `src/container.mjs`.
+ */
+export declare const ACCEPTED: readonly string[];
+
+/**
+ * The Apple container a path names (`.ipa`, `.dmg`, `.pkg`, …), or null.
+ *
+ * `bundleExt` is the configured bundle extension when the caller knows it; passed
+ * rather than imported so the table cannot contradict a non-default layout.
+ */
+export declare function containerFor(
+  path: string,
+  bundleExt?: string,
+): { ext: string; hint: string; containsMachO: boolean; isBundle?: boolean } | null;
+
+/**
+ * The user-facing message for a packaging file, or null when the path names nothing
+ * this module recognises.
+ */
+export declare function containerMessage(path: string, bundleExt?: string): string | null;
+
+/**
+ * Parse the text of a `.tbd` stub.
+ *
+ * @throws if any line is unrecognised, naming file and line: a stub whose exports
+ *   are half-parsed must fail rather than return a plausible short list.
+ */
+export declare function parseTbd(text: string, source?: string): object;
+
+/**
+ * Read and parse a `.tbd` stub from disk.
+ *
+ * @throws with `code: 'io'` when the file cannot be read.
+ */
+export declare function readTbd(file: string): object;
+
+/**
+ * Find an exported name in a parsed stub.
+ *
+ * @param mode `'exact'` (default) or `'substring'`.
+ */
+export declare function findSymbol(
+  stub: object,
+  name: string,
+  opts?: { mode?: 'exact' | 'substring' },
+): object;
+
+/**
+ * Direct call/jmp xrefs across a set of binaries, keyed by an offset into `__TEXT`.
+ *
+ * A vaddr is meaningless across files — each maps `__TEXT` at its own base — so the
+ * corpus query is an offset, and every file is asked at its own base plus that
+ * offset. `queryMode: 'text-relative'` is in the result rather than implied.
+ */
+export declare function findCallsIn(
+  roots: string | string[],
+  offset: bigint | number | string,
+  opts?: {
+    arch?: string;
+    includeData?: boolean;
+    max?: number;
+    perFile?: number;
+    maxFiles?: number;
+    maxDepth?: number;
+  },
+): object;
+
+/**
+ * Find an exported name across every stub under an SDK root.
+ *
+ * @param maxFiles `0` means no cap.
+ */
+export declare function findInSdk(
+  root: string,
+  name: string,
+  opts?: { mode?: 'exact' | 'substring'; maxFiles?: number },
+): object;
+
+/**
  * Unpack the `xxxx.yy.zz` nibble encoding used by `minos` and `sdk`.
  *
  * The groups are fixed-width nibbles rather than a decimal fraction, so

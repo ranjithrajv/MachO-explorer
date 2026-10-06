@@ -1,9 +1,8 @@
 # Where this reader is the right tool
 
-MachO-explorer is a **reader**, and the honest competitive picture is in
-[COMPETITIVE-LANDSCAPE.md](../COMPETITIVE-LANDSCAPE.md): `ipsw` is a superset,
-Ghidra is a better disassembler, LIEF is a better general parser. So the useful
-question is not "is this the most capable tool" — it is "which jobs is it
+MachO-explorer is a **reader**, and the honest competitive picture is this: `ipsw`
+is a superset, Ghidra is a better disassembler, LIEF is a better general parser. So
+the useful question is not "is this the most capable tool" — it is "which jobs is it
 uniquely the right shape for". There are five, and each is a job the obvious
 alternatives do not do at all.
 

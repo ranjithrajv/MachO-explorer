@@ -44,6 +44,17 @@ const OUT = path.join(HERE, 'macho.browser.mjs');
 /** The modules, in dependency order: shims, then reader, then the API over it. */
 const MODULES = [
   { file: 'demo/runtime.mjs', label: 'the host shim (Buffer, node:fs, node:crypto, node:path)' },
+  // Before `api.mjs`, which imports it — the bundler concatenates in this order, so a
+  // module has to precede the one that binds its names. Missing it produced a bundle
+  // that loaded and then threw `ReferenceError: NOT_READ is not defined` on first use,
+  // which is the worst shape of failure: it passes a syntax check and fails silently
+  // until an answer is actually requested.
+  { file: 'src/notread.mjs', label: 'the omissions list every answer carries' },
+  // Same rule, same reason: `api.mjs` binds `containerMessage` from this, and a
+  // bundle without it still *loads* — the missing name only surfaces when someone
+  // hands the reader an `.ipa` or a `.dmg`, which is exactly the moment the message
+  // matters. A check that only asks "does it import?" cannot see that.
+  { file: 'src/container.mjs', label: 'what a user hands you versus what the reader parses' },
   { file: 'src/macho.mjs', label: 'the reader — fat headers, load commands, symbols, mapping' },
   { file: 'src/instruction.mjs', label: 'instruction lengths and direct branch edges' },
   { file: 'src/api.mjs', label: 'the supported programmatic interface' },

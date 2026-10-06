@@ -60,19 +60,27 @@
  * site *worth disassembling*, not a proven call-graph edge.
  */
 import { requireBinary } from './target.mjs';
-import { findCalls, listCallTargets } from './api.mjs';
+import { findCalls, findCallsIn, listCallTargets } from './api.mjs';
 import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isQuiet, isVerbose, colorEnabled, colorize, quietLog, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
 const HELP = [
   'usage: macho-explorer findcall <hex-vaddr> [binary|bundle] [--json] [--arch=<name>] [-b <binary>] [--include-data]',
+  '       macho-explorer findcall --in <dir> <text-offset> [--json] [--arch=<name>] [--per-file=<n>]',
   '       macho-explorer findcall --list [binary|bundle] [max] [--json] [--include-data]',
   '',
   '  direct call/jmp sites targeting an address, or with --list the distinct',
   '  targets a binary calls, most-called first.',
   '',
   'options:',
+  '  --in=<dir>         search every Mach-O under a directory. The query becomes an',
+  '                     OFFSET INTO __TEXT, not a vaddr: every file maps __TEXT at',
+  '                     its own base, so one address means different functions in',
+  '                     different files. Each file is asked at its own base + offset,',
+  '                     and the answer reports which base it used.',
+  '  --per-file=<n>     call sites listed per file (default 50; 0 for counts only)',
+  '  --max-files=<n>    stop after n files; the answer is marked truncated',
   '  --list             list distinct call targets instead of querying one',
   '  --include-data     widen the scan from code sections to every section,',
   '                     accepting false positives from data that decodes as a call',
@@ -91,12 +99,18 @@ if (flags.has('help') || flags.has('h')) {
   process.exit(EXIT.ok);
 }
 
-rejectUnknownFlags(new Set(['list', 'include-data', 'arch', 'json']), flags, HELP);
+rejectUnknownFlags(new Set(['list', 'include-data', 'arch', 'json', 'in', 'per-file', 'max-files']), flags, HELP);
 
 const listMode = flags.has('list');
 const json = flags.has('json');
 const includeData = flags.has('include-data');
 const arch = opts.arch;
+const corpusRoot = opts.in;
+const corpusMode = typeof corpusRoot === 'string' && corpusRoot !== '';
+const perFile = opts['per-file'] === undefined ? 50 : Number(opts['per-file']);
+const maxFiles = opts['max-files'] === undefined ? 20000 : Number(opts['max-files']);
+if (!Number.isFinite(perFile) || perFile < 0) usage(['--per-file takes a non-negative integer', ...HELP.slice(0, 2)]);
+if (!Number.isFinite(maxFiles) || maxFiles <= 0) usage(['--max-files takes a positive integer', ...HELP.slice(0, 2)]);
 
 let target = null;
 let maxList = 40;
@@ -109,6 +123,50 @@ if (listMode) {
 } else {
   if (!positional[0] || !/^0x/i.test(positional[0])) usage(HELP.slice(0, 2));
   target = BigInt(positional[0]);
+}
+
+// Corpus mode is answered before `requireBinary`, because `--in` names a directory
+// and there is deliberately no single binary to resolve. Asking for one here would
+// fall through to the system fallback and scan a file the caller never named — the
+// exact mistake `binaryAt()` exists to prevent.
+if (corpusMode) {
+  if (listMode) usage(['--list reads one binary; --in searches many. Use one or the other.', ...HELP.slice(0, 2)]);
+  const r = findCallsIn([corpusRoot], target, { arch, includeData, perFile, maxFiles });
+  const notes = [];
+  if (r.totals.skipped) notes.push(`${r.totals.skipped} file(s) in the tree were not Mach-O and were skipped`);
+  if (r.truncated) notes.push(`stopped after ${maxFiles} file(s) or the depth limit — the answer covers only what was reached`);
+
+  if (json) {
+    emitJSON({
+      tool: 'findcall',
+      binary: corpusRoot,
+      ok: r.totals.sites > 0,
+      errors: r.totals.sites > 0 ? [] : ['no-call-sites'],
+      notes,
+      data: r,
+    }, r.totals.sites > 0 ? EXIT.ok : EXIT.empty);
+  }
+
+  quietLog(flags, `\nfindcall --in ${corpusRoot}  —  __TEXT offset 0x${target.toString(16)}`);
+  verboseLog(flags, `queryMode=text-relative (an offset into __TEXT, not a vaddr)`);
+  if (r.truncated) quietLog(flags, `\n  stopped early: the answer covers only what was reached`);
+  console.log();
+  for (const f of r.files) {
+    if (!f.ok) { console.log(`  ${f.path}  —  ${f.error}: ${f.message}`); continue; }
+    if (f.count === 0) continue;
+    const bases = f.bases.map((b) => `${b.arch} @ ${b.target}`).join(', ');
+    console.log(`  ${f.path}  —  ${f.count} site(s)   ${bases}`);
+    for (const s of f.sites) {
+      console.log(`      0x${s.addr.toString(16).padStart(12, '0')}  ${s.kind} [${s.arch}] ${s.section}`);
+    }
+    if (f.sitesTruncated) console.log(`      ...and ${f.count - f.sites.length} more (raise --per-file)`);
+  }
+  console.log(
+    `\n${r.totals.sites} call site(s) across ${r.totals.matchedFiles} of ${r.totals.looked} Mach-O ` +
+    `(${r.totals.skipped} non-Mach-O skipped, ${r.totals.unreadable} unreadable)`,
+  );
+  console.log('the query was an offset into __TEXT; each file was asked at its own __TEXT base');
+  process.exit(r.totals.sites > 0 ? EXIT.ok : EXIT.empty);
 }
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[listMode ? 0 : 1] });

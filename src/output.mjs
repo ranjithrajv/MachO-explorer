@@ -43,6 +43,7 @@
  */
 
 import fs from 'node:fs';
+import { NOT_READ } from './notread.mjs';
 
 /**
  * Envelope keys every tool emits, so consumers can rely on the shape.
@@ -354,10 +355,44 @@ export function emitJSON({ tool, binary, ok = true, data = null, errors = [], me
       // keeps having to be careful about.
       ...(msgs.length ? { messages: msgs } : {}),
       ...(nts.length ? { notes: nts } : {}),
-      data,
+      data: withNotRead(data),
     }, indent) + '\n',
   );
   process.exit(code);
+}
+
+/**
+ * Add `notRead` to a tool's payload, so every answer carries the omissions.
+ *
+ * ## Why this is here rather than in each tool
+ *
+ * `overview` carried `notRead` on its own and every other tool left it out, which
+ * made the strongest claim in the package true of exactly one door. A caller that
+ * learned to read `data.notRead` from `overview` and then called `describe` found
+ * the field absent — and an absent field is indistinguishable from a tool that
+ * read everything, which is the confusion `notRead` exists to prevent.
+ *
+ * Injecting it here means the list cannot be forgotten by a new tool: there is no
+ * path that emits a payload without passing through this function. That is the same
+ * argument as the envelope itself, applied to the one field that says the envelope
+ * is not exhaustive.
+ *
+ * ## Why only when there is a payload
+ *
+ * A `data: null` is an error or an empty result. There is no inventory for the
+ * field to qualify, so naming the omissions there would attach a caveat to an
+ * absence rather than to a claim. `data` therefore carries `notRead` whenever it
+ * carries anything at all.
+ *
+ * ## Why the caller's own value wins
+ *
+ * Spread after, not before: a tool that sets `notRead` itself has said something
+ * more specific about itself, and this must not overwrite it. `overview` does, and
+ * its list is the same one.
+ */
+function withNotRead(data) {
+  if (data === null || typeof data !== 'object' || Array.isArray(data)) return data;
+  return { notRead: NOT_READ, ...data };
 }
 
 /**

@@ -59,6 +59,7 @@ import path from 'node:path';
 import { isMachOFile } from './macho.mjs';
 import { bundleLayout, BUNDLE_EXT, isBundle, fallbackTarget } from './bundle.mjs';
 import { isIpa, resolveIpa, cleanupIpa } from './ipa.mjs';
+import { containerMessage } from './container.mjs';
 
 /** Temp files created by .ipa extraction, cleaned up on exit. */
 const ipaTempFiles = new Set();
@@ -238,6 +239,33 @@ export function binaryAt(arg) {
 export function requireBinary(opts = {}) {
   const bin = resolveBinary(opts);
   if (bin) return bin;
+
+  // Resolution failed. Before the generic message, ask whether the caller named
+  // something this package recognises as packaging rather than a binary — an `.ipa`
+  // whose `Payload/` held no executable, a bundle with no `Contents/MacOS`, a
+  // `.dmg` passed where a file was expected.
+  //
+  // That distinction is worth the few lines because the two messages ask opposite
+  // things of the reader. "No binary found" says *look for a different file*; a
+  // container message says *this file is fine, it is one layer up*. A user who
+  // downloaded an app and got the first one would reasonably conclude the download
+  // was broken, and would go looking for something that was never the problem.
+  //
+  // The bundle extension is passed rather than imported inside `container.mjs`, which
+  // is why it is available here: this is the one caller that already knows the
+  // configured convention, so a deployment with a non-default layout cannot be told
+  // it holds a `.app`.
+  for (const candidate of [opts.argv, process.env.MACHO_EXPLORER_BINARY, process.env.MACHO_EXPLORER_APP]) {
+    const msg = containerMessage(candidate, BUNDLE_EXT());
+    if (msg) {
+      // The path goes here rather than inside the message, because the CLIs print it
+      // as a prefix everywhere else and a message that carried its own would double
+      // it.
+      console.error(`${candidate}: ${msg}`);
+      process.exit(3);
+    }
+  }
+
   const where = [
     opts.argv ? `argument: ${opts.argv}` : null,
     process.env.MACHO_EXPLORER_BINARY

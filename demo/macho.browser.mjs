@@ -11,6 +11,8 @@
  *
  * Sources, in order:
  *   - demo/runtime.mjs — the host shim (Buffer, node:fs, node:crypto, node:path)
+ *   - src/notread.mjs — the omissions list every answer carries
+ *   - src/container.mjs — what a user hands you versus what the reader parses
  *   - src/macho.mjs — the reader — fat headers, load commands, symbols, mapping
  *   - src/instruction.mjs — instruction lengths and direct branch edges
  *   - src/api.mjs — the supported programmatic interface
@@ -361,6 +363,200 @@ const pathModule = {
   resolve: (...parts) => parts.filter((p) => p !== '').join('/').replace(/\/+/g, '/'),
 };
 
+/* ================================================================== *
+ * src/notread.mjs
+ * ================================================================== */
+
+/**
+ * notread.mjs — what this package does not parse, as data.
+ *
+ * ## Why this is its own file with no imports
+ *
+ * Three doors emit an answer: the CLI (`output.mjs`), the library (`api.mjs`), and
+ * the MCP server (`mcp-tools.mjs`). All three must carry the same list, or an agent
+ * that learned to read it from one door would be told by another that an answer was
+ * complete when it was not.
+ *
+ * The obvious way to share one constant is for the other two to import it from
+ * `api.mjs`. That is wrong here, and specifically so: `src/mcp-tools.mjs` states
+ * that everything in that layer is deliberately self-contained, because the MCP
+ * server is what an agent loads first and every module it has to resolve is one
+ * more thing that can fail to load before a single tool is reachable.
+ * `SCHEMA_VERSION` is the documented single exception — one literal, because a
+ * *version* is only a version if there is exactly one of it.
+ *
+ * So the list lives here instead: a module with no imports at all, which the MCP
+ * door can reach without pulling `api.mjs` and its transitive graph behind it. That
+ * is the same reasoning as `SCHEMA_VERSION`, generalised — the things that must be
+ * identical across doors are the ones that live where no door can disagree.
+ *
+ * ## The rule this list is held to
+ *
+ * It is kept in step with `README.md`'s "What it will not do" by hand, and asserted
+ * against it by `test/smoke.mjs`. A gap list that drifts from the refusal list is
+ * worse than none, because it is a gap list that is confidently wrong: it says
+ * precisely what was not looked at, and a consumer reads the absence of a warning as
+ * evidence there was nothing to warn about.
+ */
+
+const NOT_READ = [
+  'code signature, entitlements or designated requirements',
+  'the export trie and chained fixups',
+  'Objective-C and Swift metadata',
+  'dSYM and DWARF',
+  'FAT32 containers',
+  'disassembly, and the mnemonics behind an instruction length',
+];
+/* ================================================================== *
+ * src/container.mjs
+ * ================================================================== */
+
+/**
+ * container.mjs — what a user actually hands you, and what this package reads.
+ *
+ * ## Why this is its own file with no imports
+ *
+ * The same sentence has to reach three doors, and the reason codes have to agree:
+ *
+ *   - the library and the CLIs, through `api.mjs`'s `readerError`
+ *   - the CLIs' own resolution failure, through `target.mjs`'s `requireBinary`
+ *   - the MCP server, through `mcp-tools.mjs`
+ *
+ * `mcp-tools.mjs` is deliberately self-contained — it is what an agent loads first,
+ * and every module it has to resolve is one more thing that can fail to load before
+ * a tool is reachable. So the table cannot live in `api.mjs`, which is exactly the
+ * argument `notread.mjs` makes for the same reason. This file is that argument again:
+ * a module with no imports at all, which any door can reach without pulling a graph
+ * behind it.
+ *
+ * It also must not import `bundle.mjs`, which is where the `.app` convention comes
+ * from. That convention is configurable, and a message that named a hardcoded
+ * `.app`/`Contents/MacOS` would contradict a deployment that changed it. The bundle
+ * is therefore passed in by the one caller that already knows it (`target.mjs`), and
+ * everything else matches on extensions alone.
+ *
+ * ## What the message is for
+ *
+ * A person who downloads an app has a `.ipa` or a `.dmg`, not a Mach-O. Told "not a
+ * Mach-O binary" about either, the reasonable reading is that the file is damaged or
+ * the wrong file was picked. Neither is likely: the file is fine, it is simply one
+ * layer of packaging above what this reader parses. So the message names the
+ * packaging, says what to do about it, and lists what *is* accepted — because the
+ * question behind "not a Mach-O binary" is almost always "then what do you take?",
+ * and an error that does not answer it leaves the user to guess from a filename.
+ *
+ * The accepted list is stated as prose rather than as extensions, and deliberately
+ * says "any filename": the overwhelmingly common case is a binary with no extension
+ * at all, and an error that listed only extensions would read as "mine is not one of
+ * those" about `/usr/libexec/something`.
+ */
+
+/**
+ * Apple ecosystem containers that wrap a Mach-O inside an archive, a disk image or a
+ * bundle. These are the files a user is most likely to have on disk and most likely
+ * to mistake for a binary.
+ *
+ * `containsMachO: false` marks the ones that hold no Mach-O to find — an asset
+ * catalog and a result bundle are Apple containers a person may well hand over, but
+ * extracting them does not produce a binary, and sending them down the same
+ * "extract it and try again" road would be advice that cannot work.
+ */
+const APPLE_CONTAINERS = [
+  { ext: '.ipa', hint: 'an iOS app archive — a ZIP holding Payload/<App>.app, which the CLIs extract for you', containsMachO: true },
+  { ext: '.dmg', hint: 'a disk image — mount it (`hdiutil attach`) and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.pkg', hint: 'an installer package — expand it (`pkgutil --expand`) and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.mpkg', hint: 'a multi-package installer — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.xip', hint: 'a compressed Xcode package — expand it (`xip -x`) and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.zip', hint: 'a ZIP archive — unzip it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.tar', hint: 'a tar archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.gz', hint: 'a gzip archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.bz2', hint: 'a bzip2 archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.xz', hint: 'an xz archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.ipsw', hint: 'an iOS firmware image — extract it and point this tool at the Mach-O inside', containsMachO: true },
+  { ext: '.xcarchive', hint: 'an Xcode archive — the Mach-O is under Products/ or the .app bundle inside', containsMachO: true },
+  { ext: '.dSYM', hint: 'a debug-symbol bundle — the Mach-O is under Contents/Resources/DWARF/', containsMachO: true },
+  { ext: '.simruntime', hint: 'a simulator runtime — the Mach-O files are under the platform library directories', containsMachO: true },
+  { ext: '.car', hint: 'a compiled asset catalog — it holds no Mach-O; extract the assets with `assetutil` instead', containsMachO: false },
+  { ext: '.xcresult', hint: 'an Xcode result bundle — it holds no Mach-O; read it with `xcrun xcresulttool` instead', containsMachO: false },
+];
+
+/**
+ * What this package will read, in the words a user needs to pick a file.
+ *
+ * A list rather than a sentence because the answers are not one sentence: a bundle
+ * and an `.ipa` are both accepted, and neither is accepted because of its extension
+ * — what is read is the executable inside.
+ *
+ * `.tbd` is listed with its own caveat because it is the one entry that is not a
+ * Mach-O at all: `tbd` reads it, and every other tool refuses it. A list that said
+ * only "a .tbd stub" would send a user to `describe`, which answers "not a Mach-O
+ * binary" — correctly, and confusingly, because the list above it said yes.
+ */
+const ACCEPTED = [
+  'a Mach-O binary, thin or universal (fat) — any filename, extension or none',
+  'an application bundle — the executable inside it is found for you',
+  'an .ipa archive — the executable inside Payload/ is extracted for you',
+  'a .tbd text stub — but only for `macho-explorer tbd`, which reads what it exports',
+];
+
+/** The accepted list as one indented block, for appending to a message. */
+function acceptedBlock(indent = '  ') {
+  return ACCEPTED.map((a) => `${indent}${a}`).join('\n');
+}
+
+/**
+ * The container a path names, or null.
+ *
+ * Matched on the lowercased path, because these extensions are conventionally
+ * capitalised on Apple platforms (`.dSYM`) and a case-sensitive match would miss
+ * exactly the ones a macOS user is most likely to have.
+ *
+ * @param {string} path
+ * @param {string} [bundleExt] the configured bundle extension, when the caller knows
+ *   it. Passed rather than imported so this module stays free of `bundle.mjs`; see
+ *   the header.
+ * @returns {object|null}
+ */
+function containerFor(path, bundleExt) {
+  if (typeof path !== 'string' || !path) return null;
+  const lower = path.toLowerCase();
+  if (bundleExt && lower.endsWith(bundleExt.toLowerCase())) {
+    return {
+      ext: bundleExt,
+      hint: 'an application bundle — a directory, not a file; the executable is inside it',
+      containsMachO: true,
+      isBundle: true,
+    };
+  }
+  const hit = APPLE_CONTAINERS.find((c) => lower.endsWith(c.ext.toLowerCase()));
+  return hit ? { ...hit } : null;
+}
+
+/**
+ * The message for a file that is packaging rather than a binary, or null when the
+ * path names nothing this module recognises.
+ *
+ * The reason code is `unknown-encoding` throughout, because the file *is* readable —
+ * it just is not what this reader parses. Reporting `io` would send a caller looking
+ * for a permissions problem with a file it can open perfectly well.
+ *
+ * @param {string} path
+ * @param {string} [bundleExt]
+ * @returns {string|null}
+ */
+function containerMessage(path, bundleExt) {
+  const c = containerFor(path, bundleExt);
+  if (!c) return null;
+  const action = c.containsMachO
+    ? c.isBundle
+      ? 'Point this tool at the bundle and it will find the executable inside, or pass that executable directly.'
+      : 'Extract the Mach-O executable and pass that file to this tool.'
+    : 'Nothing inside it is a Mach-O, so extracting it will not help.';
+  return (
+    `${path}: this is ${c.hint}. ${action}\n` +
+    `  accepted instead:\n${acceptedBlock('    ')}`
+  );
+}
 /* ================================================================== *
  * src/macho.mjs
  * ================================================================== */
@@ -3604,31 +3800,14 @@ function disassemble(path, { addr = null, arch = null, count = 32, bytes = 0 } =
  */
 
 
+// Text stubs are a different format in a different file, so they get their own
+// reader rather than a branch in the Mach-O one. What they share is the shape of
+// the answer: plain objects, nothing thrown for a negative answer, a thrown error
+// only when the file could not be read. See `stub.mjs`.
+
 /* ------------------------------------------------------------------ *
  * opening
  * ------------------------------------------------------------------ */
-
-/**
- * Known Apple ecosystem container formats that wrap a Mach-O inside an archive
- * or disk image. These are the files a user is most likely to have on disk and
- * most likely to mistake for a binary.
- */
-const APPLE_CONTAINERS = [
-  { ext: '.dmg',  hint: 'a disk image — mount it (or use `hdiutil attach`) and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.pkg',  hint: 'an installer package — extract it (or use `pkgutil --expand`) and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.mpkg', hint: 'a multi-package installer — extract it and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.zip',  hint: 'a ZIP archive — unzip it and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.tar',  hint: 'a tar archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.gz',   hint: 'a gzip archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.bz2',  hint: 'a bzip2 archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.xz',   hint: 'an xz archive — extract it and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.ipsw', hint: 'an iOS firmware image — extract it and point this tool at the Mach-O inside', containsMachO: true },
-  { ext: '.xcarchive', hint: 'an Xcode archive — the Mach-O is under Products/ or the .app bundle inside', containsMachO: true },
-  { ext: '.dSYM', hint: 'a debug-symbol bundle — the Mach-O is under Contents/Resources/DWARF/', containsMachO: true },
-  { ext: '.car',  hint: 'a compiled asset catalog — not a Mach-O; extract the assets with `assetutil` instead', containsMachO: false },
-  { ext: '.xcresult', hint: 'an Xcode result bundle — not a Mach-O; use `xcrun xcresulttool` to read it', containsMachO: false },
-  { ext: '.simruntime', hint: 'a simulator runtime — the Mach-O files are under the platform library directories', containsMachO: true },
-];
 
 /**
  * An error that names its reason code, so a caller does not have to read it.
@@ -3644,20 +3823,17 @@ const APPLE_CONTAINERS = [
  * @returns {Error & { code: string }}
  */
 function readerError(path) {
-  // Detect known Apple ecosystem container formats and give a specific,
-  // actionable message instead of the generic "not a Mach-O binary".
-  // This fires on any path (file or directory) whose extension matches.
-  const lower = path.toLowerCase();
-  const container = APPLE_CONTAINERS.find((c) => lower.endsWith(c.ext.toLowerCase()));
-  if (container) {
-    const action = container.containsMachO
-      ? `Extract the Mach-O executable and pass that file to this tool.`
-      : `This tool reads Mach-O binaries, not ${container.ext} files.`;
-    return Object.assign(
-      new Error(`${path}: this is ${container.hint}. ${action}`),
-      { code: 'unknown-encoding' },
-    );
-  }
+  // Known Apple ecosystem containers — an `.ipa`, a `.dmg`, a `.pkg` and the rest —
+  // get a specific, actionable message instead of the generic "not a Mach-O binary",
+  // and the message names what *is* accepted. Both halves matter: the first explains
+  // why the file was refused, the second answers the question the refusal raises.
+  //
+  // No bundle extension is passed. `withFile` is given a file, and `target.mjs`
+  // resolves a bundle to the executable inside before it gets here; a deployment
+  // with a non-default bundle layout therefore cannot produce a message that
+  // contradicts its own convention.
+  const container = containerMessage(path);
+  if (container) return Object.assign(new Error(container), { code: 'unknown-encoding' });
 
   // `statSync` rather than `existsSync` because the interesting case is a path
   // that is *there* and still unreadable — a directory, a dangling symlink, a
@@ -3887,15 +4063,12 @@ function describe(path) {
  * Kept in step with `README.md`'s "What it will not do" by hand, and asserted
  * against it in the suite — a gap list that drifts from the refusal list is
  * worse than none, because it is a gap list that is confidently wrong.
+ *
+ * Re-exported rather than declared: `notread.mjs` holds the single copy so the CLI
+ * door, this one and the MCP door cannot disagree, and so the MCP door can reach it
+ * without importing `api.mjs` — which that layer deliberately avoids. See that file
+ * for the argument.
  */
-const NOT_READ = [
-  'code signature, entitlements or designated requirements',
-  'the export trie and chained fixups',
-  'Objective-C and Swift metadata',
-  'dSYM and DWARF',
-  'FAT32 containers',
-  'disassembly, and the mnemonics behind an instruction length',
-];
 
 /**
  * The structural picture and, on request, two inventories — in one call.
@@ -4716,8 +4889,8 @@ function callEncoding(arch) {
  * their target in the instruction, so they cannot appear here. Every hit is a
  * site *worth disassembling*, not a proven call-graph edge.
  */
-function findCalls(path, target, { arch, includeData = false, max = 0 } = {}) {
-  const want = typeof target === 'bigint' ? target : BigInt(target);
+function findCalls(path, target, { arch, includeData = false, max = 0, __textRelative = false } = {}) {
+  const given = typeof target === 'bigint' ? target : BigInt(target);
   return withFile(path, (f) => {
     const hits = [];
     const slices = [];
@@ -4738,11 +4911,28 @@ function findCalls(path, target, { arch, includeData = false, max = 0 } = {}) {
       if (!enc) { unsupported.push(name); continue; }
 
       const pool = sectionPool(thin, includeData);
+      // The slice's `__TEXT` base. In corpus mode this is what the caller's offset is
+      // measured from, and it is reported so a resolved address can be read against
+      // the base it came from rather than in isolation.
+      //
+      // The *segment's* `vmaddr`, not `textSection().addr` — `__text` is the first
+      // thing after the header inside `__TEXT`, and those differ by the header size.
+      // A corpus offset has to be measured from the same origin in every file, and
+      // the segment is what the loader maps at a fixed address.
+      const textSeg = thin.segments?.find((g) => g.segname === '__TEXT') ?? null;
+      const textBase = textSeg ? textSeg.vmaddr : null;
+      // `__textRelative` rebases the caller's offset onto *this* slice, because a
+      // single number has to mean the same function in every file of a corpus. Each
+      // slice rebases independently, so a fat binary's two slices can have different
+      // answers for the same offset and both are reported.
+      const want = __textRelative && textBase !== null ? textBase + given : given;
       const record = {
         arch: name,
         encoding: enc,
         typed: !pool.widened,
         untypedFallback: pool.fallback,
+        textBase,
+        target: want,
         sections: [],
         scanned: 0,
         skipped: null,
@@ -4799,7 +4989,11 @@ function findCalls(path, target, { arch, includeData = false, max = 0 } = {}) {
 
     hits.sort(byAddr);
     return {
-      target: want,
+      target: given,
+      // What was actually asked, per slice. Equal to `target` outside corpus mode;
+      // in corpus mode each slice rebased the offset onto its own `__TEXT`, so there
+      // is no single answer to report and `slices[].target` is the honest place for it.
+      queryMode: __textRelative ? 'text-relative' : 'vaddr',
       hits: max > 0 ? hits.slice(0, max) : hits,
       count: hits.length,
       truncated: max > 0 && hits.length > max,
@@ -6144,6 +6338,143 @@ function searchSymbolsIn(roots, pattern, {
     },
     // Disclosed rather than silent: a walk that stopped early would otherwise look
     // identical to a tree that genuinely contained nothing else.
+    truncated,
+    note: truncated
+      ? `stopped after ${maxFiles} file(s) or depth ${maxDepth} — the answer covers only what was reached`
+      : null,
+  };
+}
+
+/**
+ * Direct call/jmp xrefs across a *set* of binaries, keyed by a portable address.
+ *
+ * ## Why the query is not a vaddr
+ *
+ * A virtual address is meaningless across files. Every slice maps `__TEXT` at its
+ * own base — `0x100000000` in one binary, `0x100000120` in another, `0x180000000`
+ * in a third — so asking "who calls `0x100085c30`" of a whole build tree asks each
+ * file a question about an address that file may not even map. Worse, it is not
+ * merely wrong, it is *quietly* wrong: a file that happens to map that address
+ * answers confidently about an unrelated function.
+ *
+ * So the corpus query is an **offset into `__TEXT`**, and every file is asked at
+ * `its own __TEXT base + that offset`. The alternative — silently switching what a
+ * vaddr means between one-binary and many-binary mode — is precisely the failure
+ * this package refuses elsewhere, so the change is declared rather than implied:
+ * `queryMode` is in the result, the text output says so, and
+ * `textRelative` carries the offset back.
+ *
+ * This is the portable form of the question. "Who calls the function that starts
+ * 0x85c30 into `__TEXT`?" survives a rebuild, a rebase and a universal-to-thin
+ * change, which a raw address does not.
+ *
+ * ## What it costs
+ *
+ * Two files whose `__TEXT` layout differs at that offset answer about different
+ * functions, and nothing here can know that — the format does not record what a
+ * build was built from. So each row reports the address it actually asked about,
+ * and a caller that cares should confirm the two binaries are the same program,
+ * which is what `fingerprint` is for.
+ *
+ * @param {string[]} roots files or directories to walk
+ * @param {bigint}   offset  bytes into `__TEXT`
+ * @param {object}   [opts]  as {@link findCalls}, plus `maxFiles`/`maxDepth`/`perFile`
+ * @returns {object} one row per file, sorted by path, with the same
+ *   `files`/`totals`/`skipped`/`unreadable` shape {@link searchSymbolsIn} uses, so a
+ *   corpus answer is one shape whichever corpus tool produced it
+ */
+function findCallsIn(roots, offset, {
+  arch, includeData = false, max = 0, perFile = 50,
+  maxFiles = 20000, maxDepth = CORPUS_MAX_DEPTH,
+} = {}) {
+  const rel = typeof offset === 'bigint' ? offset : BigInt(offset);
+  if (rel < 0n) throw new TypeError('findCallsIn: the __TEXT offset cannot be negative');
+  const list = Array.isArray(roots) ? roots : [roots];
+  if (list.length === 0) throw new TypeError('findCallsIn: at least one path is required');
+
+  const { files: walked, truncated } = walkCorpus(list, { maxFiles, maxDepth });
+  const files = [];
+  let skipped = 0;
+  let unreadable = 0;
+  let totalHits = 0;
+  let matchedFiles = 0;
+
+  for (const entry of walked) {
+    // A path the caller named that is not there is reported, not dropped — the same
+    // rule `searchSymbolsIn` follows, and for the same reason: a silently skipped
+    // path is indistinguishable from a tree that held nothing.
+    if (entry !== null && typeof entry === 'object' && entry.missing) {
+      unreadable++;
+      files.push({
+        path: entry.missing, ok: false, error: 'io', message: 'no such file or directory',
+        arch: null, base: null, vaddr: null, count: 0, sites: [],
+      });
+      continue;
+    }
+    if (!isMachOFile(entry)) { skipped++; continue; }
+
+    try {
+      // The base is per file and per slice, so it is resolved inside and the rows
+      // carry it: "called 0x100085c30" is only meaningful next to the base it was
+      // computed from.
+      const r = findCalls(entry, rel, { arch, includeData, max, __textRelative: true });
+      // A slice contributes hits only if some hit names its architecture — the hit
+      // records carry `arch`, and the slice records do not carry a hit count, so
+      // grouping by the hits is the honest way to know which slices answered rather
+      // than which ones merely existed. A fat binary's two slices have different
+      // bases, so collapsing them onto one address would be a fabricated answer.
+      const hitArches = new Set((r.hits ?? []).map((h) => h.arch));
+      const answered = (r.slices ?? []).filter((s) => hitArches.has(s.arch));
+      if (r.count > 0) { matchedFiles++; totalHits += r.count; }
+      files.push({
+        path: entry,
+        ok: true,
+        error: null,
+        arch: answered.length === 1 ? answered[0].arch : null,
+        // Per-arch: the `__TEXT` base each answer was computed from, so a resolved
+        // address can be read against its origin.
+        bases: answered.map((s) => ({
+          arch: s.arch,
+          textBase: s.textBase !== null ? `0x${s.textBase.toString(16)}` : null,
+          target: `0x${s.target.toString(16)}`,
+        })),
+        count: r.count,
+        // Sites are capped per file for the same reason names are capped in
+        // `searchSymbolsIn`: a whole tree of call sites is not a list anyone reads,
+        // and the per-file count is the part that answers "which files".
+        sites: perFile > 0 ? (r.hits ?? []).slice(0, perFile) : [],
+        sitesTruncated: (r.hits ?? []).length > perFile,
+        skipped: r.skipped ?? [],
+        unsupported: r.unsupported ?? [],
+        encrypted: r.encryptedSlices ?? [],
+      });
+    } catch (e) {
+      unreadable++;
+      files.push({
+        path: entry, ok: false, error: e.code ?? 'io', message: e.message,
+        arch: null, bases: [], count: 0, sites: [],
+      });
+    }
+  }
+
+  // Sorted by path, for the reason `searchSymbolsIn` sorts: two runs over one tree
+  // must produce byte-identical output or the result cannot be diffed or cached.
+  files.sort((x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : 0));
+
+  return {
+    textRelative: `0x${rel.toString(16)}`,
+    queryMode: 'text-relative',
+    roots: list,
+    files,
+    totals: {
+      files: files.length,
+      looked: files.filter((x) => x.ok).length,
+      matchedFiles,
+      sites: totalHits,
+      skipped,
+      unreadable,
+      considered: walked.length,
+    },
     truncated,
     note: truncated
       ? `stopped after ${maxFiles} file(s) or depth ${maxDepth} — the answer covers only what was reached`

@@ -217,15 +217,10 @@ function findExecutableInApp(buf, entries, appDir) {
   const macosDir = bundleLayout().macosDir.join('/');
   const exePath = `${appDir}/${macosDir}/${appName}`;
 
-  console.error('DEBUG findExecutableInApp: exePath=', exePath);
-
   // First try the conventional path.
   const byName = entries.find((e) => e.name === exePath);
-  console.error('DEBUG findExecutableInApp: byName=', byName ? byName.name : null);
   if (byName) {
     const data = readEntry(buf, byName);
-    console.error('DEBUG findExecutableInApp: data length=', data.length, 'magic=', data.readUInt32LE(0).toString(16));
-    console.error('DEBUG findExecutableInApp: isMachOBuffer=', isMachOBuffer(data));
     if (isMachOBuffer(data)) return data;
   }
 
@@ -234,14 +229,12 @@ function findExecutableInApp(buf, entries, appDir) {
   const candidates = entries.filter(
     (e) => e.name.startsWith(prefix) && !e.name.endsWith('/'),
   );
-  console.error('DEBUG findExecutableInApp: candidates=', candidates.map(c => c.name));
 
   // Sort by size descending — the main executable is usually the largest.
   candidates.sort((a, b) => b.uncompressedSize - a.uncompressedSize);
 
   for (const entry of candidates) {
     const data = readEntry(buf, entry);
-    console.error('DEBUG findExecutableInApp: trying', entry.name, 'isMachOBuffer=', isMachOBuffer(data));
     if (isMachOBuffer(data)) return data;
   }
 
