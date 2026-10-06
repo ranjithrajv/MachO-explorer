@@ -1741,7 +1741,14 @@ console.log('\na2o / o2a: address and file offset');
         // The distinction that makes this safe in CI: a mistyped path must not be
         // mistaken for a clean bill of health, and a non-Mach-O must not either.
         check(gate('/nope/not/here') === 3, 'audit: an unreadable path exits 3, not 1', `exit ${gate('/nope/not/here')}`);
-        check(gate('/etc/hosts') === 3, 'audit: a file that is not Mach-O exits 3', `exit ${gate('/etc/hosts')}`);
+        // A temp file, not `/etc/hosts`. That path does not exist on Windows, so
+        // there the check still saw exit 3 — for the wrong reason. It was testing
+        // "missing file exits 3" twice while claiming to test the wrong-format case,
+        // which is the one check in this group that can catch a reader collapsing
+        // `io` and `unknown-encoding` into a single answer.
+        const auditNonMachO = path.join(os.tmpdir(), 'macho-smoke-audit-not-a-binary.txt');
+        fs.writeFileSync(auditNonMachO, 'this is not a Mach-O\n');
+        check(gate(auditNonMachO) === 3, 'audit: a file that is not Mach-O exits 3', `exit ${gate(auditNonMachO)}`);
         // ...and it must not exit 0 either, which is the half people forget.
         check(gate('/nope/not/here') !== 0, 'audit: an unreadable path never exits 0');
 
@@ -2469,7 +2476,15 @@ console.log('\na2o / o2a: address and file offset');
       // Non-Mach-O is skipped, not failed. A build directory is full of plists and
       // headers, and failing the search over them would make the tool useless for
       // the use it exists for.
-      const mixed = searchSymbolsIn([corpusRoot, '/etc/hosts'], 'target_fn');
+      //
+      // A temp file, not `/etc/hosts`: that path does not exist on Windows, so it
+      // was counted `unreadable` rather than `skipped` and this failed there. The
+      // distinction is the whole point of the check, so the input has to be a file
+      // that is present *and* not Mach-O on every platform. Same construction the
+      // `sym` lone-path checks below use.
+      const nonMachOInCorpus = path.join(os.tmpdir(), 'macho-smoke-corpus-not-a-binary.txt');
+      fs.writeFileSync(nonMachOInCorpus, 'this is not a Mach-O\n');
+      const mixed = searchSymbolsIn([corpusRoot, nonMachOInCorpus], 'target_fn');
       check(
         mixed.totals.skipped === 1 && mixed.totals.unreadable === 0,
         'corpus: a non-Mach-O file in the set is skipped, not reported as an error',
