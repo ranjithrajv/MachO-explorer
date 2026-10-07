@@ -48,6 +48,7 @@ const TOOLS = [
   'describe', 'overview', 'sym', 'symlookup',
   'findcall', 'findliteral', 'mapliteral', 'a2o', 'o2a',
   'dump', 'starts', 'assert', 'disasm', 'audit', 'fingerprint', 'diff', 'mcp',
+  'tbd', 'symbolicate',
 ];
 
 const toolsToBuild = onlyTool ? [onlyTool] : TOOLS;
@@ -79,6 +80,34 @@ function buildSEA(tool) {
   const blobPath = path.join(outputDir, `sea-prep-${tool}.blob`);
   const configPath = path.join(outputDir, `sea-config-${tool}.json`);
   const outPath = path.join(outputDir, outputName(tool));
+  const bundlePath = path.join(outputDir, `sea-bundle-${tool}.mjs`);
+
+  // Step 0: Bundle the tool's ESM graph into a single file.
+  //
+  // A SEA cannot load modules from the file system — the injected main sees only
+  // the built-in modules — so the reader's ~80 relative imports have to be
+  // flattened before they are embedded. `mainFormat: 'module'` (below) then runs
+  // the result as ESM, because the embedder defaults to CommonJS and would stop
+  // at the first `import` with "Cannot use import statement outside a module".
+  console.log(`  bundling ${tool}...`);
+  try {
+    execFileSync('npx', [
+      '--yes', 'esbuild', entryPoint,
+      '--bundle', '--platform=node', '--format=esm',
+      `--outfile=${bundlePath}`,
+      '--log-level=warning',
+      // api.mjs has deliberate duplicate keys (a later field overrides an
+      // earlier one); esbuild flags them and the warnings are pure noise here.
+      '--log-override:duplicate-object-key=silent',
+    ], {
+      stdio: 'pipe',
+      cwd: ROOT,
+      shell: process.platform === 'win32',
+    });
+  } catch (err) {
+    console.error(`  error bundling ${tool}: ${err.message}`);
+    return false;
+  }
 
   // SEA config
   //
@@ -88,7 +117,8 @@ function buildSEA(tool) {
   // version in their output (`mcp`, and SARIF) would fail to start rather
   // than answer. The version therefore cannot disagree with the tag.
   const config = {
-    main: entryPoint,
+    main: bundlePath,
+    mainFormat: 'module',
     output: blobPath,
     disableExperimentalSEAWarning: true,
     assets: {
@@ -114,6 +144,14 @@ function buildSEA(tool) {
   console.log(`  copying node binary for ${tool}...`);
   fs.copyFileSync(nodeBin, outPath);
 
+  // The Node.js SEA recipe removes the binary's signature before injection on
+  // macOS, because injecting into a signed Mach-O leaves a signature that no
+  // longer describes the file. The release workflow re-signs afterwards; signing
+  // here would be signing a file the very next step is about to change.
+  if (process.platform === 'darwin') {
+    try { execFileSync('codesign', ['--remove-signature', outPath], { stdio: 'pipe' }); } catch {}
+  }
+
   // Step 3: Inject the blob using postject
   console.log(`  injecting blob into ${tool}...`);
   try {
@@ -121,7 +159,12 @@ function buildSEA(tool) {
     // a shell (the docs are explicit), so the shell is enabled there and nowhere
     // else — the argv array stays array-shaped wherever it legally can, which is
     // what keeps a path with spaces from splitting into two arguments.
-    execFileSync('npx', ['--yes', 'postject', outPath, 'NODE_SEA_BLOB', blobPath, '--sentinel-fuse', 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'], {
+    const args = ['--yes', 'postject', outPath, 'NODE_SEA_BLOB', blobPath,
+      '--sentinel-fuse', 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'];
+    // The blob lives in a `NODE_SEA` segment on Mach-O; the other platforms take
+    // it as a named note/resource and have no segment to name.
+    if (process.platform === 'darwin') args.push('--macho-segment-name', 'NODE_SEA');
+    execFileSync('npx', args, {
       stdio: 'pipe',
       cwd: ROOT,
       shell: process.platform === 'win32',
@@ -134,6 +177,7 @@ function buildSEA(tool) {
   // Cleanup temp files
   try { fs.unlinkSync(blobPath); } catch {}
   try { fs.unlinkSync(configPath); } catch {}
+  try { fs.unlinkSync(bundlePath); } catch {}
 
   // Make executable on Unix
   if (process.platform !== 'win32') {

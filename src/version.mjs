@@ -46,8 +46,11 @@ function sea() {
 export function version() {
   const s = sea();
   if (s && s.isSea()) {
-    const raw = s.getAsset(ASSET);
-    if (raw) return JSON.parse(raw.toString('utf8')).version;
+    // `getAsset` without an encoding returns an ArrayBuffer, and
+    // `JSON.parse` on one stringifies it to "[object ArrayBuffer]". Ask for
+    // the decoded string instead, which is what the blob was written as.
+    const raw = s.getAsset(ASSET, 'utf8');
+    if (raw) return JSON.parse(raw).version;
   }
   return createRequire(import.meta.url)('../package.json').version;
 }

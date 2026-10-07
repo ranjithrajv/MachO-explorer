@@ -48,13 +48,18 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          # Node 25+ is required, not optional: `mainFormat: "module"` — the
+          # field that runs the injected script as ESM — does not exist in Node
+          # 22 or 24, and the tools are ESM. On 22 the embedder treats the main
+          # as CommonJS and dies at the first `import`.
+          node-version: '26'
 
       # postject is the standard tool for injecting the SEA blob into the node
       # binary. It is a build-time tool only — the shipped binaries have zero
       # runtime dependencies. `npx` runs it on demand rather than `npm install`,
       # so this repository keeps no `node_modules` and no lockfile to satisfy a
       # tool that is not part of the package.
+      #
       # `postject` has no `--version`; `--help` is the flag it actually answers,
       # and it exercises the same npx-mediated lookup the build depends on.
       - name: Confirm postject is reachable
@@ -89,6 +94,9 @@ jobs:
           esac
           chmod +x "dist/$bin" 2>/dev/null || true
           "dist/$bin" --help
+          # `--help` proves the binary starts; this proves it reads a real file,
+          # which is the path the embedded version asset and the parser take.
+          "dist/$bin" test/fixtures/universal.macho > /dev/null
           echo "::notice::built and ran $bin"
 
       - name: Upload artifacts
@@ -163,11 +171,16 @@ jobs:
           echo "| \`mapliteral\` | Literal-to-address-to-pointers mapping |" >> release-notes.md
           echo "| \`a2o\` | Address-to-file-offset |" >> release-notes.md
           echo "| \`o2a\` | File-offset-to-address |" >> release-notes.md
+          echo "| \`dump\` | Bytes at an address, bounded by its section |" >> release-notes.md
+          echo "| \`starts\` | Function start addresses (LC_FUNCTION_STARTS) |" >> release-notes.md
+          echo "| \`assert\` | CI assertions on symbols and strings |" >> release-notes.md
           echo "| \`disasm\` | Instruction boundary/branch decoding |" >> release-notes.md
           echo "| \`audit\` | Structural consistency check |" >> release-notes.md
           echo "| \`fingerprint\` | Program identity fingerprinting |" >> release-notes.md
           echo "| \`diff\` | Structural diff between two binaries |" >> release-notes.md
           echo "| \`mcp\` | MCP server (JSON-RPC over stdin/stdout) |" >> release-notes.md
+          echo "| \`tbd\` | What a .tbd text stub exports |" >> release-notes.md
+          echo "| \`symbolicate\` | Crash-report addresses to named frames |" >> release-notes.md
           echo "" >> release-notes.md
           echo "### Usage" >> release-notes.md
           echo "" >> release-notes.md
