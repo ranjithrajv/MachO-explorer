@@ -46,6 +46,9 @@ jobs:
       - run: node test/conformance.mjs
       - run: node test/mcp.mjs
       - run: node test/skill.mjs
+      - run: node test/tbd.mjs
+      - run: node test/symbolicate.mjs
+      - run: node test/ipa.mjs
       - run: node test/publish.mjs
 
       - name: Publish with provenance

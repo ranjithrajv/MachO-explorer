@@ -23,6 +23,8 @@
    - [audit](#audit)
    - [fingerprint](#fingerprint)
    - [diff](#diff)
+   - [tbd](#tbd)
+   - [symbolicate](#symbolicate)
    - [mcp](#mcp)
 9. [Environment Variables](#environment-variables)
 10. [Configuration](#configuration)
@@ -564,6 +566,57 @@ macho-explorer diff --json a b | jq '.data.differences[].category' | sort | uniq
 | `differences` | Structural changes — the verdict is computed from these alone |
 | `buildMetadata` | UUIDs, and the presence of signing/provenance commands |
 | `sizeChanges` | Section sizes, reported because they matter and counted separately |
+
+---
+
+### tbd
+
+Read a `.tbd` text stub — the exported symbols, install names and target triples of a dylib. Since macOS 11 the system libraries exist only in the dyld shared cache, so a `.tbd` is the **only** readable record of what they export. A single file may hold many libraries (`libSystem.tbd` holds 39), so every symbol is attributed to the library that exports it.
+
+```sh
+macho-explorer tbd libSystem.tbd
+macho-explorer tbd --symbol=_pthread_mutex_lock --sdk="$SDK/usr/lib"
+macho-explorer tbd --symbols --json libSystem.tbd | jq '.data.symbols.count'
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--symbol=<name>` | Is this name exported, by which library, for which targets |
+| `--symbols` | List every exported symbol |
+| `--reexports` | List the libraries and symbols this stub re-exports |
+| `--objc` | List Objective-C classes and ivars |
+| `--sdk=<dir>` | Search a whole SDK (needs `--symbol`) |
+| `--mode=<m>` | `exact` (default) or `substring`, for `--symbol` |
+| `--max=<n>` | Cap a listing (default all); the count stays exact |
+
+A stub with one unread line has an *unknown* symbol count, so `tbd` exits 3 and names the line rather than printing a number it cannot justify. Exit 1 is reserved for "ran, found nothing".
+
+---
+
+### symbolicate
+
+Resolve the addresses in an Apple crash report to functions, using the binaries on this machine. Reads both the modern `.ips` JSON format and the legacy text `.crash` format, and says which it read.
+
+```sh
+macho-explorer symbolicate MyApp-2026-10-07.ips
+macho-explorer symbolicate --no-resolve report.ips
+macho-explorer symbolicate --json report.crash | jq '.data.threads[].frames[] | select(.reason)'
+```
+
+**Flags:**
+
+| Flag | Description |
+|---|---|
+| `--arch=<name>` | Prefer one architecture when an image is universal |
+| `--no-resolve` | Parse the report and read no binaries; every frame's `reason` says so |
+
+**Two formats, one rule each.** An `.ips` frame carries an *offset into an image* and the base must be added; a legacy `.crash` frame carries an address that is *already absolute*. Applying the wrong rule produces a number that looks like an address and names the wrong function, so the format is stated in the result rather than inferred from the extension.
+
+**Why a frame is unresolved.** Most frames in a real crash log are in Apple frameworks, and since macOS 11 those are not files on disk — they live in the dyld shared cache. The address and owning image are still reported; the `reason` field distinguishes "not on disk" from "inside the image but stripped" from "resolution was not requested".
+
+**Sources of a symbol.** `symbolSource` is `report` when the symbol was already in the report (never recomputed) or `binary` when this package read it from a file that may since have been rebuilt. `totals.fromReport`, `totals.fromBinary` and `totals.unresolved` count them separately. Exit `0` if at least one frame resolved, `1` if none did.
 
 ---
 

@@ -182,13 +182,16 @@ means. That is not a footnote: see
 | `diff.mjs` | What changed between two binaries — structure and literal content, so a rebuilt pair does not read as a different program |
 | `assert.mjs` | A CI policy: `--has-symbol`, `--no-symbol`, `--has-string`, `--no-string`, repeatable. Exit 0 only when every assertion holds |
 | `tbd.mjs` | **What does this library export?** A `.tbd` text stub — the only readable record of a system dylib, since macOS 11 put them all in the shared cache. One file may hold 39 libraries, and every symbol is attributed to the one that exports it. `--symbol` with `--sdk` answers "which library provides this", which nothing else on a current macOS can |
+| `symbolicate.mjs` | **Why is my app crashing?** Turn a crash report — modern `.ips` or legacy `.crash` — into named frames, resolving each address against the binaries on this machine. Says which format it read, because the two disagree about whether a frame is an address or an offset, and gives every unresolved frame the **reason** it could not be named |
 
-Fifteen tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
+Seventeen tools; there were seven until `symgrep.mjs` and `symfind.mjs` merged into
 `sym.mjs`, which now covers both conventions with `--regex` and `--all-imp`, eight
 until `disasm.mjs` added the boundary decoder, nine until `audit`, `fingerprint`
 and `diff` answered the three questions a build or a reviewer asks about *two*
 binaries at once, and twelve until `dump`, `starts` and `assert` added the byte
-read, the function list and the policy gate.
+read, the function list and the policy gate, fifteen until `tbd` added the
+text-stub reader, and sixteen until `symbolicate` turned a crash report into
+named frames.
 
 ### Why is my app crashing?
 

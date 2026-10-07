@@ -200,6 +200,11 @@ jobs:
       # and unresolved.
       - name: A crash report resolves, or names why it did not
         run: node test/symbolicate.mjs
+      # Handed an `.ipa`, the tools read the executable inside it rather than
+      # reporting "not a Mach-O" — and the archive layout differs between a real
+      # App Store build and a nested one, so both are exercised.
+      - name: An .ipa is unpacked, not refused
+        run: node test/ipa.mjs
       - name: The published page is this repository
         run: node test/pages.mjs
       # The documentation site is rendered by a from-scratch markdown renderer, so

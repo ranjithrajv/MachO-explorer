@@ -73,6 +73,7 @@
     "man/man1/audit.1",
     "man/man1/fingerprint.1",
     "man/man1/diff.1",
+    "man/man1/tbd.1",
     "man/man1/symbolicate.1",
     "man/man1/overview.1"
   ],
@@ -94,6 +95,7 @@
     "audit": "src/audit.mjs",
     "fingerprint": "src/fingerprint.mjs",
     "diff": "src/diff.mjs",
+    "tbd": "src/tbd.mjs",
     "symbolicate": "src/symbolicate.mjs"
   },
   "scripts": {
@@ -107,6 +109,7 @@
     "test:publish": "node test/publish.mjs",
     "test:browser": "node test/browser.mjs",
     "test:conformance": "node test/conformance.mjs",
+    "test:ipa": "node test/ipa.mjs",
     "schema": "node test/schema-gen.mjs",
     "schema:check": "node test/schema-gen.mjs --check",
     "test:schemas": "node test/schemas.mjs",
@@ -122,7 +125,7 @@
     "demo:link": "node demo/link.mjs",
     "build:sea": "node scripts/build-sea.mjs",
     "build:sea:tool": "node scripts/build-sea.mjs --tool",
-    "test:all": "npm run test:fixtures && npm run schema && npm run schema:check && npm test && npm run test:disasm && npm run test:browser && npm run test:pages && npm run test:docs && npm run test:conformance && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:schemas && npm run test:sarif && npm run test:tbd && npm run test:symbolicate && npm run test:action && npm run test:mutation"
+    "test:all": "npm run test:fixtures && npm run schema && npm run schema:check && npm test && npm run test:disasm && npm run test:browser && npm run test:pages && npm run test:docs && npm run test:conformance && npm run test:mcp && npm run test:skill && npm run test:publish && npm run test:schemas && npm run test:sarif && npm run test:tbd && npm run test:symbolicate && npm run test:ipa && npm run test:action && npm run test:mutation"
   },
   "engines": {
     "node": ">=22.15"
