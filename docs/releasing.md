@@ -38,6 +38,11 @@ Pushing the tag triggers the release workflow, which re-runs the gate, checks
 that `vX.Y.Z` matches `package.json`'s `version`, and publishes with
 [provenance](https://docs.npmjs.com/generating-provenance-statements).
 
+A **prerelease** tag — one containing a `-`, such as `v0.1.0-alpha.1` — is
+deliberately skipped by that workflow. An alpha must not become npm's `latest`,
+and publishing a GitHub release creates the very tag the workflow listens for,
+so without the guard, cutting the alpha would publish it.
+
 ## If the tag and the manifest disagree
 
 The workflow fails before publishing. That is the point: a tag `v0.2.0` on a

@@ -17,6 +17,11 @@ on:
 jobs:
   publish:
     name: publish
+    # A prerelease tag (`v0.1.0-alpha.1`) must never reach npm: `npm publish`
+    # would move the `latest` dist-tag onto an alpha. Publishing a GitHub
+    # release creates its tag, and this workflow listens for tag pushes, so
+    # without this guard publishing the alpha draft would attempt a publish.
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
