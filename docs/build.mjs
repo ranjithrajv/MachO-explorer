@@ -75,6 +75,7 @@ const PAGES = [
   { src: 'docs/use-cases.md', out: 'use-cases.html', title: 'When to use this', blurb: 'Where this reader is the right tool, and where it is the wrong one.' },
   { src: 'ARCHITECTURE.md', out: 'architecture.html', title: 'Architecture', blurb: 'How the reader is layered, the invariants a change must not break, and where a change lands.' },
   { src: 'AUDITABILITY.md', out: 'auditable.html', title: 'Auditable by design', blurb: 'What the claim means, what it does not mean, and the checks that keep it true.' },
+  { src: 'FINDINGS.md', out: 'findings.html', title: 'Findings', blurb: 'The defects that were live while the suite was green, and the check each one now has.' },
   { src: 'CONTRIBUTING.md', out: 'contributing.html', title: 'Contributing', blurb: 'The gate a change has to pass, and the rules that decide what belongs here.' },
 ];
 

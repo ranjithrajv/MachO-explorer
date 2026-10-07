@@ -60,9 +60,24 @@ semver for the public API (`src/api.mjs` and the `--json` envelope).
   worked examples, the agent surface, and the "what it will not do" table. The
   detailed competitor comparison moved to `docs/use-cases.md` rather than being
   dropped, and the docs site gained an **Architecture** page.
+- **`FINDINGS.md`** — a public defect journal: the defects that were live while the
+  suite was green, why a green run missed each, and the check that now catches it.
+  It gives the mutation tests a face and makes the reader's claims traceable to the
+  failures they were written for.
+- The README gained a **dated proof strip** and a **"Prove it on real binaries"**
+  section that runs the reader against a stock system binary (`/usr/lib/dyld`) and
+  shows the real output, so a reader can reproduce the claim rather than take it.
 
 ### Fixed
 
+- **`diff` and `fingerprint` resolve both sides of the pair, and blame the right one
+  on failure.** Only the first path went through target resolution, so
+  `diff App.app App.app` handed the reader a directory while the same two paths in
+  the reverse order worked — the natural way to ask whether a rebuild changed a
+  bundle. A read error was also always prefixed with the first binary, naming the
+  wrong file when it was the second that could not be read, and an empty second
+  argument now fails as a usage error rather than silently falling back to a system
+  binary the caller never named.
 - **The refusal message no longer prints the path twice.** `readerError` embedded the
   path and every CLI prefixed it, so the text door printed `/tmp/F.dmg: /tmp/F.dmg:
   …`. The message now describes the file and the caller names it, once.

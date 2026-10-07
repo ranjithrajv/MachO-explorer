@@ -93,6 +93,13 @@ if (positional.length > 2) {
   process.stderr.write('  to compare many files, run it once per pair.\n');
   process.exit(EXIT.usage);
 }
+// An empty second argument is not "no second binary" — resolution treats a falsy
+// `argv` as absent and would silently fall back to a system binary, answering about a
+// file the caller never named. Say so instead.
+if (positional.length === 2 && !positional[1]) {
+  process.stderr.write('fingerprint: the second binary was empty\n');
+  process.exit(EXIT.usage);
+}
 
 const arch = opts.arch;
 
@@ -110,18 +117,21 @@ if (sarif && positional.length < 2) {
 }
 
 const first = requireBinary({ argv: opts.b || opts.binary || positional[0] });
-verboseLog(flags, positional.length === 2
-  ? `fingerprint: comparing ${first} vs ${positional[1]}`
+const comparing = positional.length === 2;
+// The second resolves like the first, so `App.app` names the executable inside it.
+// Only the first path used to go through resolution, so `fingerprint App.app App.app`
+// handed the reader a directory while the same two paths in the reverse order worked.
+const second = comparing ? requireBinary({ argv: positional[1] }) : null;
+verboseLog(flags, comparing
+  ? `fingerprint: comparing ${first} vs ${second}`
   : `fingerprint: reading ${first}`);
 
 let result;
-let comparing = false;
 try {
-  if (positional.length === 2) {
-    comparing = true;
+  if (comparing) {
     // `--arch` narrows *both* sides, summary and rows together. It is the comparison
     // a caller wants when one side is a thin binary and the other universal.
-    result = compareFingerprints(first, positional[1], { arch });
+    result = compareFingerprints(first, second, { arch });
   } else {
     result = fingerprint(first, { arch });
   }
@@ -130,7 +140,7 @@ try {
   // no longer embeds one. The previous test — does the message mention the second
   // path — only worked while the message happened to carry the path, and would
   // silently blame the first binary once it did not.
-  const which = e.path ?? (comparing && e.message.includes(positional[1]) ? positional[1] : first);
+  const which = e.path ?? (comparing && e.message.includes(second) ? second : first);
   if (flags.has('json')) {
     emitJSON({ tool: 'fingerprint', binary: which, ok: false, errors: [e.code ?? 'io'], messages: [e.message] }, EXIT.fail);
   }
@@ -166,7 +176,7 @@ if (!comparing) {
 const status = result.sameProgram ? EXIT.ok : EXIT.empty;
 
 if (sarif) {
-  writeAllSync(1, toJSON(fingerprintSarif(result, { path: first, other: positional[1] }), 2) + '\n');
+  writeAllSync(1, toJSON(fingerprintSarif(result, { path: first, other: second }), 2) + '\n');
   writeAllSync(2, `${result.verdict}  (SARIF on stdout)\n`);
   process.exit(status);
 }

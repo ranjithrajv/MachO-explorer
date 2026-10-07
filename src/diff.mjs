@@ -74,20 +74,27 @@ if (flags.has('help') || flags.has('h')) {
 
 rejectUnknownFlags(new Set(['arch', 'max', 'json']), flags, HELP);
 
-if (positional.length !== 2) {
+if (positional.length !== 2 || !positional[0] || !positional[1]) {
   usage([
     ...HELP,
     '',
-    `  expected exactly two binaries, got ${positional.length}`,
+    `  expected exactly two binaries, got ${positional.filter(Boolean).length}`,
   ]);
 }
 
-// Both paths are resolved the same way as every other tool, so the first can come
-// from `$MACHO_EXPLORER_BINARY` while the second is named. Reading them as a pair and
+// Both paths are resolved the same way as every other tool, so `App.app` names the
+// executable inside it on either side, and the first can come from
+// `$MACHO_EXPLORER_BINARY` while the second is named. Reading them as a pair and
 // nothing else means a mistyped count is a usage error rather than a diff of one file
 // against nothing.
+//
+// The second goes through resolution too, rather than being used verbatim:
+// `diff App.app App.app` is the natural way to ask whether a rebuild changed anything,
+// and a bundle path reaches the reader as a directory. Only the first argument used to
+// be resolved, so that call failed with "not a regular file" while the same two paths
+// in the reverse order worked.
 const first = requireBinary({ argv: opts.b || opts.binary || positional[0] });
-const second = positional[1];
+const second = requireBinary({ argv: positional[1] });
 verboseLog(flags, `diff: comparing ${first} vs ${second}`);
 
 const maxNames = opts.max === undefined ? 20 : Number(opts.max);
@@ -99,10 +106,14 @@ let result;
 try {
   result = diffBinaries(first, second, { arch: opts.arch, maxNames });
 } catch (e) {
+  // `e.path` is the file the reader rejected, set by `readerError`. Prefixing the
+  // message with `first` unconditionally blamed the wrong side of the pair whenever it
+  // was the second binary that could not be read.
+  const which = e.path ?? first;
   if (flags.has('json')) {
-    emitJSON({ tool: 'diff', binary: first, ok: false, errors: [e.code ?? 'io'], messages: [e.message] }, EXIT.fail);
+    emitJSON({ tool: 'diff', binary: which, ok: false, errors: [e.code ?? 'io'], messages: [e.message] }, EXIT.fail);
   }
-  console.error(`${first}: ${e.message}`);
+  console.error(`${which}: ${e.message}`);
   process.exit(EXIT.fail);
 }
 

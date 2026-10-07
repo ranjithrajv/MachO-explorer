@@ -143,7 +143,7 @@ ok(existsSync(join(SITE, 'index.html')), 'the site root has a page, so a visitor
   const expected = [
     "user-manual.html", "ci-gate.html", "machine-contract.html", "text-stubs.html",
     "agent-integration.html", "use-cases.html", "auditable.html", "contributing.html",
-    "architecture.html",
+    "architecture.html", "findings.html",
   ];
   for (const f of expected) ok(existsSync(join(DOCS, f)), `the docs site has ${f}`);
 

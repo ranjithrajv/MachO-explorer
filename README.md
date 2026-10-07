@@ -4,6 +4,8 @@
 
 > **The reader you can read.** Dependency-free Mach-O introspection that runs in Node, in a browser tab, or on a phone — and names what it cannot read instead of guessing at it.
 
+**Verified 2026-10-07.** 0 runtime dependencies · the reader is `src/macho.mjs`, one file importing only `node:fs` and `node:crypto` · 776 checks in the reader suite, on binaries it was not written for · in the browser it returns byte-for-byte the same answers as Node. Re-run every one of those claims in five seconds, [below](#verify-it-yourself).
+
 Mach-O binary introspection for **macOS, iOS, iPadOS, tvOS, watchOS and visionOS** binaries — thin or universal, 32- or 64-bit, `arm64`, `arm64e`, `arm64_32`, `x86_64`, `i386`, `armv7`, `armv7k`. Fat headers, symbol tables, sections, `__text`, instruction boundaries and direct branch edges. **It knows nothing about any application** — no formats, no products, no save files. Every answer is a fact about the file format or about the bytes.
 
 **Mach-O is the whole scope, chosen.** This is not a toolkit that happens to include one; that focus is what pays for the depth. Under the hood it decodes instruction *boundaries* and *direct* branch displacements — lengths and edges, which are facts about the bytes — and stops there. It does not print mnemonics or operands, and it will not grow to.
@@ -92,6 +94,31 @@ $ macho-explorer diff v1.0/libthing.dylib v1.1/libthing.dylib
   same program, rebuilt  —  0 difference(s), 1 build-metadata change(s)
 ```
 
+## Prove it on real binaries
+
+Stock system binaries, no fixtures and no setup — the reader on files it did not create. `/usr/lib/dyld` is the dynamic linker: a universal `MH_DYLINKER` with four thousand symbols per slice, not a toy built to flatter the parser.
+
+```sh
+$ macho-explorer describe /usr/lib/dyld
+/usr/lib/dyld — 2.4 MB, universal, 2 slice(s)
+
+  x86_64   file 16384..1161760  64-bit  MH_DYLINKER  macos  4,041 defined / 4,041 symbols  1 code section(s) __text 0x1000+606,251
+           uuid cf55ca34-3ecb-38f3-9e3e-e20592c197be
+           flags MH_NOUNDEFS MH_DYLDLINK MH_TWOLEVEL
+           minos 26.6.0  sdk 26.6.1
+  arm64e   file 1163264..2562000  64-bit  MH_DYLINKER  macos  4,386 defined / 4,386 symbols  1 code section(s) __text 0x1000+647,224
+
+$ macho-explorer audit /usr/lib/dyld
+/usr/lib/dyld — OK  0 error(s), 0 warning(s)
+
+$ macho-explorer findcall --list /usr/lib/dyld 2
+4577 distinct direct call/jmp target(s), most-called first  (1 MB of code scanned)
+  0x000000091802  397 site(s)
+  0x000000001ce6  314 site(s)
+```
+
+Every number above is from a stock binary; run the three commands and compare.
+
 ## Gate a build on it
 
 `audit`'s exit status is the product, and `assert` turns structure into policy. The composite action runs the reader from the checked-out source — **no install step** — so the gate tests *this commit* rather than whatever a tag resolved to today.
@@ -170,12 +197,13 @@ node test/schemas.mjs             #   ~3s     every tool's output, against its o
 node test/mutation-check.mjs      #   ~2m     the historical defects are still caught
 ```
 
-The counts and verdicts are the claim; the timings only set expectations. `mutation-check.mjs` reintroduces one real historical bug at a time and requires the suite to fail — and a `green npm run test:all` is also a complete rot check. **[CONTRIBUTING.md](CONTRIBUTING.md)** explains what each suite establishes and why the suite runs against two corpora.
+The counts and verdicts are the claim; the timings only set expectations. `mutation-check.mjs` reintroduces one real historical bug at a time and requires the suite to fail — and a `green npm run test:all` is also a complete rot check. **[CONTRIBUTING.md](CONTRIBUTING.md)** explains what each suite establishes and why the suite runs against two corpora; **[FINDINGS.md](FINDINGS.md)** records the defects that were live while the suite was green.
 
 ## Documentation
 
 - **[Architecture](ARCHITECTURE.md)** — how the system is layered, and why each decision was made
 - **[Auditability](AUDITABILITY.md)** — the one-file reader, and how to verify it
+- **[Findings](FINDINGS.md)** — the defects that were live while the suite was green, and the check each one now has
 - **[User manual](docs/user-manual.md)** — every subcommand, every flag, and what each refuses to do
 - **[When to use this](docs/use-cases.md)** — the right and wrong tool for the job
 - **[The machine contract](docs/machine-contract.md)** — one envelope, four exit codes, a JSON Schema per tool

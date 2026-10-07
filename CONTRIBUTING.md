@@ -304,7 +304,9 @@ plausible, wrong answer, and each is now a mutation the suite has to catch:
 
 None of those is reachable from a single input. All of them are reachable from a
 second, unrelated one — which is what `test/smoke.mjs` and the generated
-fixtures exist to provide.
+fixtures exist to provide. [FINDINGS.md](FINDINGS.md) tells each one as a story:
+what was seen instead of an error, why a green run missed it, and the check that
+now catches it.
 
 The slice-relative offset bug is the instructive one. It was invisible for the
 life of the project because every binary it was tested against was either thin

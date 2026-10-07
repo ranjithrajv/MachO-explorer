@@ -55,7 +55,8 @@
     "README.md",
     "AUDITABILITY.md",
     "CONTRIBUTING.md",
-    "ARCHITECTURE.md"
+    "ARCHITECTURE.md",
+    "FINDINGS.md"
   ],
   "man": [
     "man/man1/describe.1",

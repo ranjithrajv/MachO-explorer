@@ -245,7 +245,7 @@ for (const page of pages) {
   for (const src of declared) {
     ok(existsSync(join(ROOT, src)), `the declared source ${src} exists`, 'a declared document that is missing fails the build, not just this check');
   }
-  const expected = declared.map((s) => s.replace(/\.md$/, '.html').replace(/^docs\//, '').replace('AUDITABILITY', 'auditable').replace('CONTRIBUTING', 'contributing').replace('ARCHITECTURE', 'architecture'));
+  const expected = declared.map((s) => s.replace(/\.md$/, '.html').replace(/^docs\//, '').replace('AUDITABILITY', 'auditable').replace('CONTRIBUTING', 'contributing').replace('ARCHITECTURE', 'architecture').replace('FINDINGS', 'findings'));
   for (const e of expected) {
     ok(pages.includes(e), `the declared source produced ${e}`);
   }

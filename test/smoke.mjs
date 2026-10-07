@@ -404,6 +404,74 @@ console.log('bundle.mjs / target.mjs:');
   }
 }
 
+/* ---- a bundle path on either side of a two-binary call --------------- */
+
+// `diff App.app App.app` is the natural way to ask whether a rebuild changed the
+// program, and a bundle path reaches the reader as a directory. Only the first
+// argument used to be resolved to the executable inside it, so that call failed on the
+// second while the same two paths in the reverse order worked. The bundle is built
+// around a fixture rather than borrowed from the host, so this runs anywhere.
+if (generated.length === 0) {
+  skip('target.mjs', 'no generated fixture to wrap in a bundle');
+} else {
+  // `executableIn` skips files under 1 KB (they are stubs, not an app's main binary),
+  // so the stand-in has to clear that floor to be found.
+  const wrap = generated.find((b) => {
+    try {
+      return fs.statSync(b.path).size >= 1024;
+    } catch {
+      return false;
+    }
+  });
+  if (!wrap) {
+    skip('target.mjs', 'no generated fixture is large enough to stand in as a bundle executable');
+  } else {
+    console.log('target.mjs: a bundle as either side of a pair:');
+    const layout = bundleLayout();
+    const bundleRoots = [];
+    try {
+      const name = 'Pairsample';
+      const root = path.join(os.tmpdir(), `macho-explorer-pair-${process.pid}`);
+      bundleRoots.push(root);
+      const bundle = path.join(root, name + layout.ext);
+      const macos = path.join(bundle, ...layout.macosDir);
+      fs.mkdirSync(macos, { recursive: true });
+      fs.copyFileSync(wrap.path, path.join(macos, name));
+
+      const bothBundles = run('diff', [bundle, bundle]);
+      check(
+        bothBundles.code === 0,
+        'diff: a bundle on both sides resolves to the executable',
+        `${bothBundles.code}: ${bothBundles.stderr.trim()}`,
+      );
+
+      const secondBundle = run('fingerprint', [wrap.path, bundle]);
+      check(
+        secondBundle.code === 0,
+        'fingerprint: a bundle as the second binary resolves too',
+        `${secondBundle.code}: ${secondBundle.stderr.trim()}`,
+      );
+
+      const missing = path.join(root, 'no-such-binary');
+      const unreadable = run('diff', [bundle, missing]);
+      check(
+        unreadable.code === 3 && unreadable.stderr.includes(missing),
+        'diff: an unreadable second binary is reported by its own path, not the first',
+        `${unreadable.code}: ${unreadable.stderr.trim()}`,
+      );
+
+      const emptySecond = run('diff', [bundle, '']);
+      check(
+        emptySecond.code === 2,
+        'diff: an empty second binary is a usage error, not a fallback to a system file',
+        `${emptySecond.code}: ${emptySecond.stderr.trim()}`,
+      );
+    } finally {
+      for (const dir of bundleRoots) fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}
+
 console.log('macho.mjs:');
 {
   // Arch naming is a pure function of the cputype, so it is checked directly
