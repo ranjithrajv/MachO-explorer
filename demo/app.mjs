@@ -8,6 +8,7 @@
  */
 
 import { memoryFs, overview } from './macho.browser.mjs';
+import { executableInBundle, entryFile } from './bundle-drop.mjs';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -40,10 +41,53 @@ drop.addEventListener('dragleave', () => drop.classList.remove('over'));
 drop.addEventListener('drop', (e) => {
   e.preventDefault();
   drop.classList.remove('over');
-  const file = e.dataTransfer?.files?.[0];
-  if (file) read(file);
+  // `webkitGetAsEntry` has to be read synchronously, in the handler: the
+  // `items` list is emptied the moment the event returns, so a value captured
+  // after an `await` is silently `null`. `files[0]` is kept as the fallback for
+  // browsers with no directory-entry API.
+  const entries = [...(e.dataTransfer?.items ?? [])]
+    .map((it) => (it.kind === 'file' ? it.webkitGetAsEntry?.() : null))
+    .filter(Boolean);
+  acceptDrop(entries, e.dataTransfer?.files?.[0] ?? null);
 });
 input.addEventListener('change', () => { if (input.files?.[0]) read(input.files[0]); });
+
+/**
+ * Resolve a drop to one executable `File`.
+ *
+ * The page's own headline offers a `.app` bundle, and a bundle is a *directory* —
+ * `dataTransfer.files[0]` for a dropped folder is not the executable, so the old
+ * path either failed or read the wrong bytes. This walks a dropped directory to
+ * `Contents/MacOS/`, which is where a bundle's executable always lives, and
+ * prefers the file named like the bundle (`MyApp.app/Contents/MacOS/MyApp`).
+ * A bundle with no such executable is reported as that, rather than as an
+ * unreadable Mach-O.
+ */
+async function acceptDrop(entries, plain) {
+  for (const entry of entries) {
+    if (entry.isFile) { read(await entryFile(entry)); return; }
+    if (entry.isDirectory) {
+      let exe = null;
+      try {
+        exe = await executableInBundle(entry);
+      } catch (err) {
+        showError(`could not read the folder ${entry.name}: ${err && err.message ? err.message : String(err)}`);
+        return;
+      }
+      if (exe) { read(exe); return; }
+      showError(`${entry.name} is a folder with no executable under Contents/MacOS — ` +
+        `drop the binary itself, or a .app bundle that has one.`);
+      return;
+    }
+  }
+  if (plain) read(plain);
+}
+
+/** Report a drop failure in the same box `read()` uses. */
+function showError(message) {
+  $('error').innerHTML = `<div class="err">${esc(message)}</div>`;
+  $('error').hidden = false;
+}
 
 /* ------------------------------------------------------------------ *
  * samples — the page must be able to show itself

@@ -193,6 +193,7 @@ jobs:
             index.html \
             demo/index.html \
             demo/app.mjs \
+            demo/bundle-drop.mjs \
             demo/macho.browser.mjs \
             demo/runtime.mjs \
             demo/link.mjs \

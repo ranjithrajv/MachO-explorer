@@ -31,7 +31,7 @@
  */
 import { requireBinary } from './target.mjs';
 import { listFunctionStarts } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, count } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, count, isVerbose, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
@@ -64,6 +64,7 @@ if (!Number.isInteger(max) || max < 0) {
 }
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[0] });
+verboseLog(flags, `starts: reading ${binary}`);
 const arch = opts.arch;
 
 let r;

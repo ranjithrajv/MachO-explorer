@@ -88,6 +88,7 @@ if (positional.length !== 2) {
 // against nothing.
 const first = requireBinary({ argv: opts.b || opts.binary || positional[0] });
 const second = positional[1];
+verboseLog(flags, `diff: comparing ${first} vs ${second}`);
 
 const maxNames = opts.max === undefined ? 20 : Number(opts.max);
 if (!Number.isInteger(maxNames) || maxNames < 1) {

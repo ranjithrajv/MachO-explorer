@@ -65,6 +65,7 @@ rejectUnknownFlags(new Set(['arch', 'json']), flags, HELP);
 if (positional.length === 0) usage(HELP);
 
 const binary = requireBinary({ argv: opts.binary || opts.b });
+verboseLog(flags, `symlookup: reading ${binary}`);
 const arch = opts.arch;
 const wantHex = positional.every((a) => /^0x[0-9a-fA-F]+$/.test(a));
 if (!wantHex) {

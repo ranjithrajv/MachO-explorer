@@ -42,7 +42,7 @@
  *   3  could not do the job — unreadable file, or a file that is not a stub
  */
 import { readTbd, findSymbol, findInSdk } from './stub.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, count } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, count, isVerbose, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
@@ -97,6 +97,9 @@ if (!Number.isInteger(max) || max < 0) {
 const wantsList = flags.has('symbols') || flags.has('reexports') || flags.has('objc');
 const symbol = opts.symbol;
 const sdk = opts.sdk;
+verboseLog(flags, sdk
+  ? `tbd: searching ${sdk} for ${symbol}`
+  : `tbd: reading ${positional.join(', ') || '(no target yet)'}`);
 
 if (!symbol && !sdk && !wantsList && positional.length === 0) {
   usage(HELP.slice(2, 8));

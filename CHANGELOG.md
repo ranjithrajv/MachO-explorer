@@ -39,6 +39,17 @@ semver for the public API (`src/api.mjs` and the `--json` envelope).
   matching on an English sentence.
 - `macho-explorer <tool> app.ipa` reads the executable inside `Payload/<App>.app`
   whether the archive stores the flat iOS layout or the nested `Contents/MacOS` one.
+- **The demo reads a dropped `.app` bundle.** Its headline offered one, but a bundle
+  is a directory and `dataTransfer.files[0]` is not the executable, so the drop either
+  failed or read the wrong bytes. The drop handler now walks to `Contents/MacOS/`,
+  prefers the file named like the bundle, and reports a folder that is not a bundle as
+  that rather than as an unreadable Mach-O. The walk is in `demo/bundle-drop.mjs`
+  (no DOM) so `test/browser.mjs` can drive it with fake entries — including the
+  multi-batch case whose first version recreated the reader each pass and looped
+  forever instead of failing.
+- **`macho-explorer --help` groups the subcommands by intent** (start here, symbols,
+  addresses & code, verify & compare, integrate) and carries four copy-paste examples,
+  rather than 19 commands in one alphabetical wall.
 
 ### Fixed
 
@@ -50,6 +61,31 @@ semver for the public API (`src/api.mjs` and the `--json` envelope).
   bundle is flat. It also required an explicit `.app/` directory entry, which many ZIP
   writers omit. Both are fixed, and `test/ipa.mjs` (whose ZIP builder wrote every
   local-header offset as `0`, so it never exercised the reader) now passes.
+- **`describe` printed the same fact three times.** The summary line emitted
+  `filetype.name`, `buildVersion.platform` and then the flat mirrors of both, so a
+  slice read `MH_EXECUTE  macos  macos MH_EXECUTE`; `minos`/`sdk` were likewise
+  emitted twice, once from the flat `s.minos` and once from `LC_BUILD_VERSION`. Each
+  fact is now printed once. The first command most people run should not look like a
+  rendering bug.
+- **`--version`/`-V` was accepted and then ignored on every subcommand.**
+  `COMMON_FLAGS` made every tool parse it, and nothing acted on it, so
+  `macho-explorer describe --version` silently analyzed the default binary instead of
+  printing the version. Handled once in `rejectUnknownFlags`, the function every tool
+  funnels through, and asserted for every tool in `test/smoke.mjs`.
+- **`-q/--quiet` and `-v/--verbose` did nothing on most tools.** Both were advertised
+  and parsed through `COMMON_FLAGS`, but only `findcall` and `symbolicate` acted on
+  them. Every tool now logs its resolved target to stderr under `--verbose` (so
+  `--json` stays clean) and drops its trailing notes under `--quiet`. Asserted on
+  every documented invocation in `test/smoke.mjs`: `-v` must add a `[verbose]` line
+  and change nothing on stdout.
+- **`docs/user-manual.md` showed a `describe` sample that predated the filetype and
+  platform columns.** Replaced with a real, reproducible capture (`describe /bin/ls`)
+  rather than numbers typed from a binary the reader cannot check.
+- **The demo's file picker could not be reached by keyboard.** The `<input type=file>`
+  was `display:none`, which removes it from the tab order; it is now visually hidden
+  and focusable, with the focus ring drawn on the label.
+- **The demo's `--faint` text failed WCAG AA.** `#5b6672` on `#0b0d10` is ≈2.9:1, and
+  it colored most of the small print; raised to `#7f8b99` (≈5.6:1).
 
 - **`tbd` — read a `.tbd` text stub.** The only tool here that does not read a Mach-O,
   and the one that answers a question nothing else on a current macOS can.

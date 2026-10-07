@@ -5,7 +5,7 @@
  * The demo claims that the code which runs in the browser is the code a reviewer
  * audits: the real `src/macho.mjs`, `src/instruction.mjs` and `src/api.mjs`,
  * linked by `demo/link.mjs` with a small host shim. A claim like that is worth
- * exactly as much as the check behind it, so this suite does three things:
+ * exactly as much as the check behind it, so this suite does four things:
  *
  *   1. **No drift.** Re-derives the bundle and requires it to equal the committed
  *      `demo/macho.browser.mjs`, and requires the bundle to contain no `node:`
@@ -19,6 +19,9 @@
  *      `overview` to produce **byte-for-byte identical JSON** to the Node build
  *      on all 22 fixtures. This is the whole demonstration: not that a browser
  *      can parse a Mach-O, but that *this* reader parses it the same way in both.
+ *   4. **The `.app` drop resolves.** Drives the directory walk that turns a
+ *      dropped `.app` bundle into its executable, including the multi-batch
+ *      case whose first version looped forever rather than failing.
  */
 
 import fs from 'node:fs';
@@ -166,6 +169,51 @@ for (const fx of fixtures) {
   else bad(`overview differs from Node on ${fx}`);
 }
 if (ovIdentical === fixtures.length) ok(`overview (symbols + strings) is identical on all ${fixtures.length} fixtures`);
+
+/* ------------------------------------------------------------------ *
+ * 4. the .app drop path resolves a directory to its executable
+ * ------------------------------------------------------------------ *
+ * `demo/app.mjs` offers a `.app` bundle in its headline, and a bundle is a
+ * directory — `dataTransfer.files[0]` is not the executable. The walk that
+ * finds it lives in `demo/bundle-drop.mjs` precisely so it can be driven here
+ * with fake entries, and the multi-batch case is the reason: a reader yields at
+ * most ~100 entries per call, and the first version recreated it each call,
+ * which restarts from the top and never terminates. That is a hang, not a
+ * failing assertion, which is why it is tested at all.
+ */
+
+console.log('\nbundle drop');
+{
+  const { executableInBundle, walk } = await import(pathToFileURL(path.join(ROOT, 'demo', 'bundle-drop.mjs')).href);
+
+  // A directory whose reader yields the given batches in order, then an empty
+  // batch — the same contract the browser's FileSystemDirectoryReader has.
+  // The cursor is per-reader, as a real FileSystemDirectoryReader's is: a fresh
+  // `createReader()` restarts from the top, which is exactly why the drain loop
+  // must reuse one reader rather than making a new one each pass.
+  const dir = (name, batches) => ({
+    isFile: false, isDirectory: true, name,
+    createReader() {
+      let i = 0;
+      return { readEntries: (cb) => cb(i < batches.length ? batches[i++] : []) };
+    },
+  });
+  const file = (name) => ({ isFile: true, isDirectory: false, name, file: (res) => res({ name }) });
+
+  const app = dir('MyApp.app', [[ dir('Contents', [[ dir('MacOS', [[file('MyApp')]]) ]]) ]]);
+  eq((await executableInBundle(app))?.name, 'MyApp', 'a .app bundle resolves to Contents/MacOS/<bundle>');
+
+  const other = dir('Other.app', [[ dir('Contents', [[ dir('MacOS', [[file('actual-bin'), file('other')]]) ]]) ]]);
+  eq((await executableInBundle(other))?.name, 'actual-bin', 'an executable not named like its bundle falls back to the first file in Contents/MacOS');
+
+  const notApp = dir('Docs', [[file('readme.txt')]]);
+  eq(await executableInBundle(notApp), null, 'a folder with no Contents/MacOS answers null, not a wrong file');
+
+  const many = dir('Many.app', [[ dir('Contents', [[ dir('MacOS', [[file('f1'), file('f2')], [file('f3')]]) ]]) ]]);
+  eq((await executableInBundle(many))?.name, 'f1', 'a directory spanning several readEntries batches is drained, not restarted');
+  const paths = (await walk(many)).map((w) => w.path);
+  eq(paths.join(','), 'Contents/MacOS/f1,Contents/MacOS/f2,Contents/MacOS/f3', 'walk returns every file across batches, with repo-relative paths');
+}
 
 console.log(
   failed === 0

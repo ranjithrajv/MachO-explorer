@@ -159,6 +159,7 @@ if (arch !== undefined && !supportedArch(arch)) {
 }
 
 const binary = requireBinary({ argv: opts.b || opts.binary || binaryArg });
+verboseLog(flags, `disasm: reading ${binary}`);
 const notes = [];
 let r;
 
@@ -285,7 +286,7 @@ console.log(
   `\n${totalInstructions} instruction(s), ${totalBranches} direct branch(es) across ${out.length} slice(s)` +
     `${branchesOnly ? ', branches only' : ''}`,
 );
-for (const n of notes) console.log(`  note: ${n}`);
+for (const n of notes) quietLog(flags, `  note: ${n}`);
 console.log(
   '  note: linear sweep, not recursive descent — padding and any data inside the\n' +
     '        section are decoded as instructions too. No mnemonics, no CFG.',

@@ -29,7 +29,7 @@
  */
 import { requireBinary } from './target.mjs';
 import { dumpBytes } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, isVerbose, verboseLog } from './output.mjs';
 
 const { flags, opts, positional } = parseArgs(process.argv.slice(2));
 
@@ -73,6 +73,7 @@ if (!Number.isInteger(length) || length < 1) {
 }
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[1] });
+verboseLog(flags, `dump: reading ${binary}`);
 const arch = opts.arch;
 
 let r;

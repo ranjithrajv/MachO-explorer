@@ -67,6 +67,7 @@ rejectUnknownFlags(new Set(['arch', 'json']), flags, HELP);
 if (positional.length === 0) usage(HELP);
 
 const binary = requireBinary({ argv: opts.binary || opts.b });
+verboseLog(flags, `a2o: reading ${binary}`);
 const arch = opts.arch;
 
 // The same rule symlookup applies, for the same reason: a path told apart from an

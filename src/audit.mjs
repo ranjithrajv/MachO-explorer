@@ -104,6 +104,7 @@ if (flags.has('sarif') && flags.has('json')) {
 const sarif = flags.has('sarif');
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[0] });
+verboseLog(flags, `audit: reading ${binary}`);
 const arch = opts.arch;
 const strict = flags.has('strict');
 

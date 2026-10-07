@@ -170,6 +170,7 @@ if (corpusMode) {
 }
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[listMode ? 0 : 1] });
+verboseLog(flags, `findcall: reading ${binary}`);
 const notes = [];
 
 try {

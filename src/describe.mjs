@@ -67,6 +67,14 @@ rejectUnknownFlags(new Set(['sections', 'segments', 'loads', 'arch', 'json']), f
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[0] });
 
+// `-v/--verbose` and `-q/--quiet` are advertised as global flags and accepted by
+// every tool through COMMON_FLAGS, but nothing acted on them here — the flags
+// were parsed and ignored. That is the same defect `--version` had: a documented
+// flag that changes nothing is a claim the tool does not keep. Diagnostics go to
+// stderr so they cannot contaminate a `--json` stream.
+const started = Date.now();
+verboseLog(flags, `describe: reading ${binary}`);
+
 let r;
 try {
   r = describe(binary);
@@ -108,6 +116,8 @@ if (wantArch && r.slices.length > 1) {
   }
 }
 
+verboseLog(flags, `parsed ${r.slices.length} slice(s) in ${Date.now() - started}ms`);
+
 if (flags.has('json')) {
   emitJSON({ tool: 'describe', binary, ok: true, notes, data: r });
 }
@@ -117,19 +127,18 @@ for (const s of r.slices) {
   const text = s.textAddr !== null ? ` __text 0x${s.textAddr.toString(16)}+${count(s.textSize)}` : '';
   // The platform and filetype go on the summary line because they are what the
   // file *is*: an iOS app and a macOS tool otherwise print identical lines, and
-  // "which am I holding" is the first question a Mach-O raises.
-  const what = [s.platformName, s.filetypeName].filter(Boolean).join(' ');
+  // "which am I holding" is the first question a Mach-O raises. Each is printed
+  // exactly once: `filetypeName` is the flat mirror of `filetype.name`, and
+  // `platformName` of `buildVersion.platform`, so naming both spellings put the
+  // same two words on this line twice — `MH_EXECUTE  macos  macos MH_EXECUTE`.
+  //
+  // An unnamed value shows as its number rather than being dropped, because
+  // "this is not a filetype I know" and "this file does not say" differ.
   console.log(
     `  ${s.arch.padEnd(8)} file ${s.offset}..${s.offset + s.size}` +
       `  ${s.bits || '?'}-bit` +
-      // What kind of file this is, and what it was built for. Both are one word, both
-      // come from the header, and both were documented here before either was
-      // decoded — so a reader that printed neither had a binary it could not classify.
-      // An unnamed value shows as its number rather than being dropped, because
-      // "this is not a filetype I know" and "this file does not say" differ.
-      `  ${s.filetype?.name ?? (s.filetype ? `filetype ${s.filetype.raw}` : 'filetype ?')}` +
-      `  ${s.buildVersion?.platform ?? 'platform ?'}` +
-      (what ? `  ${what}` : '') +
+      `  ${s.filetypeName ?? (s.filetype ? `filetype ${s.filetype.raw}` : 'filetype ?')}` +
+      `  ${s.platformName ?? 'platform ?'}` +
       `  ${count(s.defined)} defined / ${count(s.nsyms)} symbols` +
       `  ${s.codeSections} code section(s)${text}`,
   );
@@ -142,7 +151,9 @@ for (const s of r.slices) {
         ` findcall, findliteral and --strings cannot read it`,
     );
   }
-  if (s.minos) console.log(`           minos ${s.minos}  sdk ${s.sdk}`);
+  // `minos`/`sdk` are printed once, below with the rest of `LC_BUILD_VERSION` —
+  // `s.minos` is the flat mirror of `buildVersion.minos.text`, so emitting both
+  // here and there put the same line on screen twice.
   // The UUID identifies a *build*, which is the one thing a describe tool is
   // uniquely placed to answer: two binaries with identical sizes and symbol
   // counts can still be different builds, and this is what tells them apart.
@@ -302,5 +313,7 @@ if (flags.has('loads')) {
   }
 }
 
-console.log('');
-for (const n of notes) console.log(`  note: ${n}`);
+// The trailing notes are commentary about the parse, not the parse — suppress
+// them under `--quiet`, which is what that flag is documented to do.
+quietLog(flags, '');
+for (const n of notes) quietLog(flags, `  note: ${n}`);

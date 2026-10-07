@@ -242,7 +242,7 @@ Addresses are emitted as `"0x..."` strings, never JSON numbers. A 64-bit virtual
 
 ### describe
 
-What is in this binary? Reports every slice with its architecture, extent, symbol counts, `__TEXT` bounds, UUID, header flags, entry point, rpaths, source version, and linked libraries.
+What is in this binary? Reports every slice with its architecture and bitness, filetype and platform, extent, symbol counts, `__TEXT` bounds, UUID, header flags, entry point, minimum OS and SDK, rpaths, source version, and linked libraries.
 
 ```sh
 macho-explorer describe /usr/local/go/bin/go
@@ -260,18 +260,24 @@ macho-explorer describe --loads /usr/local/go/bin/go
 | `--loads` | List every load command by name and size |
 | `--arch=<name>` | Read one slice of a universal binary |
 
-**Example output:**
+**Example output** — a real capture, `macho-explorer describe /bin/ls`. The binary
+differs from the `go` one above; the *shape* is what the listing is for, and the
+filetype and platform columns are the part a reader checks first:
 
 ```
-/usr/local/go/bin/go — 14.5 MB, universal, 2 slice(s)
+/bin/ls — 0.1 MB, universal, 2 slice(s)
 
-  x86_64   file 0..85082112  64-bit  19526 defined / 19526 symbols  1 code section(s) __text 0x100000170+5880564
+  x86_64   file 16384..64512  64-bit  MH_EXECUTE  macos  1 defined / 93 symbols  3 code section(s) __text 0x100000718+15,095
            uuid 36c0025e-345b-3249-9632-57ecd522df3b
            flags MH_NOUNDEFS MH_DYLDLINK MH_TWOLEVEL MH_PIE
            entry entryoff 2424 stack 0  (no address derived; see --json entryPoint.note)
+           dylib /usr/lib/libutil.dylib
+           dylib /usr/lib/libncurses.5.4.dylib
            dylib /usr/lib/libSystem.B.dylib
            source version 479.0.0.0.0
-  arm64e   file 85082112..170164224  64-bit  19526 defined / 19526 symbols  1 code section(s) __text 0x100000170+5880564
+           minos 10.14.0  sdk 26.6.1
+           (1 tool record(s) not read)
+  arm64e   file 65536..154208  64-bit  MH_EXECUTE  macos  1 defined / 92 symbols  2 code section(s) __text 0x100000700+15,268
            ...
 ```
 

@@ -78,6 +78,7 @@ if (flags.has('help') || flags.has('h')) {
 rejectUnknownFlags(new Set(['symbols', 'strings', 'max', 'min', 'compact', 'arch', 'json']), flags, HELP);
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[0] });
+verboseLog(flags, `overview: reading ${binary}`);
 
 // A number in the wrong flag is a usage error rather than a silent default,
 // because `--max=abc` falling back to 4000 would answer a different question
@@ -174,5 +175,5 @@ console.log('');
 console.log(`not read by this package (${r.notRead.length}):`);
 for (const n of r.notRead) console.log(`  - ${n}`);
 
-console.log('');
-for (const n of notes) console.log(`  note: ${n}`);
+quietLog(flags, '');
+for (const n of notes) quietLog(flags, `  note: ${n}`);

@@ -2844,6 +2844,41 @@ console.log('\na2o / o2a: address and file offset');
         'every documented flag combination is still accepted',
         stillWorks.join('; '),
       );
+
+      // `-v` must add stderr diagnostics and change nothing on stdout.
+      //
+      // Checked in both directions on every documented invocation: a tool that
+      // accepts `-v` and does nothing fails the first half, and a diagnostic that
+      // leaked into the data would fail the second. Both are the same class of
+      // defect as `--version` was — a documented flag that does not keep its
+      // promise — which is why this runs the whole invocation list rather than
+      // sampling one tool.
+      const verboseBad = [];
+      for (const [tool, args] of invocations) {
+        const plain = run(tool, args);
+        const verbose = run(tool, [...args, '-v']);
+        if (!/^\[verbose\]/m.test(verbose.stderr)) verboseBad.push(`${tool}: no [verbose] line`);
+        if (verbose.stdout !== plain.stdout) verboseBad.push(`${tool}: stdout changed under -v`);
+      }
+      check(
+        verboseBad.length === 0,
+        '-v adds stderr diagnostics and leaves stdout unchanged',
+        verboseBad.join('; '),
+      );
+
+      // `-q` suppresses the trailing notes and keeps the data. `--arch` naming an
+      // absent slice is a note, so a universal binary drives both halves: the note
+      // is present without `-q` and gone with it, while the listing stays.
+      const uni = binaries.find((b) => b.stem === 'universal')?.path;
+      if (uni) {
+        const normal = run('describe', ['--arch=ppc', uni]);
+        const quiet = run('describe', ['--arch=ppc', '-q', uni]);
+        check(
+          /note:/.test(normal.stdout) && !/note:/.test(quiet.stdout) && /slice/.test(quiet.stdout),
+          'describe -q drops the --arch note and keeps the listing',
+          `normal noted=${/note:/.test(normal.stdout)}, quiet noted=${/note:/.test(quiet.stdout)}`,
+        );
+      }
     }
   }
 
@@ -2867,6 +2902,35 @@ console.log('\na2o / o2a: address and file offset');
     check(
       bad.length === 0,
       'every tool answers --help and -h with usage and exit 0',
+      bad.length ? bad.join('; ') : `${TOOLS.length} tools x 2 flags`,
+    );
+  }
+
+  // `--version` and `-V` must print the package version and exit 0 on every tool.
+  //
+  // Both were accepted (`COMMON_FLAGS`) and then ignored, so `describe --version`
+  // silently analyzed the default binary instead — a flag that produced a
+  // confident answer to a question nobody asked, which is the failure mode this
+  // project keeps having to design against. Asserted on every tool rather than on
+  // one, because the handling lives in the shared `rejectUnknownFlags` and a tool
+  // that stopped calling it would lose the flag silently.
+  {
+    const { TOOLS } = await import('../src/output.mjs');
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    const want = `macho-explorer ${pkg.version}`;
+    const bad = [];
+    for (const t of TOOLS) {
+      for (const flag of ['--version', '-V']) {
+        const r = run(t, [flag]);
+        const out = (r.stdout + r.stderr).trim();
+        if (r.code !== 0 || !out.includes(want)) {
+          bad.push(`${t} ${flag}: exit ${r.code} ${JSON.stringify(out.slice(0, 60))}`);
+        }
+      }
+    }
+    check(
+      bad.length === 0,
+      'every tool answers --version and -V with the package version and exit 0',
       bad.length ? bad.join('; ') : `${TOOLS.length} tools x 2 flags`,
     );
   }

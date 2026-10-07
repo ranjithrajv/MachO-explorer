@@ -44,6 +44,7 @@
 
 import fs from 'node:fs';
 import { NOT_READ } from './notread.mjs';
+import { version } from './version.mjs';
 
 /**
  * Envelope keys every tool emits, so consumers can rely on the shape.
@@ -121,6 +122,21 @@ export const COMMON_FLAGS = new Set(['h', 'help', 'b', 'binary', 'q', 'quiet', '
  * @param {string[]}   usageLines   printed above the error
  */
 export function rejectUnknownFlags(known, used, usageLines) {
+  // `--version`/`-V` is advertised as a global flag by every tool's help, and
+  // `COMMON_FLAGS` makes every tool accept it — but nothing acted on it, so
+  // `macho-explorer describe --version` silently ran a full analysis of the
+  // default binary instead of printing the version. A flag that is accepted and
+  // then ignored is worse than one that is refused: the reader gets a confident
+  // answer to a question they did not ask.
+  //
+  // Handled here, at the one function every tool funnels through before it
+  // touches its arguments, because every caller already passes its parsed flags
+  // through it and none can forget it. It cannot live in `parseArgs`, which is a
+  // pure function with no business exiting a process.
+  if (used.has('version') || used.has('V')) {
+    writeAllSync(1, `macho-explorer ${version()}\n`);
+    process.exit(EXIT.ok);
+  }
   const unknown = [...used].filter((f) => !known.has(f) && !COMMON_FLAGS.has(f));
   if (!unknown.length) return;
   const [long] = unknown;

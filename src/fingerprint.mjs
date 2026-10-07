@@ -110,6 +110,9 @@ if (sarif && positional.length < 2) {
 }
 
 const first = requireBinary({ argv: opts.b || opts.binary || positional[0] });
+verboseLog(flags, positional.length === 2
+  ? `fingerprint: comparing ${first} vs ${positional[1]}`
+  : `fingerprint: reading ${first}`);
 
 let result;
 let comparing = false;
@@ -191,6 +194,6 @@ for (const row of result.byArch) {
   console.log(`  ${row.arch.padEnd(8)} ${short(row.fingerprint)} vs ${short(row.other)}  ${verdict}`);
 }
 console.log(`\n  ${result.verdict}`);
-if (result.caveat) console.log(`  note: ${result.caveat}`);
+if (result.caveat) quietLog(flags, `  note: ${result.caveat}`);
 
 process.exit(status);

@@ -84,6 +84,7 @@ const listStrings = flags.has('strings');
 if (!listStrings && !positional[0]) usage(HELP);
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[listStrings ? 0 : 1] });
+verboseLog(flags, `findliteral: reading ${binary}`);
 const textOnly = flags.has('text');
 const needle = listStrings ? null : Buffer.from(positional[0], 'latin1');
 
@@ -187,7 +188,7 @@ if (listStrings) {
     );
   }
 }
-if (r.count === 0) for (const n of notes) console.log(`  note: ${n}`);
+if (r.count === 0) for (const n of notes) quietLog(flags, `  note: ${n}`);
 
 // Exit 1 for "ran, found nothing" — the same negative-result code --json
 // reports. The JSON path set this and the text path did not, so the two

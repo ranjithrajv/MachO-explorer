@@ -249,13 +249,14 @@ if (corpusSpec !== undefined) {
     `\n${count(looked)} Mach-O read, ${count(corpus.totals.skipped)} non-Mach-O skipped, ` +
       `${count(unreadable)} unreadable`,
   );
-  if (corpus.note) console.log(`  note: ${corpus.note}`);
+  if (corpus.note) quietLog(flags, `  note: ${corpus.note}`);
   process.exit(status);
 }
 
 /* ---- single-binary mode --------------------------------------------- */
 
 const binary = requireBinary({ argv: explicitBinary || positional[1] });
+verboseLog(flags, `sym: reading ${binary}`);
 const max = positional[2] !== undefined ? Number(positional[2]) : 4000;
 if (!Number.isFinite(max) || max <= 0) usage(['max must be a positive number']);
 

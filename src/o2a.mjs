@@ -65,6 +65,7 @@ rejectUnknownFlags(new Set(['arch', 'json']), flags, HELP);
 if (positional.length === 0) usage(HELP);
 
 const binary = requireBinary({ argv: opts.binary || opts.b });
+verboseLog(flags, `o2a: reading ${binary}`);
 const arch = opts.arch;
 
 // A bare decimal is unambiguous, but `0x` is required for hex so that `10` is

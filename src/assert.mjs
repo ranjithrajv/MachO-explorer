@@ -41,7 +41,7 @@
  */
 import { requireBinary } from './target.mjs';
 import { assertBinary } from './api.mjs';
-import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, count } from './output.mjs';
+import { parseArgs, emitJSON, usage, EXIT, rejectUnknownFlags, count, isVerbose, verboseLog } from './output.mjs';
 
 const { flags, opts, positional, valued } = parseArgs(process.argv.slice(2));
 
@@ -97,6 +97,7 @@ if (assertions.length === 0) {
 }
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[0] });
+verboseLog(flags, `assert: reading ${binary}`);
 const arch = opts.arch;
 
 let r;

@@ -66,6 +66,7 @@ const literal = positional[0];
 if (!literal) usage(HELP);
 
 const binary = requireBinary({ argv: opts.b || opts.binary || positional[1] });
+verboseLog(flags, `mapliteral: reading ${binary}`);
 // Positional offsets only when the binary came positionally too; with -b the
 // first position after the literal is the first offset.
 const offsets = positional.slice(opts.b || opts.binary ? 1 : 2).map((a) => {
@@ -121,7 +122,7 @@ for (const m of r.locations) {
   if (m.pointersTruncated) console.log(`        ... and more, capped at ${m.pointers.length}`);
 }
 for (const u of r.unmapped) console.log(`  file 0x${u.off.toString(16)} -> UNMAPPED`);
-for (const n of notes) console.log(`\n  note: ${n}`);
+for (const n of notes) quietLog(flags, `\n  note: ${n}`);
 
 // Same status as the `--json` branch above: a literal that matched nothing is a
 // negative result (1), not a success and not a failure. Without this the text
