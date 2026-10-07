@@ -4,7 +4,9 @@ All notable changes to this project are documented here. The format is loosely
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 semver for the public API (`src/api.mjs` and the `--json` envelope).
 
-## [Unreleased]
+## [0.1.0-alpha.1] — 2026-10-07
+
+First pre-release. Everything below is what this alpha ships.
 
 ### Added
 
@@ -362,7 +364,7 @@ accepted and ignored, and that `mapliteral` accepts file offsets as positionals 
 way the skill's recipe shows. Both caught invented flags in the skill prose
 (`--offsets`, and a `--no-audit` that does not exist).
 
-## [0.1.0] — 2026-10-04
+## [0.1.0] — unreleased
 
 First release. Mach-O introspection for Apple binaries: one auditable,
 dependency-free reader with a CLI, a library API, an MCP server, a conformance
@@ -405,4 +407,5 @@ corpus and a client-side browser demo.
 - **Licence**: MPL-2.0. It does not extend to any binary the reader is
   pointed at.
 
+[0.1.0-alpha.1]: https://github.com/ranjithrajv/MachO-explorer/releases/tag/v0.1.0-alpha.1
 [0.1.0]: https://github.com/ranjithrajv/MachO-explorer/releases/tag/v0.1.0

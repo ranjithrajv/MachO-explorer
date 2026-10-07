@@ -1,6 +1,6 @@
 {
   "name": "macho-explorer",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "type": "module",
   "description": "Inspect Apple binaries from anywhere. Dependency-free Mach-O introspection for macOS, iOS, iPadOS, tvOS, watchOS and visionOS binaries — fat headers, symbols, address↔offset, xrefs, byte-literal search, a CI-gate audit and a rebuild-invariant diff. One auditable file: no install, no build, no network; reads Mac binaries from Linux or Windows and runs in a browser with no upload. Emits a versioned JSON contract; ships an MCP server and an Agent Skill.",
   "keywords": [
