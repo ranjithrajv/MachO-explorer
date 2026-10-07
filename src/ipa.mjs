@@ -185,27 +185,54 @@ function readEntry(buf, entry) {
 }
 
 /**
- * Find the .app directory inside an .ipa.
+ * Find the `.app` directory inside an `.ipa`.
  *
- * The convention is `Payload/<AppName>.app/`. We look for any entry whose
- * path matches that pattern.
+ * The convention is `Payload/<AppName>.app/`. An explicit directory entry is the
+ * cleanest evidence, so it is preferred — but many ZIP writers, including several
+ * that Apple's own tooling has shipped, record **no** entry for a directory that
+ * holds files. A reader that only matched directory entries would report "no .app
+ * found" for a perfectly ordinary `.ipa`, which is the same confident negative the
+ * rest of this package exists to avoid.
+ *
+ * So a file path under `Payload/<name>.app/` is taken as equally good evidence, and
+ * the two tests run in one pass: the explicit entry wins where one exists, and the
+ * file-derived name fills the gap where it does not.
  *
  * @param {Array} entries
  * @returns {string|null} the .app directory name, e.g. `Payload/MyApp.app`
  */
 function findAppDirectory(entries) {
+  let fromFile = null;
   for (const entry of entries) {
-    const m = entry.name.match(/^Payload\/([^/]+)\.app\/$/);
-    if (m) return `Payload/${m[1]}.app`;
+    const dir = entry.name.match(/^Payload\/([^/]+)\.app\/$/);
+    if (dir) return `Payload/${dir[1]}.app`;
+    if (!fromFile) {
+      const file = entry.name.match(/^Payload\/([^/]+)\.app\//);
+      if (file) fromFile = `Payload/${file[1]}.app`;
+    }
   }
-  return null;
+  return fromFile;
 }
 
 /**
- * Find the Mach-O executable inside an .app directory within an .ipa.
+ * Find the Mach-O executable inside an `.app` directory within an `.ipa`.
  *
- * The executable name matches the .app directory name. We look for an entry
- * at `Payload/<AppName>.app/<AppName>` that is a valid Mach-O binary.
+ * ## Two layouts, because two platforms ship them
+ *
+ * An **iOS** `.app` is flat: the executable sits directly in the bundle, at
+ * `Payload/<AppName>.app/<AppName>`. That is the shape of every `.ipa` on the App
+ * Store, and it is the one the file format's own header describes.
+ *
+ * A **macOS** `.app` nests it under `Contents/MacOS/`. An `.ipa` only ever carries
+ * the first, but this reader is also handed `.app` directories extracted from macOS
+ * packages, and the shared `bundleLayout()` knows that convention. Searching only the
+ * nested path — which is what the first version did — finds nothing in a real `.ipa`,
+ * because `Payload/<AppName>.app/Contents/MacOS/` does not exist in one.
+ *
+ * The named path is tried first for each layout, then the largest Mach-O anywhere
+ * under the bundle, because a bundle may carry frameworks and helper executables and
+ * the one the user means is normally the largest. The name match is authoritative
+ * when there is one.
  *
  * @param {Buffer} buf
  * @param {Array} entries
@@ -215,22 +242,26 @@ function findAppDirectory(entries) {
 function findExecutableInApp(buf, entries, appDir) {
   const appName = path.basename(appDir).replace(/\.app$/, '');
   const macosDir = bundleLayout().macosDir.join('/');
-  const exePath = `${appDir}/${macosDir}/${appName}`;
 
-  // First try the conventional path.
-  const byName = entries.find((e) => e.name === exePath);
-  if (byName) {
-    const data = readEntry(buf, byName);
+  // iOS layout first: `Payload/MyApp.app/MyApp`.
+  const flat = entries.find((e) => e.name === `${appDir}/${appName}`);
+  if (flat) {
+    const data = readEntry(buf, flat);
     if (isMachOBuffer(data)) return data;
   }
 
-  // Fallback: find any Mach-O in the MacOS directory.
-  const prefix = `${appDir}/${macosDir}/`;
-  const candidates = entries.filter(
-    (e) => e.name.startsWith(prefix) && !e.name.endsWith('/'),
-  );
+  // macOS layout: `Payload/MyApp.app/Contents/MacOS/MyApp`.
+  const nested = entries.find((e) => e.name === `${appDir}/${macosDir}/${appName}`);
+  if (nested) {
+    const data = readEntry(buf, nested);
+    if (isMachOBuffer(data)) return data;
+  }
 
-  // Sort by size descending — the main executable is usually the largest.
+  // Fallback: any Mach-O in the bundle, largest first, so a helper that happens to
+  // share the name does not shadow the main executable and a bundle with no name
+  // match still answers.
+  const prefix = `${appDir}/`;
+  const candidates = entries.filter((e) => e.name.startsWith(prefix) && !e.name.endsWith('/'));
   candidates.sort((a, b) => b.uncompressedSize - a.uncompressedSize);
 
   for (const entry of candidates) {
@@ -254,30 +285,21 @@ export function resolveIpa(ipaPath) {
   let buf;
   try {
     buf = fs.readFileSync(ipaPath);
-  } catch (e) {
-    console.error('DEBUG: readFileSync failed:', e.message);
+  } catch {
     return null;
   }
 
   let entries;
   try {
     entries = parseCentralDirectory(buf);
-  } catch (e) {
-    console.error('DEBUG: parseCentralDirectory failed:', e.message);
+  } catch {
     return null;
   }
 
-  console.error('DEBUG: entries found:', entries.length);
-  for (const e of entries) {
-    console.error('DEBUG: entry:', e.name);
-  }
-
   const appDir = findAppDirectory(entries);
-  console.error('DEBUG: appDir:', appDir);
   if (!appDir) return null;
 
   const exeBytes = findExecutableInApp(buf, entries, appDir);
-  console.error('DEBUG: exeBytes:', exeBytes ? exeBytes.length : null);
   if (!exeBytes) return null;
 
   // Write to a temp file so the existing tools can read it.

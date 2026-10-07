@@ -76,7 +76,11 @@ function makeZip(entries) {
     ch.writeUInt16LE(0, 34);
     ch.writeUInt16LE(0, 36);
     ch.writeUInt16LE(0, 38);
-    ch.writeUInt32LE(0, 42);
+    // The local header's offset, not a literal 0. Writing 0 for every entry is the
+    // bug this test shipped with: `readEntry` followed offset 0 and read the *first*
+    // entry's bytes for every name, so the one test that covered `.ipa` extraction
+    // exercised a broken fixture and failed against a correct reader.
+    ch.writeUInt32LE(offset, 42);
     centralHeaders.push(ch, nameBuf);
 
     offset += 30 + nameBuf.length + data.length;
@@ -119,13 +123,12 @@ assert(!isIpa('test.app'), 'isIpa rejects .app');
 assert(!isIpa('test.dmg'), 'isIpa rejects .dmg');
 assert(!isIpa(null), 'isIpa handles null');
 
-// Test resolveIpa with a valid IPA
+// Test resolveIpa with a valid IPA in the iOS layout, which is what every App Store
+// .ipa uses: the executable is flat inside the bundle, not under Contents/MacOS/.
 const macho = makeMachO();
 const ipa = makeZip([
   { name: 'Payload/TestApp.app/', data: Buffer.alloc(0) },
-  { name: 'Payload/TestApp.app/Contents/', data: Buffer.alloc(0) },
-  { name: 'Payload/TestApp.app/Contents/MacOS/', data: Buffer.alloc(0) },
-  { name: 'Payload/TestApp.app/Contents/MacOS/TestApp', data: macho },
+  { name: 'Payload/TestApp.app/TestApp', data: macho },
   { name: 'Payload/TestApp.app/Info.plist', data: Buffer.from('<?xml version="1.0"?><plist></plist>') },
 ]);
 
@@ -142,6 +145,17 @@ if (result) {
   cleanupIpa(result);
   assert(!fs.existsSync(result), 'cleanupIpa removes the temp file');
 }
+
+// A macOS-shaped bundle inside an .ipa — nested under Contents/MacOS/ — is found too,
+// so an archive built by this project's own test fixtures still resolves.
+const macLayout = makeZip([
+  { name: 'Payload/TestApp.app/', data: Buffer.alloc(0) },
+  { name: 'Payload/TestApp.app/Contents/MacOS/TestApp', data: macho },
+]);
+const macLayoutPath = path.join(os.tmpdir(), `test-ipa-mac-${process.pid}.ipa`);
+fs.writeFileSync(macLayoutPath, macLayout);
+const macResult = resolveIpa(macLayoutPath);
+assert(macResult !== null, 'resolveIpa finds an executable nested under Contents/MacOS/');
 
 // Test resolveIpa with a non-IPA file
 const notIpa = path.join(os.tmpdir(), `test-not-ipa-${process.pid}.txt`);
@@ -162,7 +176,7 @@ fs.writeFileSync(noAppPath, noApp);
 assert(resolveIpa(noAppPath) === null, 'resolveIpa returns null when no .app found');
 
 // Cleanup
-for (const f of [tmpIpa, notIpa, badZip, noAppPath]) {
+for (const f of [tmpIpa, notIpa, badZip, noAppPath, macLayoutPath]) {
   try { fs.unlinkSync(f); } catch { /* best effort */ }
 }
 
