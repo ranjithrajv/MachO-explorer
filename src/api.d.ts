@@ -113,6 +113,17 @@ export declare function filetypeName(n: number | null): string | null;
 export declare const NOT_READ: readonly string[];
 
 /**
+ * Apple ecosystem containers that wrap a Mach-O inside an archive, disk image or
+ * bundle — the `.ipa`, `.dmg`, `.pkg` and the rest a user is most likely to have
+ * on disk and to mistake for a binary. See `src/container.mjs`.
+ */
+export declare const APPLE_CONTAINERS: readonly {
+  ext: string;
+  hint: string;
+  containsMachO: boolean;
+}[];
+
+/**
  * What this package reads, as data.
  *
  * Appended to the message for a file that is Apple packaging rather than a binary,

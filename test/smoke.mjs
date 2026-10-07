@@ -3294,6 +3294,74 @@ console.log('\napi.mjs (importable, no subprocess):');
       'a non-Mach-O is reported rather than parsed as an empty one',
       threwOnNonMachO ? 'throws' : 'returns',
     );
+
+    // ---- a container gets a message that says what to hand over instead ----
+    //
+    // The point of the message is not that it exists but that it answers the
+    // question the refusal raises. "not a Mach-O binary" about a `.dmg` is true and
+    // useless; the user's next move is to ask "then what do you take?", and an error
+    // that does not answer it leaves them guessing from a filename. So the checks
+    // below are on the *content*: the packaging is named, the extraction is spelled
+    // out, and the accepted formats are listed.
+    {
+      const { containerMessage } = await import('../src/container.mjs');
+      const tmpDmg = path.join(os.tmpdir(), `macho-smoke-${process.pid}.dmg`);
+      fs.writeFileSync(tmpDmg, 'not really a disk image');
+      try {
+        let e = null;
+        try { describeFile(tmpDmg); } catch (err) { e = err; }
+        check(
+          e !== null && e.code === 'unknown-encoding',
+          'a .dmg is refused as unknown-encoding, not io',
+          e ? e.code : 'did not throw',
+        );
+        check(
+          e !== null && /disk image/.test(e.message) && /hdiutil/.test(e.message),
+          'the .dmg message names the packaging and how to open it',
+          e ? e.message.split('\n')[0].slice(0, 90) : '',
+        );
+        check(
+          e !== null && /accepted instead:/.test(e.message) && /Mach-O binary/.test(e.message),
+          'the .dmg message lists the accepted formats',
+          e ? 'accepted block present' : '',
+        );
+        check(
+          e !== null && !e.message.startsWith(tmpDmg),
+          'the message does not repeat the path the caller prints itself',
+          e ? e.message.slice(0, 40) : '',
+        );
+        check(e !== null && e.path === tmpDmg, 'the error carries the path it refused', e?.path ?? '');
+
+        // The same for an .ipa, whose packaging is the one the message has to be
+        // most careful about: the CLI reads one, so "extract it" is only right once
+        // extraction has actually been tried and failed.
+        const tmpIpa = path.join(os.tmpdir(), `macho-smoke-${process.pid}.ipa`);
+        fs.writeFileSync(tmpIpa, 'not really a zip');
+        const ipaMsg = containerMessage(tmpIpa);
+        check(
+          ipaMsg !== null && /iOS app archive/.test(ipaMsg) && /Payload/.test(ipaMsg),
+          'the .ipa message names the archive and its Payload/ layout',
+          ipaMsg ? ipaMsg.split('\n')[0].slice(0, 90) : '',
+        );
+        fs.unlinkSync(tmpIpa);
+
+        // A file this module does not recognise is left to the generic message: a
+        // table that claimed every extension would turn every typo into confident
+        // advice about packaging the file does not have.
+        check(containerMessage('/tmp/definitely-not-a-container.txt') === null, 'an unknown extension gets no container message');
+
+        // `.car` and `.xcresult` hold no Mach-O, so "extract it" would be advice
+        // that cannot work. They must not say it.
+        const carMsg = containerMessage('Assets.car');
+        check(
+          carMsg !== null && /no Mach-O/.test(carMsg) && !/Extract the Mach-O executable/.test(carMsg),
+          'a container with no Mach-O does not tell the user to extract one',
+          carMsg ? carMsg.split('\n')[0].slice(0, 90) : '',
+        );
+      } finally {
+        try { fs.unlinkSync(tmpDmg); } catch { /* best effort */ }
+      }
+    }
   }
 }
 

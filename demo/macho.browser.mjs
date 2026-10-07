@@ -786,7 +786,7 @@ function parseCrash(text, source = '<crash>') {
  * "extract it and try again" road would be advice that cannot work.
  */
 const APPLE_CONTAINERS = [
-  { ext: '.ipa', hint: 'an iOS app archive — a ZIP holding Payload/<App>.app, which the CLIs extract for you', containsMachO: true },
+  { ext: '.ipa', hint: 'an iOS app archive — a ZIP holding Payload/<app>.app', containsMachO: true },
   { ext: '.dmg', hint: 'a disk image — mount it (`hdiutil attach`) and point this tool at the Mach-O inside', containsMachO: true },
   { ext: '.pkg', hint: 'an installer package — expand it (`pkgutil --expand`) and point this tool at the Mach-O inside', containsMachO: true },
   { ext: '.mpkg', hint: 'a multi-package installer — extract it and point this tool at the Mach-O inside', containsMachO: true },
@@ -819,7 +819,7 @@ const APPLE_CONTAINERS = [
 const ACCEPTED = [
   'a Mach-O binary, thin or universal (fat) — any filename, extension or none',
   'an application bundle — the executable inside it is found for you',
-  'an .ipa archive — the executable inside Payload/ is extracted for you',
+  'an .ipa archive — the CLI extracts the executable inside and reads that',
   'a .tbd text stub — but only for `macho-explorer tbd`, which reads what it exports',
 ];
 
@@ -4130,6 +4130,11 @@ function disassemble(path, { addr = null, arch = null, count = 32, bytes = 0 } =
  */
 
 
+// Re-exported so the container knowledge is reachable through the package's one
+// supported entry point. `src/container.mjs` is a leaf that no door may disagree
+// about, but it is not itself an `exports` map entry, so a consumer that wants to
+// tell packaging from a binary would otherwise have to reach into `src/`.
+
 // Text stubs are a different format in a different file, so they get their own
 // reader rather than a branch in the Mach-O one. What they share is the shape of
 // the answer: plain objects, nothing thrown for a negative answer, a thrown error
@@ -4184,7 +4189,7 @@ function readerError(path) {
   // contradicts its own convention.
   // `containerMessage` names no path, so the caller supplies one. See the header.
   const container = containerMessage(path);
-  if (container) return Object.assign(new Error(container), { code: 'unknown-encoding' });
+  if (container) return Object.assign(new Error(container), { code: 'unknown-encoding', path });
 
   // `statSync` rather than `existsSync` because the interesting case is a path
   // that is *there* and still unreadable — a directory, a dangling symlink, a
@@ -4203,7 +4208,7 @@ function readerError(path) {
         ? 'not a Mach-O binary'
         : 'cannot be read (no such file, not a regular file, or not permitted)',
     ),
-    { code: readable ? 'unknown-encoding' : 'io' },
+    { code: readable ? 'unknown-encoding' : 'io', path },
   );
 }
 

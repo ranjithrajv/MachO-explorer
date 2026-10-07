@@ -26,6 +26,30 @@ semver for the public API (`src/api.mjs` and the `--json` envelope).
   file is `binary` — correct for the binary that is there now, which may not be the
   build that crashed. `--no-resolve` parses without reading binaries and says so in
   each frame's reason, so withholding is distinguishable from failing.
+- **A friendly message when the file is Apple packaging, not a Mach-O.** Handed a
+  `.ipa`, a `.dmg`, a `.pkg` or any of the other containers a person actually has on
+  disk, every tool now names the packaging, says how to open it, and — the part that
+  matters — lists what *is* accepted. "not a Mach-O binary" is true and useless about
+  a `.dmg`; the question it raises is "then what do you take?", and the error now
+  answers it. The table lives in `src/container.mjs` and reaches all three doors —
+  the library, the CLIs and the MCP server — from one zero-import leaf, so the
+  refusals cannot drift apart.
+- **`src/container.mjs` exports `APPLE_CONTAINERS`, `ACCEPTED`, `containerFor` and
+  `containerMessage`**, so a consumer can tell packaging from a binary without
+  matching on an English sentence.
+- `macho-explorer <tool> app.ipa` reads the executable inside `Payload/<App>.app`
+  whether the archive stores the flat iOS layout or the nested `Contents/MacOS` one.
+
+### Fixed
+
+- **The refusal message no longer prints the path twice.** `readerError` embedded the
+  path and every CLI prefixed it, so the text door printed `/tmp/F.dmg: /tmp/F.dmg:
+  …`. The message now describes the file and the caller names it, once.
+- **`.ipa` extraction finds the executable in a real App Store archive.** It searched
+  only `Payload/<App>.app/Contents/MacOS/`, which no iOS `.ipa` contains — an iOS
+  bundle is flat. It also required an explicit `.app/` directory entry, which many ZIP
+  writers omit. Both are fixed, and `test/ipa.mjs` (whose ZIP builder wrote every
+  local-header offset as `0`, so it never exercised the reader) now passes.
 
 - **`tbd` — read a `.tbd` text stub.** The only tool here that does not read a Mach-O,
   and the one that answers a question nothing else on a current macOS can.

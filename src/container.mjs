@@ -49,7 +49,7 @@
  * "extract it and try again" road would be advice that cannot work.
  */
 export const APPLE_CONTAINERS = [
-  { ext: '.ipa', hint: 'an iOS app archive — a ZIP holding Payload/<App>.app, which the CLIs extract for you', containsMachO: true },
+  { ext: '.ipa', hint: 'an iOS app archive — a ZIP holding Payload/<app>.app', containsMachO: true },
   { ext: '.dmg', hint: 'a disk image — mount it (`hdiutil attach`) and point this tool at the Mach-O inside', containsMachO: true },
   { ext: '.pkg', hint: 'an installer package — expand it (`pkgutil --expand`) and point this tool at the Mach-O inside', containsMachO: true },
   { ext: '.mpkg', hint: 'a multi-package installer — extract it and point this tool at the Mach-O inside', containsMachO: true },
@@ -82,7 +82,7 @@ export const APPLE_CONTAINERS = [
 export const ACCEPTED = [
   'a Mach-O binary, thin or universal (fat) — any filename, extension or none',
   'an application bundle — the executable inside it is found for you',
-  'an .ipa archive — the executable inside Payload/ is extracted for you',
+  'an .ipa archive — the CLI extracts the executable inside and reads that',
   'a .tbd text stub — but only for `macho-explorer tbd`, which reads what it exports',
 ];
 

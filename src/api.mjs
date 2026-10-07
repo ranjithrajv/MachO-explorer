@@ -45,6 +45,12 @@
 import fs from 'node:fs';
 import pathModule from 'node:path';
 import { containerMessage } from './container.mjs';
+
+// Re-exported so the container knowledge is reachable through the package's one
+// supported entry point. `src/container.mjs` is a leaf that no door may disagree
+// about, but it is not itself an `exports` map entry, so a consumer that wants to
+// tell packaging from a binary would otherwise have to reach into `src/`.
+export { APPLE_CONTAINERS, ACCEPTED, containerFor, containerMessage } from './container.mjs';
 import {
   opener, isMachOFile, slicesOf, parseThin, readSymbols, preferredSlice,
   richestSlice, sliceName, sliceArchName, platformName, filetypeName,
