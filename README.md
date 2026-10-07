@@ -1,21 +1,39 @@
 # MachO-explorer
 
 [![test](https://github.com/ranjithrajv/MachO-explorer/actions/workflows/test.yml/badge.svg)](https://github.com/ranjithrajv/MachO-explorer/actions/workflows/test.yml)
+[![licence: MPL-2.0](https://img.shields.io/badge/licence-MPL--2.0-blue.svg)](#licence)
+[![runtime dependencies: 0](https://img.shields.io/badge/runtime_dependencies-0-brightgreen.svg)](#install)
+[![Node ≥ 22.15](https://img.shields.io/badge/node-%E2%89%A5_22.15-brightgreen.svg)](#install)
 
-> **The reader you can read.** Dependency-free Mach-O introspection that runs in Node, in a browser tab, or on a phone — and names what it cannot read instead of guessing at it.
+> **Inspect Apple binaries from anywhere.** `otool`, `nm` and `class-dump` need a Mac. MachO-explorer reads Mach-O on **Linux, Windows, in a browser tab, and on a phone** — and nothing leaves the machine.
+>
+> **Mach-O introspection that machines and humans can both read.** One dependency-free file you can audit end to end, one versioned JSON contract, and an MCP server in the box.
+
+**[▶ Try it live](https://ranjithrajv.github.io/MachO-explorer/)** · **[Install](#install)** · **[What it is](#what-it-is)** · **[User manual](docs/user-manual.md)**
+
+![MachO-explorer reading a universal binary in a browser tab — the file is never uploaded](docs/assets/demo.gif)
+
+*Drop a fat binary, get its slices, symbols and structure — computed in the tab. The bytes never leave the machine.*
 
 **Verified 2026-10-07.** 0 runtime dependencies · the reader is `src/macho.mjs`, one file importing only `node:fs` and `node:crypto` · 776 checks in the reader suite, on binaries it was not written for · in the browser it returns byte-for-byte the same answers as Node. Re-run every one of those claims in five seconds, [below](#verify-it-yourself).
 
-Mach-O binary introspection for **macOS, iOS, iPadOS, tvOS, watchOS and visionOS** binaries — thin or universal, 32- or 64-bit, `arm64`, `arm64e`, `arm64_32`, `x86_64`, `i386`, `armv7`, `armv7k`. Fat headers, symbol tables, sections, `__text`, instruction boundaries and direct branch edges. **It knows nothing about any application** — no formats, no products, no save files. Every answer is a fact about the file format or about the bytes.
+## What it is
+
+Mach-O binary introspection for **macOS, iOS, iPadOS, tvOS, watchOS and visionOS** binaries — thin or universal, 32- or 64-bit, `arm64`, `arm64e`, `arm64_32`, `x86_64`, `i386`, `armv7`, `armv7k`. Fat headers, symbol tables, sections, `__text`, instruction boundaries and direct branch edges.
+
+It knows nothing about any application — no formats, no products, no save files. Every answer is a fact about the file format or about the bytes.
 
 **Mach-O is the whole scope, chosen.** This is not a toolkit that happens to include one; that focus is what pays for the depth. Under the hood it decodes instruction *boundaries* and *direct* branch displacements — lengths and edges, which are facts about the bytes — and stops there. It does not print mnemonics or operands, and it will not grow to.
 
-## Why it is different
+And underneath all of it: **the reader you can read.** `src/macho.mjs` imports only `node:fs` and `node:crypto`. Copy it into an empty directory and it parses real binaries — no `node_modules`, no build step, no network.
 
-- **One file you can read.** `src/macho.mjs` imports only `node:fs` and `node:crypto`. Copy it into an empty directory and it parses real binaries — no `node_modules`, no build step, no network. Audit it over a coffee: **[AUDITABILITY.md](AUDITABILITY.md)** is the argument and the five-second recipe.
-- **Runs where the binary is.** The same reader runs on macOS, Linux and Windows, client-side in a browser tab, and under Termux on Android — so a sensitive binary can be triaged with **nothing leaving the machine**. No upload, no server, no cloud.
-- **Built for machines first.** Every tool emits one versioned JSON envelope under `--json`, a documented exit-code contract, and a `notRead` list on every payload. An **MCP server** and an **Agent Skill** ship in the box.
-- **Honest by construction.** A negative answer is a value, not an exception: *found nothing* (exit 1) is never confused with *could not look* (exit 3). Every omission is named, in the answer and in [What it will not do](#what-it-will-not-do).
+## Who it is for
+
+- **Anyone without a Mac.** Triage a macOS or iOS binary on Linux, Windows, or a phone, where `otool` and `nm` do not exist.
+- **Anyone holding a sensitive binary.** The reader runs where the file is, so nothing is uploaded — no server, no cloud, no upload step to audit.
+- **CI authors.** `audit`'s exit status and `assert` turn structure into a policy; `fingerprint` + `diff` stop a rebuilt binary from reading as a changed program.
+- **Reverse engineers who script.** Stable JSON and stable exit codes, with no GUI in the way.
+- **Agent builders.** An **MCP server** and an **Agent Skill** ship in the box.
 
 ## Install
 
@@ -23,7 +41,12 @@ Mach-O binary introspection for **macOS, iOS, iPadOS, tvOS, watchOS and visionOS
 npm install -g macho-explorer        # Node ≥ 22.15
 ```
 
-Zero dependencies. Or vendor `src/`. Or copy **`src/macho.mjs` alone** — the whole raw reader, one auditable file, no lockfile and no install step.
+Zero dependencies. Or vendor `src/`. Or copy **`src/macho.mjs` alone** — the whole raw reader, one auditable file, no lockfile and no install step. Running from a clone needs nothing but Node:
+
+```sh
+git clone https://github.com/ranjithrajv/MachO-explorer && cd MachO-explorer
+node src/macho-explorer.mjs describe /usr/local/go/bin/go
+```
 
 ## Quick start
 
@@ -59,6 +82,13 @@ macho-explorer findcall --json 0x100085c30 /usr/local/go/bin/go | jq '.count'
 | `tbd` | What does this library export? A `.tbd` text stub — the only readable record of a system dylib since macOS 11 |
 | `symbolicate` | Turn a crash report into named frames, and say *why* every frame it could not name was not named |
 | `mcp` | Serve the tools over the Model Context Protocol (JSON-RPC on stdin/stdout) |
+
+## Why it is different
+
+- **Runs where the binary is.** The same reader runs on macOS, Linux and Windows, client-side in a browser tab, and under Termux on Android — so a sensitive binary can be triaged with **nothing leaving the machine**. No upload, no server, no cloud.
+- **One file you can read.** `src/macho.mjs` imports only `node:fs` and `node:crypto`. Copy it into an empty directory and it parses real binaries — no `node_modules`, no build step, no network. Audit it over a coffee: **[AUDITABILITY.md](AUDITABILITY.md)** is the argument and the five-second recipe.
+- **Built for machines first.** Every tool emits one versioned JSON envelope under `--json`, a documented exit-code contract, and a `notRead` list on every payload. An **MCP server** and an **Agent Skill** ship in the box.
+- **Honest by construction.** A negative answer is a value, not an exception: *found nothing* (exit 1) is never confused with *could not look* (exit 3). Every omission is named, in the answer and in [What it will not do](#what-it-will-not-do).
 
 ## Three things worth seeing
 
@@ -216,6 +246,8 @@ The counts and verdicts are the claim; the timings only set expectations. `mutat
 ## Contributing
 
 Pull requests welcome, with one thing to read first: the scope above is a decision, not a backlog. **[CONTRIBUTING.md](CONTRIBUTING.md)** covers the test for anything on the "will not do" list, the no-application-knowledge boundary, the gate a change has to pass, and what a new tool owes the package.
+
+If this is useful to you, a ⭐ helps the next person find it.
 
 ## Licence
 
