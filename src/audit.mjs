@@ -126,11 +126,10 @@ try {
   if (sarif) {
     writeAllSync(1, toJSON(auditSarif({ path: binary, slices: [], containerAbnormalities: [], counts: { errors: 0, warnings: 0 } }, { path: binary }), 2) + '\n');
   }
-  // `e.message` already names the path — `readerError` builds it that way — so the
-  // binary is not prepended here. `a2o` prints it this way; `describe` prepends a
-  // second copy and prints `/nope: /nope: cannot be read`. New code should not
-  // reproduce that.
-  console.error(e.message);
+  // The path is prefixed here, not carried in the message: `readerError` describes
+  // the file and the caller names it, so the text door prints each exactly once.
+  // Prepending unconditionally would double it for a message that did name one.
+  console.error(`${binary}: ${e.message}`);
   process.exit(EXIT.fail);
 }
 

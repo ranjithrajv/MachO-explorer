@@ -81,11 +81,22 @@ for (const arg of positional) {
   try {
     rows.push(addressToOffset(binary, BigInt(arg), { arch }));
   } catch (e) {
+    // A reader failure and a malformed address are different problems with
+    // different codes and exit statuses. Reporting a `.dmg` as `bad-address`
+    // sent the caller to fix a query that was fine while the file it named was
+    // never opened — the same confusion `symlookup` was fixed for.
+    const reader = typeof e.code === 'string' && e.code !== 'bad-address';
+    const code = reader ? e.code : 'bad-address';
+    const exit = reader ? EXIT.fail : EXIT.usage;
+    // Lead with the file when the file is the problem, and with the address when
+    // the address is. `readerError` carries the path on `.path` because its message
+    // no longer embeds one.
+    const subject = reader ? (e.path ?? binary) : arg;
     if (flags.has('json')) {
-      emitJSON({ tool: 'a2o', binary, ok: false, errors: ['bad-address'], messages: [`${arg}: ${e.message}`] }, EXIT.usage);
+      emitJSON({ tool: 'a2o', binary, ok: false, errors: [code], messages: [`${subject}: ${e.message}`] }, exit);
     }
-    console.error(`${arg}: ${e.message}`);
-    process.exit(EXIT.usage);
+    console.error(`${subject}: ${e.message}`);
+    process.exit(exit);
   }
 }
 

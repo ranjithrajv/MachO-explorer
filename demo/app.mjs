@@ -120,7 +120,11 @@ async function read(file) {
     $('result').hidden = false;
   } catch (err) {
     const code = err && err.code ? ` [${err.code}]` : '';
-    $('error').innerHTML = `<div class="err">${esc(err && err.message ? err.message : String(err))}${esc(code)}</div>`;
+    // The reader's message describes the file and no longer names it — the CLI
+    // supplies the path as a prefix and this is the same arrangement: the file the
+    // visitor dropped is the subject of the sentence, so it leads the line.
+    const subject = err && err.path ? `${esc(err.path)}: ` : '';
+    $('error').innerHTML = `<div class="err">${subject}${esc(err && err.message ? err.message : String(err))}${esc(code)}</div>`;
     $('error').hidden = false;
   }
 }

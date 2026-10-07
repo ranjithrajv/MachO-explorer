@@ -113,7 +113,7 @@ function readerError(path) {
   // contradicts its own convention.
   // `containerMessage` names no path, so the caller supplies one. See the header.
   const container = containerMessage(path);
-  if (container) return Object.assign(new Error(container), { code: 'unknown-encoding' });
+  if (container) return Object.assign(new Error(container), { code: 'unknown-encoding', path });
 
   // `statSync` rather than `existsSync` because the interesting case is a path
   // that is *there* and still unreadable — a directory, a dangling symlink, a
@@ -132,7 +132,7 @@ function readerError(path) {
         ? 'not a Mach-O binary'
         : 'cannot be read (no such file, not a regular file, or not permitted)',
     ),
-    { code: readable ? 'unknown-encoding' : 'io' },
+    { code: readable ? 'unknown-encoding' : 'io', path },
   );
 }
 

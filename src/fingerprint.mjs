@@ -123,11 +123,15 @@ try {
     result = fingerprint(first, { arch });
   }
 } catch (e) {
-  const which = comparing && e.message.includes(positional[1]) ? positional[1] : first;
+  // `e.path` is the file the reader rejected, set by `readerError` since the message
+  // no longer embeds one. The previous test — does the message mention the second
+  // path — only worked while the message happened to carry the path, and would
+  // silently blame the first binary once it did not.
+  const which = e.path ?? (comparing && e.message.includes(positional[1]) ? positional[1] : first);
   if (flags.has('json')) {
     emitJSON({ tool: 'fingerprint', binary: which, ok: false, errors: [e.code ?? 'io'], messages: [e.message] }, EXIT.fail);
   }
-  console.error(e.message);
+  console.error(`${which}: ${e.message}`);
   process.exit(EXIT.fail);
 }
 

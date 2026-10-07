@@ -73,7 +73,7 @@ try {
   if (flags.has('json')) {
     emitJSON({ tool: 'starts', binary, ok: false, errors: [e.code ?? 'io'], messages: [e.message] }, EXIT.fail);
   }
-  console.error(e.message);
+  console.error(`${binary}: ${e.message}`);
   process.exit(EXIT.fail);
 }
 

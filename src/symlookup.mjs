@@ -84,11 +84,16 @@ for (const arg of positional) {
     const reader = typeof e.code === 'string' && e.code !== 'bad-address';
     const code = reader ? e.code : 'bad-address';
     const exit = reader ? EXIT.fail : EXIT.usage;
+    // The reader names the file, so the file is what the line leads with. Leading
+    // with the address instead would read as "this address is bad" about a `.dmg`
+    // that was never opened. `readerError` carries the path on `.path` because its
+    // message no longer embeds one.
+    const subject = reader ? (e.path ?? binary) : arg;
     if (flags.has('json')) {
       emitJSON({ tool: 'symlookup', binary, ok: false, errors: [code],
-        messages: [`${arg}: ${e.message}`] }, exit);
+        messages: [`${subject}: ${e.message}`] }, exit);
     }
-    console.error(`${arg}: ${e.message}`);
+    console.error(`${subject}: ${e.message}`);
     process.exit(exit);
   }
 }

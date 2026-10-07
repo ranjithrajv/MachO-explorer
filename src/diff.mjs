@@ -101,7 +101,7 @@ try {
   if (flags.has('json')) {
     emitJSON({ tool: 'diff', binary: first, ok: false, errors: [e.code ?? 'io'], messages: [e.message] }, EXIT.fail);
   }
-  console.error(e.message);
+  console.error(`${first}: ${e.message}`);
   process.exit(EXIT.fail);
 }
 
