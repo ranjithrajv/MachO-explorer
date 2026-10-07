@@ -50,7 +50,7 @@ const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 
 const SUBCOMMANDS = [
   'describe', 'overview', 'sym', 'symlookup', 'findcall', 'findliteral',
   'mapliteral', 'a2o', 'o2a', 'dump', 'starts', 'assert', 'disasm', 'audit',
-  'fingerprint', 'diff', 'tbd', 'mcp',
+  'fingerprint', 'diff', 'tbd', 'symbolicate', 'mcp',
 ];
 
 const HELP = [
@@ -73,6 +73,7 @@ const HELP = [
   '  fingerprint   Program identity fingerprinting',
   '  diff          Structural diff between two binaries',
   '  tbd           Text stub (.tbd): exported symbols of a dylib',
+  '  symbolicate   Crash-report addresses to functions',
   '  mcp           MCP server (JSON-RPC over stdin/stdout)',
   '',
   'global options:',

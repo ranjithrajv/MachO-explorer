@@ -304,6 +304,7 @@ starts      /path/to/binary                    # where functions begin
 assert      /path/to/binary --has-symbol=_main --no-string=debug
 disasm      0x100085c30 /path/to/binary         # where instructions start, and where they branch
 overview    --symbols /path/to/binary           # everything at once, one slice, one call
+symbolicate crash.ips                           # crash-report addresses → functions
 ```
 
 **3. The library**, when you are writing code:

@@ -56,6 +56,7 @@ import {
   functionStartAddresses,
 } from './macho.mjs';
 import { NOT_READ } from './notread.mjs';
+import { parseCrash, imageAt } from './crash.mjs';
 
 // Text stubs are a different format in a different file, so they get their own
 // reader rather than a branch in the Mach-O one. What they share is the shape of
@@ -2759,6 +2760,169 @@ export function findCallsIn(roots, offset, {
     note: truncated
       ? `stopped after ${maxFiles} file(s) or depth ${maxDepth} — the answer covers only what was reached`
       : null,
+  };
+}
+
+/**
+ * Resolve the addresses in a crash report to functions.
+ *
+ * ## Why this is not just `symlookup` in a loop
+ *
+ * A crash report is a list of addresses in *other people's* binaries — the crashed
+ * app, Apple frameworks, whatever else was loaded. Three things make it its own
+ * problem:
+ *
+ * 1. **The numbers are not always addresses.** In an `.ips` a frame carries an
+ *    offset into an image and the base must be added; in a legacy `.crash` the
+ *    address is already absolute. `crash.mjs` answers that once, per format, and
+ *    gets it wrong in neither.
+ * 2. **The image may not exist.** Since macOS 11 the system libraries live in the
+ *    dyld shared cache with no file on disk, so most frames in a typical crash
+ *    *cannot* be resolved on the machine that produced them. The honest answer is a
+ *    reason rather than a guess.
+ * 3. **Some frames already have a symbol.** The reporter embeds one. That is a
+ *    different claim from one this package computed, so `symbolSource` says which.
+ *
+ * A frame that resolves nothing carries `reason` naming why, for the same reason
+ * every other tool here does: "this function is not known" and "there was no file to
+ * ask" send a caller to different places, and a bare `null` says neither.
+ *
+ * @param {string} crashPath
+ * @param {object}  [opts]
+ * @param {string}  [opts.arch]     prefer one architecture when an image is universal
+ * @param {boolean} [opts.resolve]  read binaries to resolve (default true)
+ * @returns {object}
+ * @throws with `code: 'io'` when the report cannot be read, `'unknown-encoding'`
+ *   when it is neither format.
+ */
+export function symbolicate(crashPath, { arch = null, resolve = true } = {}) {
+  if (typeof crashPath !== 'string' || !crashPath) throw new TypeError('symbolicate: a path is required');
+  let text;
+  try {
+    text = fs.readFileSync(crashPath, 'utf8');
+  } catch {
+    throw Object.assign(
+      new Error(`${crashPath}: cannot be read (no such file, not a regular file, or not permitted)`),
+      { code: 'io', path: crashPath },
+    );
+  }
+
+  const crash = parseCrash(text, crashPath);
+
+  // Each image is opened at most once per run, however many frames point at it. A
+  // crash with 200 frames across 40 images would otherwise re-read the same symbol
+  // tables repeatedly, which is measurable on a large universal binary.
+  const probed = new Map();
+  const probe = (path) => {
+    if (probed.has(path)) return probed.get(path);
+    let out;
+    if (!path) {
+      out = { usable: false, reason: 'the report names no path for this image' };
+    } else if (!fs.existsSync(path)) {
+      out = {
+        usable: false,
+        reason: 'not on disk — a modern Apple system library lives in the dyld shared cache, so there is no file to read',
+      };
+    } else if (!isMachOFile(path)) {
+      out = { usable: false, reason: 'the file at this path is not a Mach-O' };
+    } else {
+      out = { usable: true };
+    }
+    probed.set(path, out);
+    return out;
+  };
+
+  const threads = crash.threads.map((t) => ({
+    index: t.index,
+    id: t.id,
+    name: t.name ?? null,
+    queue: t.queue ?? null,
+    triggered: Boolean(t.triggered),
+    frames: t.frames.map((f) => {
+      const base = {
+        index: f.index,
+        image: f.image ?? null,
+        vaddr: f.vaddr === null ? null : `0x${f.vaddr.toString(16)}`,
+        symbol: f.symbolFromReport ?? null,
+        symbolSource: f.symbolSource,
+        reason: null,
+      };
+      // A symbol the report already carried *is* the answer. Nothing is computed over
+      // it: a report's own symbol is more authoritative than our lookup on a binary
+      // that may since have been rebuilt.
+      if (f.symbolFromReport) return base;
+
+      const image = f.imageIndex !== null ? crash.images[f.imageIndex] : imageAt(crash.images, f.vaddr);
+      if (!resolve) { base.reason = 'resolution was not requested (--no-resolve)'; return base; }
+      if (!image || f.vaddr === null) {
+        base.reason = f.vaddr === null
+          ? 'the report gives no address for this frame'
+          : 'no loaded image covers this address, so there is nothing to look it up in';
+        return base;
+      }
+      const usability = probe(image.path);
+      if (!usability.usable) { base.reason = usability.reason; return base; }
+      try {
+        const hit = lookupAddress(image.path, f.vaddr, { arch });
+        if (hit && hit.function) {
+          // `lookupAddress` returns the name as a string and the addresses already
+          // rendered as `0x…` strings, so nothing is re-encoded here — re-encoding
+          // would be a second place for the 64-bit rule to be got wrong.
+          base.symbol = hit.function;
+          base.symbolSource = 'binary';
+          base.functionStart = hit.start ?? null;
+          base.offset = hit.offset ?? null;
+          // Several symbols can start at one address — Go's linker writes zero-size
+          // region markers beside real symbols — so an answer that named only the
+          // first would read as the only one.
+          if (hit.aliases && hit.aliases.length) base.aliases = hit.aliases;
+        } else {
+          base.reason = 'the address is inside the image but matches no defined symbol — the image is probably stripped';
+        }
+      } catch (e) {
+        // Per-frame, not whole-run: one unreadable helper binary must not hide the
+        // other thirty-nine frames.
+        base.reason = `could not read the image: ${e.message}`;
+      }
+      return base;
+    }),
+  }));
+
+  const all = threads.flatMap((t) => t.frames);
+  return {
+    path: crashPath,
+    // Which parser ran, stated rather than inferred from the extension: the two
+    // formats disagree about whether a frame's number is an address or an offset.
+    format: crash.kind,
+    app: crash.header.app,
+    os: crash.header.os,
+    bugType: crash.header.bugType,
+    incidentId: crash.header.incidentId,
+    timestamp: crash.header.timestamp,
+    exception: crash.exception,
+    termination: crash.termination,
+    faultingThread: crash.faultingThread,
+    images: crash.images.map((i) => ({
+      name: i.name,
+      path: i.path,
+      uuid: i.uuid,
+      arch: i.arch,
+      base: i.base === null ? null : `0x${i.base.toString(16)}`,
+      size: i.size === null ? null : `0x${i.size.toString(16)}`,
+    })),
+    threads,
+    totals: {
+      threads: threads.length,
+      frames: all.length,
+      // Counted apart: `report` and `binary` are both "we have a name" but they are
+      // not the same claim, and `unresolved` is the one a caller must decide about.
+      fromReport: all.filter((f) => f.symbolSource === 'report').length,
+      fromBinary: all.filter((f) => f.symbolSource === 'binary').length,
+      unresolved: all.filter((f) => !f.symbol).length,
+    },
+    // Passed through from the parser: a legacy report that matched nothing in a frame
+    // block would otherwise read as a short stack rather than as a parse gap.
+    ...(crash.unrecognised && crash.unrecognised.length ? { unrecognised: crash.unrecognised } : {}),
   };
 }
 

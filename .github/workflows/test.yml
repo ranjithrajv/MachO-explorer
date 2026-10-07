@@ -191,6 +191,15 @@ jobs:
       # verbatim excerpts of Apple's own files, not files written to match the parser.
       - name: A text stub is read completely, or the answer is withheld
         run: node test/tbd.mjs
+      # A crash report is the one input where the *format disagreement* is the whole
+      # problem: an `.ips` frame carries an offset that needs a base added, a legacy
+      # `.crash` frame carries an address that is already absolute. Applying the wrong
+      # rule to either yields numbers that look like addresses and name the wrong
+      # function. So the suite asserts both formats agree about one logical stack, and
+      # that the frame count adds up across resolved-from-binary, resolved-from-report
+      # and unresolved.
+      - name: A crash report resolves, or names why it did not
+        run: node test/symbolicate.mjs
       - name: The published page is this repository
         run: node test/pages.mjs
       # The documentation site is rendered by a from-scratch markdown renderer, so

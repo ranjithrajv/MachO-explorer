@@ -8,6 +8,25 @@ semver for the public API (`src/api.mjs` and the `--json` envelope).
 
 ### Added
 
+- **`symbolicate` — crash-report addresses to functions** (`src/symbolicate.mjs`,
+  `src/crash.mjs`). Reads both Apple report formats and says which it read, because
+  they disagree about the one thing that matters: an `.ips` frame is an *offset into
+  an image* and the base must be added, while a legacy `.crash` frame is *already
+  absolute*. Applying the wrong rule to either yields numbers that look like
+  addresses, land inside a real image, and name the wrong function.
+  <br>Most frames in a real crash log are in Apple frameworks, and since macOS 11
+  those are not files on disk — they are in the dyld shared cache. So the honest
+  answer for them is a *reason*, and every unresolved frame carries one: "this
+  function is not known" and "there was no file to ask" send you to different
+  places, and a bare `0x…` says neither. The address and its owning image are still
+  reported, because failing to name a function is not the same as not knowing where
+  it was.
+  <br>`symbolSource` keeps two different claims apart: a symbol the report already
+  carried is `report` and is never recomputed, while one this package read out of a
+  file is `binary` — correct for the binary that is there now, which may not be the
+  build that crashed. `--no-resolve` parses without reading binaries and says so in
+  each frame's reason, so withholding is distinguishable from failing.
+
 - **`tbd` — read a `.tbd` text stub.** The only tool here that does not read a Mach-O,
   and the one that answers a question nothing else on a current macOS can.
 - `readTbd`, `findSymbol`, `findInSdk` and `parseTbd` exported from `src/api.mjs`, so

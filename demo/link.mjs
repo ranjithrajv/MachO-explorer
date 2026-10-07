@@ -50,6 +50,11 @@ const MODULES = [
   // which is the worst shape of failure: it passes a syntax check and fails silently
   // until an answer is actually requested.
   { file: 'src/notread.mjs', label: 'the omissions list every answer carries' },
+  // Before `api.mjs`, which binds `parseCrash` from it. A module the bundle omits
+  // is not a load error — the name is simply undefined until the code path that
+  // uses it runs, so a missing `crash.mjs` would surface as a crash in the browser
+  // when someone symbolicated a report, and nowhere else.
+  { file: 'src/crash.mjs', label: 'crash-report parsing, both the .ips and legacy shapes' },
   // Same rule, same reason: `api.mjs` binds `containerMessage` from this, and a
   // bundle without it still *loads* — the missing name only surfaces when someone
   // hands the reader an `.ipa` or a `.dmg`, which is exactly the moment the message

@@ -1,0 +1,113 @@
+.TH MACHO-EXPLORER 1 "October 7, 2026" "MachO-explorer 0.1.0" "User Commands"
+.SH NAME
+symbolicate \- resolve the addresses in an Apple crash report to functions
+.SH SYNOPSIS
+.B macho-explorer
+.B symbolicate
+.I report
+.RB [ \-\-json ]
+.RB [ \-\-arch= name ]
+.RB [ \-\-no\-resolve ]
+.SH DESCRIPTION
+Reads an Apple crash report and names the function each frame is in, using the
+binaries present on this machine.
+.PP
+Two report formats are supported, and they are read by two separate parsers
+because they disagree about the single most important thing in the file:
+.RS 4
+.TP
+.B .ips
+The modern format (macOS 12, iOS 15 onward). A one-line JSON header, a newline, then
+a JSON payload. A frame carries an \fIoffset into an image\fR, and the image base
+must be added to get an address.
+.TP
+.B .crash
+The legacy text format. A frame carries an address that is \fIalready absolute\fR.
+.RE
+.PP
+The format is reported in the result rather than inferred from the file extension,
+because the two are routinely saved under each other's extension and a report that
+merely changed name did not change what it is. Applying the wrong rule produces
+numbers that look like addresses, land inside a real image, and name the wrong
+function.
+.SH WHY MOST FRAMES STAY UNRESOLVED
+Since macOS 11 and iOS 13 the system libraries are not files on disk. They are baked
+into the dyld shared cache, so a path such as
+.I /usr/lib/system/libsystem_c.dylib
+does not exist and there is nothing to read. Most frames in a typical crash log are
+in Apple frameworks and therefore cannot be named on the machine that produced the
+report.
+.PP
+This tool reads no shared cache. Instead every frame it cannot resolve carries a
+.B reason
+naming why, because "this function is not known" and "there was no file to ask" send
+a reader to different places. A report that shows a bare
+.I 0x...
+for both makes you investigate the wrong one. The address and its owning image are
+still reported in that case: failing to name a function is not the same as not
+knowing where it was.
+.SH SOURCES OF A SYMBOL
+Each frame carries
+.BR symbolSource ,
+which distinguishes two claims that look identical in output:
+.RS 4
+.TP
+.B report
+The symbol was already in the report. Apple's reporter put it there. This is the
+stronger claim and nothing is computed over it.
+.TP
+.B binary
+This package read it out of a file on disk. It is correct for the binary that is
+there now, which may not be the build that crashed.
+.RE
+.PP
+The two are counted separately in
+.BR totals.fromReport
+and
+.BR totals.fromBinary .
+.SH OPTIONS
+.TP
+.BR \-\-arch= name
+Prefer one architecture when an image is a universal binary.
+.TP
+.B \-\-no\-resolve
+Parse the report and report each address with its owning image, but read no binaries.
+Every frame's
+.B reason
+says the flag was given, so this is distinguishable from a failure to resolve.
+.TP
+.B \-\-json
+Emit one JSON object on stdout. Prose goes to stderr.
+.TP
+.BR \-q ", " \-\-quiet
+Suppress non-essential output.
+.SH EXIT STATUS
+.TP
+.B 0
+Ran, and at least one frame resolved.
+.TP
+.B 1
+Ran, and resolved nothing. A negative answer, not an error: the report was read
+successfully and there was simply no symbol to be had.
+.TP
+.B 2
+Usage error.
+.TP
+.B 3
+Could not read the report.
+.SH EXAMPLE
+.nf
+$ macho-explorer symbolicate MyApp-2026-10-07.ips
+  MyApp-2026-10-07.ips  —  ips, MyApp, macOS 15.0
+  exception EXC_BAD_ACCESS (SIGSEGV)
+
+  Thread 1  (crashed)
+     0  -[MyController handleTap:] [binary]
+     1  main [report]
+     2  (unresolved)
+        why not: not on disk — a modern Apple system library lives in the
+                 dyld shared cache, so there is no file to read
+.fi
+.SH SEE ALSO
+.BR symlookup (1),
+.BR describe (1)

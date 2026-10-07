@@ -184,6 +184,23 @@ export declare function findCallsIn(
 ): object;
 
 /**
+ * Resolve the addresses in an Apple crash report to functions.
+ *
+ * Reads both the modern `.ips` and legacy `.crash` formats and reports which it read
+ * — the two disagree about whether a frame's number is an address or an offset.
+ * Frames it cannot resolve carry a `reason` saying why, because most frames in a
+ * modern report are in Apple frameworks that live in the dyld shared cache with no
+ * file on disk.
+ *
+ * @throws with `code: 'io'` when the report cannot be read and `'unknown-encoding'`
+ *   when it is neither format.
+ */
+export declare function symbolicate(
+  crashPath: string,
+  opts?: { arch?: string | null; resolve?: boolean },
+): object;
+
+/**
  * Find an exported name across every stub under an SDK root.
  *
  * @param maxFiles `0` means no cap.

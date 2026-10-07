@@ -1,0 +1,24 @@
+#compdef symbolicate
+#
+# zsh completion for symbolicate. Install as _symbolicate in a directory
+# on your $fpath.
+#
+# MachO-explorer 0.1.0.
+
+_macho_symbolicate() {
+    # One crash report. The report is a file rather than a binary, so the
+    # positional is completed with the report extensions and not with Mach-O
+    # names — a completion that offers `foo.dylib` here is offering a file this
+    # command cannot read.
+    _arguments -s -S \
+        '(-h --help)'{-h,--help}'[show help]' \
+        '--json[one JSON object on stdout]' \
+        '--arch=[prefer one architecture of a universal image]:arch:' \
+        '--no-resolve[parse the report but read no binaries]' \
+        '(-q --quiet)'{-q,--quiet}'[suppress non-essential output]' \
+        '--color[force color output]' \
+        '--no-color[disable color output]' \
+        '1:crash report:_files -g "*.(ips|crash|panic)(-.)"'
+}
+
+_macho_symbolicate "$@"

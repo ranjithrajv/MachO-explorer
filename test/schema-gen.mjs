@@ -690,6 +690,72 @@ overview: {
       } } },
     },
   },
+
+  symbolicate: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'The crash report that was read.' },
+      // The format is in the payload and not only the prose, because the two formats
+      // disagree about whether a frame's number is an address or an offset. A
+      // consumer that has to re-derive which parser ran is a consumer that will get
+      // it wrong on the one report where it mattered.
+      format: { type: 'string', enum: ['ips', 'legacy'] },
+      app: { type: ['string', 'null'] },
+      os: { type: ['string', 'null'] },
+      bugType: { type: ['string', 'null'] },
+      incidentId: { type: ['string', 'null'] },
+      timestamp: { type: ['string', 'null'] },
+      exception: { type: ['object', 'null'] },
+      termination: { type: ['object', 'null'] },
+      faultingThread: { type: ['integer', 'null'] },
+      images: { type: 'array', items: { type: 'object', properties: {
+        name: { type: ['string', 'null'] },
+        path: { type: ['string', 'null'] },
+        uuid: { type: ['string', 'null'] },
+        arch: { type: ['string', 'null'] },
+        // Addresses as `0x…` strings, as everywhere else: a 64-bit base does not
+        // survive a JSON number.
+        base: { type: ['string', 'null'] },
+        size: { type: ['string', 'null'] },
+      } } },
+      threads: { type: 'array', items: { type: 'object', properties: {
+        index: COUNT,
+        id: { type: ['integer', 'null'] },
+        name: { type: ['string', 'null'] },
+        queue: { type: ['string', 'null'] },
+        triggered: { type: 'boolean' },
+        frames: { type: 'array', items: { type: 'object', required: ['index', 'vaddr', 'symbol', 'symbolSource'], properties: {
+          index: COUNT,
+          image: { type: ['string', 'null'] },
+          vaddr: { type: ['string', 'null'] },
+          symbol: { type: ['string', 'null'] },
+          // Which claim the symbol is. `report` is what Apple's reporter recorded;
+          // `binary` is what this package read out of a file that may since have
+          // been rebuilt. Collapsing them would make the weaker look like the
+          // stronger, which is the whole reason the field exists.
+          symbolSource: { type: ['string', 'null'], enum: ['report', 'binary', null] },
+          functionStart: { type: ['string', 'null'] },
+          offset: { type: ['string', 'null'] },
+          aliases: { type: 'array', items: { type: 'string' } },
+          // Present exactly when no symbol was found. "This function is not known"
+          // and "there was no file to ask" send a reader to different places, so a
+          // bare null is not an adequate answer and this field is required with it.
+          reason: { type: ['string', 'null'] },
+        } } },
+      } } },
+      totals: { type: 'object', required: ['threads', 'frames', 'fromReport', 'fromBinary', 'unresolved'], properties: {
+        threads: COUNT,
+        frames: COUNT,
+        fromReport: COUNT,
+        fromBinary: COUNT,
+        unresolved: COUNT,
+      } },
+      unrecognised: { type: 'array', items: { type: 'object', properties: {
+        line: { type: 'string' },
+        why: { type: 'string' },
+      } } },
+    },
+  },
 };
 
 /**

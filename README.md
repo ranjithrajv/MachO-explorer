@@ -190,6 +190,39 @@ and `diff` answered the three questions a build or a reviewer asks about *two*
 binaries at once, and twelve until `dump`, `starts` and `assert` added the byte
 read, the function list and the policy gate.
 
+### Why is my app crashing?
+
+`symlookup` answers "which function contains this address" for an address you
+already have. A crash report is the case where you have a *stack* of them, in
+several binaries you did not build, and the numbers in it are not even always
+addresses — an `.ips` frame is an offset into an image, a legacy `.crash` frame is
+already absolute. `symbolicate` reads both formats and says which it read:
+
+```sh
+$ macho-explorer symbolicate MyApp-2026-10-07.ips
+  MyApp-2026-10-07.ips  —  ips, MyApp, macOS 15.0
+  exception EXC_BAD_ACCESS (SIGSEGV)
+
+  Thread 1  (crashed)
+     0  -[MyController handleTap:] [binary]
+     1  main [report]
+     2  (unresolved)
+        why not: not on disk — a modern Apple system library lives in the
+                 dyld shared cache, so there is no file to read
+```
+
+Most frames in a real crash log are in Apple frameworks, and since macOS 11 those
+are not files on disk, so they **cannot** be named on the machine that produced the
+report. That is a property of the platform, not a limitation to be worked around
+quietly: every frame that cannot be named carries the reason it cannot, because
+"this function is not known" and "there was no file to ask" send you to different
+places. The address and its owning image are still reported.
+
+`[binary]` and `[report]` are not decoration. The first is a name this package read
+out of a file that may since have been rebuilt; the second was already in the report
+and is more authoritative. `--json` keeps them apart in `symbolSource` and counts
+them separately, so a caller can decide which to trust.
+
 ### What does libSystem export?
 
 Since macOS 11 the system dylibs are not files. `/usr/lib/libSystem.B.dylib` is inside the
@@ -349,6 +382,7 @@ no lockfile and no install step.
 | `diff` | What changed between two binaries — structural facts only, so a rebuilt pair does not read as a different program |
 | `overview` | The whole picture in one call: every slice, segment, section, load command, flag, UUID and entry point, plus `--symbols` and `--strings` on request — all read from one slice, and carrying a `notRead` list of what this package does not parse |
 | `tbd` | Read a `.tbd` text stub: the exported symbols, install names and target triples of a dylib. Since macOS 11 the system libraries exist only in the dyld shared cache, so this is the **only** readable record of what they export — and `--symbol=X --sdk=<dir>` answers "which library provides X" across an entire SDK in under a second |
+| `symbolicate` | Turn a crash report into named frames. Reads both the modern `.ips` and legacy `.crash` formats, resolves each address against the binaries on this machine, and says **why** every frame it could not resolve was not resolved — most Apple framework frames cannot be, because they live in the dyld shared cache |
 | `mcp` | Serve the tools over the Model Context Protocol (JSON-RPC on stdin/stdout) |
 
 ### Global flags
