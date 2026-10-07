@@ -55,8 +55,10 @@ jobs:
       # runtime dependencies. `npx` runs it on demand rather than `npm install`,
       # so this repository keeps no `node_modules` and no lockfile to satisfy a
       # tool that is not part of the package.
+      # `postject` has no `--version`; `--help` is the flag it actually answers,
+      # and it exercises the same npx-mediated lookup the build depends on.
       - name: Confirm postject is reachable
-        run: npx --yes postject --version
+        run: npx --yes postject --help
 
       - name: Build SEA binaries
         run: node scripts/build-sea.mjs --output-dir dist

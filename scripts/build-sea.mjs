@@ -117,9 +117,14 @@ function buildSEA(tool) {
   // Step 3: Inject the blob using postject
   console.log(`  injecting blob into ${tool}...`);
   try {
+    // On Windows `npx` is `npx.cmd`, which `execFileSync` cannot launch without
+    // a shell (the docs are explicit), so the shell is enabled there and nowhere
+    // else — the argv array stays array-shaped wherever it legally can, which is
+    // what keeps a path with spaces from splitting into two arguments.
     execFileSync('npx', ['--yes', 'postject', outPath, 'NODE_SEA_BLOB', blobPath, '--sentinel-fuse', 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2'], {
       stdio: 'pipe',
       cwd: ROOT,
+      shell: process.platform === 'win32',
     });
   } catch (err) {
     console.error(`  error injecting blob for ${tool}: ${err.message}`);
