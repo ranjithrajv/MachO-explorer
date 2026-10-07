@@ -50,6 +50,16 @@ semver for the public API (`src/api.mjs` and the `--json` envelope).
 - **`macho-explorer --help` groups the subcommands by intent** (start here, symbols,
   addresses & code, verify & compare, integrate) and carries four copy-paste examples,
   rather than 19 commands in one alphabetical wall.
+- **`ARCHITECTURE.md`** — a contributor-facing design document: the layered shape of
+  the system, a module map with the permitted dependency directions, the data flow
+  from bytes to facts, the invariants a change must not break, how a change lands,
+  and the test and documentation pipelines. It records the one mutual edge in the
+  graph (`api.mjs` ↔ `instruction.mjs`) rather than claiming a clean downward one.
+- **The README is now short and user-facing** (194 lines, down from 910), opening
+  with the project's pitch and keeping the quick start, the tool list, three
+  worked examples, the agent surface, and the "what it will not do" table. The
+  detailed competitor comparison moved to `docs/use-cases.md` rather than being
+  dropped, and the docs site gained an **Architecture** page.
 
 ### Fixed
 

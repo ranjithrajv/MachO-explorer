@@ -115,3 +115,64 @@ Stated plainly, because a gap and a refusal read the same in a table:
 The full reasoning, and the test a feature has to pass to join either column, is
 in the [README's "What it will not do"](../README.md) and
 [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+---
+
+## The comparison, concretely
+
+`ipsw` wins almost every row below, and that is the honest shape of the
+landscape: it is the superset, this is the subset. The rows marked † are the ones
+where it has no answer at all, and they are the reason this package still exists.
+
+| | MachO-explorer | `ipsw` | MachOKit / machofile | LIEF | `nm` / `otool` | Ghidra / IDA |
+|---|---|---|---|---|---|---|
+| Dependencies | none | none (~40 MB binary) | none (Swift) / none (Python) | native library | none | large |
+| Build step | none | no (prebuilt) | SwiftPM / none | yes | — | no |
+| Runs on Linux/Windows | yes | yes (static binary) | Swift: no / Python: yes | yes | no | yes |
+| Universal binaries | every slice | every slice | every slice | every slice | `lipo` first | per slice |
+| Regex over symbols | yes | yes | no | no | partial | yes |
+| vaddr → function | yes | yes (`macho a2s`) | partial | no | no | yes |
+| vaddr → file offset | yes | yes (`macho a2o`) | no | no | no | by hand |
+| file offset → vaddr | yes | yes (`macho o2a`) | no | no | no | by hand |
+| Zero-fill reported as its own case | yes | no ¶ | no | no | no | no |
+| Linked libraries, per linkage (`otool -L`) | yes | yes | yes | yes | `otool -L` | by hand |
+| Platform, `minos`/`sdk`, filetype, `cryptid` | yes | yes | yes | yes | `vtool -show`, `codesign` | by hand |
+| Direct-call xrefs | yes | **no** † | no | no | no | yes |
+| Indirect / PLT xrefs | **no** | no | no | no | no | yes |
+| Literal → vaddr → pointers | yes | **no** † | no | no | no | by hand |
+| Scan restricted to code sections | yes | **no** † | no | no | n/a | yes |
+| Objective-C / Swift metadata | **no** | yes | yes | partial | no | yes |
+| Code signing / fixups | **no** | yes | yes | yes | `codesign` | partial |
+| Instruction boundaries (lengths) | yes | ARM64 only ‡ | no | no | no | yes |
+| Direct branch edges from a known address | yes | ARM64 only ‡ | no | no | no | yes |
+| Disassembly to text — mnemonics, operands, CFG | **no** | ARM64 only ‡ | no | no | no | yes |
+| JSON output | yes | partial § | manual | yes | no | yes |
+| Importable as a library | yes | yes (Go, `ipswd`) | yes | yes | no | limited |
+| Reproducible offline test gate | **yes** | no | partial | n/a | n/a | partial |
+
+† `ipsw` has no cross-reference command for a standalone Mach-O. Its only one is
+`dyld xref <cache> <addr>`, scoped to a dyld shared cache rather than a file, and
+marked WIP by its own author. `findcall` works on a single binary, covers arm64
+`BL` and x86_64 `rel32`, and can be restricted to code sections. And nothing in
+`ipsw` searches for an arbitrary byte literal and follows the pointers to it:
+`macho info --strings` prints `__cstring`, while `findliteral` scans any byte
+sequence and `mapliteral` turns each hit into a vaddr and finds what references it.
+
+‡ Its disassembler is ARM64-only and says so in the source — `macho_disass.go`
+returns `can only disassemble arm64 binaries` on any other CPU — so on x86_64,
+`findcall` and `disasm` cover ground `ipsw` does not reach at all.
+
+¶ `macho a2o` and `macho o2a` return an offset for any address, including one
+inside `__bss` — which has an address, a size, and no bytes in the file, because
+the loader supplies zeros. `a2o` reports that case as `zerofill: true` with no
+offset, because "mapped, and there is a byte" and "mapped, and there is none" are
+different facts and a patch script needs to tell them apart.
+
+§ `--json` is on `macho info` and `macho disass` but absent from `macho a2s`,
+`macho a2o`, `macho o2a` and `macho dump`, so a pipeline cannot rely on it
+uniformly. Every tool here has it, and the envelope shape is the same across all
+of them.
+
+The claims above were taken from `ipsw`'s source tree rather than its README,
+which matters: `macho diff` is a hidden `panic()` stub, and `macho info --json`
+discards every selector combined with it. Neither is visible in `--help`.

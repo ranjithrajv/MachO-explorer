@@ -73,9 +73,30 @@ const PAGES = [
   { src: 'docs/text-stubs.md', out: 'text-stubs.html', title: 'Text stubs — .tbd', blurb: 'What a system dylib exports, now that macOS 11 put them all in the shared cache.' },
   { src: 'docs/agent-integration.md', out: 'agent-integration.html', title: 'Driving it from an agent', blurb: 'The MCP server, the agent skill, and the three things that waste an agent’s time.' },
   { src: 'docs/use-cases.md', out: 'use-cases.html', title: 'When to use this', blurb: 'Where this reader is the right tool, and where it is the wrong one.' },
+  { src: 'ARCHITECTURE.md', out: 'architecture.html', title: 'Architecture', blurb: 'How the reader is layered, the invariants a change must not break, and where a change lands.' },
   { src: 'AUDITABILITY.md', out: 'auditable.html', title: 'Auditable by design', blurb: 'What the claim means, what it does not mean, and the checks that keep it true.' },
   { src: 'CONTRIBUTING.md', out: 'contributing.html', title: 'Contributing', blurb: 'The gate a change has to pass, and the rules that decide what belongs here.' },
 ];
+
+/**
+ * The rendered page each markdown source becomes, keyed by file name.
+ *
+ * `[x](docs/x.md)` is correct in the repository and *dead* in the rendered site,
+ * where that file is `x.html` sitting beside it. Rewriting at render time keeps a
+ * single link correct in both places rather than forcing the source to choose one
+ * and break the other. Only declared pages are rewritten; `README.md` and anything
+ * else outside the set is left exactly as written, because the site does not
+ * contain it and a silent rewrite would invent a target.
+ */
+const PAGE_BY_SOURCE = new Map(PAGES.map((p) => [path.basename(p.src), p.out]));
+
+function rewriteDocLink(href) {
+  const hash = href.indexOf('#');
+  const target = hash < 0 ? href : href.slice(0, hash);
+  const frag = hash < 0 ? '' : href.slice(hash);
+  const out = PAGE_BY_SOURCE.get(path.basename(target));
+  return out ? `./${out}${frag}` : null;
+}
 
 /* ------------------------------------------------------------------ *
  * the one rule: unhandled means failed
@@ -126,7 +147,8 @@ function inline(src, file, lineNo) {
       note(file, lineNo, `link with a javascript: href (${href}) — refused`);
       return label;
     }
-    return `<a href="${href.replace(/"/g, '&quot;')}">${label}</a>`;
+    const mapped = rewriteDocLink(href);
+    return `<a href="${(mapped ?? href).replace(/"/g, '&quot;')}">${label}</a>`;
   });
 
   // Autolinks, which is how a bare URL in the source becomes clickable.

@@ -4,6 +4,70 @@ Mach-O binary introspection, in plain JavaScript, with no dependencies. This
 file describes what a change has to survive, and why each rule exists — every
 one of them is here because its absence produced a bug that reported success.
 
+## Getting set up
+
+Node ≥ 22.15 and nothing else. There is no `npm install` step because there is
+nothing to install:
+
+```sh
+git clone https://github.com/ranjithrajv/MachO-explorer.git
+cd MachO-explorer
+git config core.hooksPath .githooks
+```
+
+The one-time `git config` turns on the versioned hooks in `.githooks/`. They live
+there rather than in `.git/hooks/` because that directory is untracked, so a
+fresh clone would otherwise arrive with no guard at all. `pre-commit` runs
+`test/fixtures.mjs --check` and `test/smoke.mjs`; `pre-push` adds `test/mcp.mjs`,
+`test/skill.mjs` and `test/publish.mjs`. Both **refuse rather than pass** when
+they cannot run, and `--no-verify` skips one commit or push — re-run by hand
+before pushing rather than deleting the hook.
+
+The fast loop, roughly in the order you will want it:
+
+```sh
+npm test                          # test/smoke.mjs — the reader, on binaries it was not written for
+node test/disasm.mjs              # the instruction decoders
+node test/fixtures.mjs --check    # the corpus still matches its generator
+```
+
+A single suite is always `node test/<name>.mjs`; the files in `test/` and the
+`scripts` in `package.json` are the list. `npm run test:all` runs every suite in
+order, including the slow mutation check, and is the gate the release workflow
+runs before publishing.
+
+## Orientation
+
+`src/` is where the reader and the tools live and `test/` is where each surface
+is proved; the rest of the tree exists to ship or explain those two. The design —
+how the reader is layered and why the boundaries fall where they do — is in
+[ARCHITECTURE.md](ARCHITECTURE.md). This file does not repeat it.
+
+- `src/` — `api.mjs` is the supported interface and the package entry point;
+  `macho.mjs` is the reader; each tool is a thin CLI over one `api.mjs` function;
+  `macho-explorer.mjs` is the `<subcommand>` dispatcher, driven by its
+  `SUBCOMMANDS` array.
+- `test/` — one suite per surface, each runnable on its own with
+  `node test/<name>.mjs`. `test/fixtures.mjs` generates `test/fixtures/`, the
+  checked-in corpus; never hand-edit either.
+- `docs/` — the documentation sources, plus `build.mjs`, the from-scratch
+  markdown renderer that turns them into the published site.
+- `schema/` — one JSON Schema per tool, generated from the payload shapes; never
+  hand-edit.
+- `man/man1/` and `completions/` — the man pages and the bash and zsh
+  completions.
+- `skill/` — the Agent Skill: prose an agent follows, held to the tools by
+  `test/skill.mjs`.
+- `demo/` — the browser audit report, and `link.mjs`, which builds its committed
+  bundle.
+- `pages/` — the root index and redirect for the published site.
+- `conformance/` — the cross-parser corpus and adapter.
+- `action.yml` — the composite GitHub Action for the CI gate.
+
+`README.md` is for users, `AUDITABILITY.md` argues the auditability claim, and
+`CHANGELOG.md` records what changed. The architecture prose belongs in
+`ARCHITECTURE.md`, not here.
+
 ## Scope comes first
 
 **This package is focused on Mach-O and nothing else.** Not a general
@@ -37,7 +101,7 @@ job, and they are the ones most likely to be missing.
 The package's central claim is that every answer it gives is a fact about the
 file format or about the bytes, and that it knows nothing about any
 application — no publisher, no title, no container format. That claim is a test,
-not a review habit: four `boundary:` checks in the suite scan `src/`, `test/` and
+not a review habit: the `boundary:` checks in the suite scan `src/`, `test/` and
 every file `package.json`'s `files` puts in the tarball, and fail if a product,
 a title or its container format appears in any of them. The names are assembled
 from fragments so that the check can include itself, and each group prints the
@@ -60,10 +124,10 @@ and naming what it assesses is the point of it.
 ## No dependencies, and no build step
 
 Not a preference — it is what the README's install section promises.
-`src/macho.mjs` imports exactly one thing, `node:fs`, and has no
-internal imports, so it works as a single copied file; it stays small enough that
-a reviewer can audit it by reading it, and a pipeline that must not reach the
-network can run with no install at all.
+`src/macho.mjs` imports only two Node builtins, `node:fs` and `node:crypto`, and
+has no internal imports, so it works as a single copied file; it stays small
+enough that a reviewer can audit it by reading it, and a pipeline that must not
+reach the network can run with no install at all.
 
 A dependency would break both claims. So would a transpile step, a bundler, a
 `tsconfig`, or anything else a reader has to install before they can check a
@@ -74,27 +138,42 @@ first, on the same terms as a scope change.
 
 ## The gate
 
-Three commands, three different kinds of evidence, and a change is not finished
-until all three pass:
+A change is not finished until the suites it can affect pass. They are layered by
+what they can prove:
+
+The reader and its two doors — the fast set the hooks run:
 
 ```sh
 node test/fixtures.mjs --check    #  ~0.1s   the corpus matches its generator
-node test/smoke.mjs               #  ~4s     the tools, on binaries they were not written for
+node test/smoke.mjs               #  ~4s     the reader, on binaries it was not written for
+node test/disasm.mjs              #  ~5s     the instruction decoders, against known lengths
 node test/mcp.mjs                 #  ~15s    the protocol, driven over a real pipe
 node test/skill.mjs               #  ~3s     the agent instructions match the tools
-node test/mutation-check.mjs      #  ~2m     the historical bugs are still caught
+node test/publish.mjs             #  ~1s     the package can actually be published
 ```
 
-The four fast ones cover the reader and its two doors. The CI-gate and
-published-page surfaces have their own, and they are the ones a change to
-`action.yml`, `schema/` or `demo/` has to pass:
+The surfaces no reader test reaches — the CI gate, the published page, the
+packaged contract, and the format readers that sit beside the Mach-O reader:
 
 ```sh
 npm run schema:check              #  ~1s     the checked-in schemas match the generator
 node test/schemas.mjs             #  ~3s     every tool's real output, against its own schema
 node test/sarif.mjs               #  ~2s     the SARIF emitter is well-formed
+node test/types.mjs               #  ~2s     the declared types match the code
+node test/tbd.mjs                 #  ~2s     a text stub is read completely, or withheld
+node test/symbolicate.mjs         #  ~2s     a crash report resolves, or names why not
+node test/ipa.mjs                 #  ~2s     an .ipa is unpacked, not refused
+node test/conformance.mjs         #  ~2s     the conformance corpus is a working oracle
+node test/browser.mjs             #  ~5s     the browser bundle is the reader, and answers the same
 node test/action.mjs              #  ~2s     the composite action's shell, extracted and run
 node test/pages.mjs               #  ~1s     the published page is this repository
+node test/docs.mjs                #  ~1s     the docs site renders, and --check detects drift
+```
+
+and the slow one, which proves the others can fail:
+
+```sh
+node test/mutation-check.mjs      #  ~2m     the historical bugs are still caught
 ```
 
 Each suite prints its own counts. They are deliberately not written here: a
@@ -105,11 +184,11 @@ one command. Read the number off the run.
 `npm run test:all` runs everything in order. There is no `npm install` step
 because there is nothing to install.
 
-### The four that are not about the reader
+### The checks that are not about the reader
 
-Each covers something no amount of reader testing reaches, and each found at
-least one real defect on its first run — which is the argument for writing the
-test before the feature ships rather than after:
+Each of these covers something no amount of reader testing reaches, and each
+found at least one real defect on its first run — which is the argument for
+writing the test before the feature ships rather than after:
 
 - **`test/schemas.mjs`** runs each tool's *real* output through its own schema,
   and then asserts the schemas **reject** wrong documents. The second half is the
@@ -155,18 +234,20 @@ either your change fixed the bug for good (remove the mutation and say so in the
 PR) or it moved the code the anchor pointed at (fix the anchor in the same
 commit).
 
-CI runs four jobs — `fixtures` on ubuntu, `test` on a macOS/Linux/Windows
-matrix, `protocol` (the MCP, skill, publish, schema, SARIF, action and Pages
-suites) on ubuntu, and `mutation` on ubuntu. A fifth workflow, `pages`, deploys
-the audit report to GitHub Pages and runs on push to `main` for the paths that
-can change the page.
+CI runs the `test` workflow's four jobs — `fixtures` on ubuntu, `test` on a
+macOS/Linux/Windows matrix, `protocol` (the MCP, skill, publish, types, schema,
+SARIF, TBD, symbolicate, IPA, browser, conformance, action, Pages and docs
+suites) on ubuntu, and `mutation` on ubuntu. Three further workflows are not part
+of it: `pages` deploys the audit report on push to `main`, and `release` and
+`release-binaries` run on a version tag.
 
 Locally there are two versioned hooks in `.githooks/`, enabled once per clone
 with `git config core.hooksPath .githooks`. `pre-commit` runs `fixtures.mjs
---check` (~0.1s) then `smoke.mjs` (~4s); `pre-push` additionally runs `mcp.mjs`
-and `skill.mjs`. The mutation check is in neither — it copies the tree and
-re-runs the suite eleven times, so at ~2m it has its own CI job and is part of
-`npm run test:all`. A gate nobody can afford to run is a gate nobody runs.
+--check` (~0.1s) then `smoke.mjs` (~4s); `pre-push` additionally runs `mcp.mjs`,
+`skill.mjs` and `publish.mjs`. The mutation check is in neither — it copies the
+tree and re-runs the whole suite once per mutation, so at ~2m it has its own CI
+job and is part of `npm run test:all`. A gate nobody can afford to run is a gate
+nobody runs.
 
 They are in `.githooks/` rather than `.git/hooks/` because that directory is
 untracked, so a fresh clone would otherwise arrive with no guard at all. This
@@ -261,9 +342,9 @@ than a missing one, because it reports success.**
   sixth argument — a `mapped` gate that keeps decoded destinations inside a
   mapped range. The mutation could no longer be applied, and the run printed
   `SKIP … anchor not found` and then **exited 0**, so `test:all` stayed green
-  with seven mutations quietly reduced to six. An inconclusive mutation now
-  fails the run like a survivor does, and the "none surviving" line only prints
-  when every mutation really ran and was caught.
+  while one of its mutations had quietly stopped running. An inconclusive
+  mutation now fails the run like a survivor does, and the "none surviving" line
+  only prints when every mutation really ran and was caught.
 
 Write the mutation for the defect as it was, not for the shape of the defect as
 you remember it.
@@ -312,7 +393,7 @@ needs a known-answer corpus at least as much as this one does:
 import { buildFixtures } from 'macho-explorer/fixtures';
 
 const { files, manifest } = await buildFixtures({ out: '/tmp/corpus' });
-// files.universal, files.arm64only, files.decoy, files.stripped, files.thin…
+// files.universal, files.arm64only, files.decoy, files.stripped, files.thinx8664…
 // manifest.callCounts, manifest.x86_64, manifest.arm64 — the exact addresses
 //   and counts this project's own suite asserts, so both agree by construction
 ```
@@ -320,6 +401,9 @@ const { files, manifest } = await buildFixtures({ out: '/tmp/corpus' });
 ```sh
 node node_modules/macho-explorer/test/fixtures.mjs --out-dir /tmp/corpus
 ```
+
+The corpus covers more shapes than the section above turns on; a few worth
+knowing:
 
 | Fixture | Shape it provides |
 |---|---|
@@ -350,7 +434,10 @@ A new tool is small and the shape is fixed:
    functions, so there is no behaviour behind the command line that an importer
    cannot reach, and no second copy of the reader free to answer differently.
 2. **One CLI in `src/`.** Thin, and it delegates. Parsing goes in
-   `src/macho.mjs`; `src/macho.mjs` does not grow a second reader.
+   `src/macho.mjs`; `src/macho.mjs` does not grow a second reader. Register the
+   CLI in `package.json`'s `bin` and add it to the `SUBCOMMANDS` array in
+   `src/macho-explorer.mjs`, so the standalone binary and the dispatcher agree
+   about what exists.
 3. **`--json`, the same envelope everywhere.** `{ tool, ok, binary, errors,
    messages?, notes?, data }`, `errors` holding machine-readable reason codes
    rather than prose, so a consumer can branch on `code` instead of
@@ -369,11 +456,17 @@ A new tool is small and the shape is fixed:
 7. **A negative answer is a value, not an exception.** No match is
    `{ matches: [] }` or `{ function: null }`. Genuine I/O failures still throw,
    so "no result" and "could not look" stay distinguishable.
-8. **A man page and both completions.** `man/man1/<name>.1`,
-   `completions/macho-explorer.bash`, and `completions/_<name>`; plus the `bin`,
-   `man` and `files` entries in `package.json`.
-9. **A README row.** The tools table, the flags table if you added a flag, and
-   any claim about the new tool's accuracy.
+8. **Declare it in `src/api.d.ts`, and give it a schema.** `test/types.mjs`
+   asserts every export of `api.mjs` is declared; `test/schema-gen.mjs` turns
+   each tool's `data` shape into a JSON Schema, so add a `DATA` entry there and
+   run `npm run schema`. Never hand-edit a file under `schema/`.
+9. **A man page and both completions.** `man/man1/<name>.1`,
+   `completions/macho-explorer.bash`, and `completions/_<name>`; plus the `bin`
+   key and the `man` entry in `package.json` (`files` already ships `src/`,
+   `man/` and `completions/`).
+10. **A README row and a manual entry.** The README tools table, the flag table
+    if you added a flag, and `docs/user-manual.md` — plus any claim about the
+    new tool's accuracy.
 
 ## Documentation
 
@@ -389,6 +482,20 @@ Two documents, two audiences, and the split is deliberate:
   rules belong here. If a contribution makes the README longer, ask whether the
   material is something a *user* needs in order to use the tool; if not, it goes
   here.
+
+The two root documents are published pages too, rendered by `docs/build.mjs`
+alongside `docs/*.md`. That renderer is written here rather than installed, and
+it **fails the build** on any construct it does not handle instead of emitting a
+plausible-looking wrong page, so its supported markdown is a closed set: ATX
+headings, fenced code, GFM tables, one level of list nesting, blockquotes, `---`
+breaks, and inline code, bold, italic and links. Adding a construct means adding
+a branch to the renderer first.
+
+```sh
+node docs/build.mjs          # render the site into _site/docs
+node docs/build.mjs --check  # fail if _site/docs is stale; writes nothing
+node test/docs.mjs           # assert from the output side: no leftover syntax, every anchor resolves
+```
 
 A document's numbers are a liability, not decoration. An earlier version of this
 rule required the README to carry the suite's exact totals and to update them in

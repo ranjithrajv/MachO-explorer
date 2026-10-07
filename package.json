@@ -2,7 +2,7 @@
   "name": "macho-explorer",
   "version": "0.1.0",
   "type": "module",
-  "description": "Mach-O introspection for Apple binaries — fat headers, symbols, address↔offset mapping, direct-call xrefs, byte-literal search, a CI-gate audit and a rebuild-invariant diff. One auditable, dependency-free reader: no install, no build, no network, and it reads Mac binaries from Linux or Windows. The same file runs in a browser with no upload.",
+  "description": "The reader you can read. Dependency-free Mach-O introspection for Apple binaries — fat headers, symbols, address↔offset, xrefs, byte-literal search, a CI-gate audit and a rebuild-invariant diff. One auditable file: no install, no build, no network; reads Mac binaries from Linux or Windows and runs in a browser with no upload. Emits a versioned JSON contract, and ships an MCP server and an Agent Skill.",
   "keywords": [
     "mach-o",
     "macho",
@@ -54,7 +54,8 @@
     "LICENSE",
     "README.md",
     "AUDITABILITY.md",
-    "CONTRIBUTING.md"
+    "CONTRIBUTING.md",
+    "ARCHITECTURE.md"
   ],
   "man": [
     "man/man1/describe.1",

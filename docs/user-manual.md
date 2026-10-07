@@ -41,11 +41,10 @@ MachO-explorer is a single CLI for inspecting Mach-O binaries — the executable
 
 **Key properties:**
 
-- **Zero dependencies** — pure Node.js, no `npm install` needed
-- **No build step** — runs directly from source
-- **Cross-platform** — Linux, macOS, and Windows
-- **Scriptable** — every subcommand emits JSON on stdout
-- **Composable** — pipe output to `jq`, `grep`, or any JSON consumer
+- **One auditable reader** — `src/macho.mjs` imports only `node:fs` and `node:crypto`; no runtime dependencies and no build step
+- **Cross-platform** — Linux, macOS, and Windows; the same reader also runs client-side in a browser, with the bytes never leaving the machine
+- **Scriptable and composable** — every subcommand emits one versioned JSON envelope on stdout; pipe it to `jq` or any JSON consumer
+- **Agent-ready** — an MCP server and an Agent Skill ship in the box, and the CLI exits with a status a build can gate on
 
 ## Installation
 
