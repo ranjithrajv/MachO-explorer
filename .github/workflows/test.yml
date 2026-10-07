@@ -138,6 +138,13 @@ jobs:
       - name: The package can be published and the docs name it
         run: node test/publish.mjs
 
+      # The declared shapes in `src/api.d.ts` are a contract a consumer's editor
+      # reads, and nothing type-checks them against the code at runtime. This
+      # suite reads the `.d.ts` and holds it to what the functions actually
+      # return — the file a published package ships and CI otherwise never ran.
+      - name: The declared types match the code
+        run: node test/types.mjs
+
       # The per-tool JSON Schemas are generated from the same `data` shapes the
       # tools emit, and this is the check that keeps them honest. `--check` fails
       # if any checked-in schema has drifted from what the generator produces — the

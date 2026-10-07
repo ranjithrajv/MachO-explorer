@@ -37,19 +37,15 @@ jobs:
             exit 1
           fi
 
-      # The gate, in the order a maintainer would run it. Nothing is published
-      # until all of it is green.
-      - run: node test/fixtures.mjs --check
-      - run: node test/smoke.mjs
-      - run: node test/disasm.mjs
-      - run: node test/browser.mjs
-      - run: node test/conformance.mjs
-      - run: node test/mcp.mjs
-      - run: node test/skill.mjs
-      - run: node test/tbd.mjs
-      - run: node test/symbolicate.mjs
-      - run: node test/ipa.mjs
-      - run: node test/publish.mjs
+      # The whole gate, not a hand-picked subset. `test:all` is the same suite a
+      # contributor runs, so a tag that does not pass it does not ship — and the
+      # list this replaced was a subset, which is exactly how the suites guarding
+      # the `.d.ts`, the schemas and the Action — the artefacts a published
+      # package actually ships — could be skipped before a publish. It is also
+      # self-maintaining: a suite added to `test:all` is in the gate, and one
+      # added only to a test file that nobody wires in is a red that nobody runs.
+      - name: The full gate
+        run: npm run test:all
 
       - name: Publish with provenance
         run: npm publish --provenance --access public
